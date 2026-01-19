@@ -12,7 +12,9 @@ if not DEVICE or DEVICE.lower() in ("cpu", "clang", "llvm"):
     pytest.skip("GPU smoke test requires TINYTT_DEVICE", allow_module_level=True)
 
 try:
-    _ = tn.tensor([1.0], device=DEVICE)
+    probe = tn.tensor([1.0], device=DEVICE)
+    probe.realize()
+    DEVICE_RESOLVED = probe.device
 except Exception:
     pytest.skip("Requested TINYTT_DEVICE is unavailable", allow_module_level=True)
 
@@ -22,8 +24,8 @@ def test_gpu_tt_basic_ops():
     x = tt.TT(full, eps=1e-12, device=DEVICE)
     y = tt.ones([2, 2, 2])
 
-    assert DEVICE.lower() in str(x.cores[0].device).lower()
-    assert DEVICE.lower() in str(y.cores[0].device).lower()
+    assert DEVICE_RESOLVED.lower() in str(x.cores[0].device).lower()
+    assert DEVICE_RESOLVED.lower() in str(y.cores[0].device).lower()
 
     z = x + y
     ref = full + np.ones_like(full)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import os
 import sys
 from pathlib import Path
@@ -35,8 +36,24 @@ def default_device():
     return _normalize_device(device) if device else None
 
 
+def _normalize_device(device):
+    if device is None:
+        return None
+    dev = str(device)
+    dev_upper = dev.upper()
+    if dev_upper.startswith("GPU"):
+        try:
+            importlib.import_module("tinygrad.runtime.ops_gpu")
+            return dev
+        except Exception:
+            suffix = dev[3:] if dev_upper.startswith("GPU") else ""
+            return "CL" + suffix
+    return dev
+
+
 def _resolve_device(device):
-    return device if device is not None else default_device()
+    resolved = device if device is not None else default_device()
+    return _normalize_device(resolved)
 
 
 def is_tensor(x) -> bool:

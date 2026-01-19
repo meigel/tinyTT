@@ -85,7 +85,8 @@ Run tinyTT parity tests (skip if `torchtt` is not importable):
 PYTHONPATH=. pytest -q tests
 ```
 
-GPU tests are opt-in and require `TINYTT_DEVICE` (for example `CUDA`):
+GPU tests are opt-in and require `TINYTT_DEVICE` (for example `CUDA`, or `CL`
+for Intel OpenCL backends):
 
 ```bash
 TINYTT_DEVICE=CUDA PYTHONPATH=. pytest -q tests/test_gpu_ops.py

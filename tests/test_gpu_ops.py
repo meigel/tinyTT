@@ -12,14 +12,16 @@ if not DEVICE or DEVICE.lower() in ("cpu", "clang", "llvm"):
     pytest.skip("GPU tests require TINYTT_DEVICE", allow_module_level=True)
 
 try:
-    _ = tn.tensor([1.0], device=DEVICE)
+    probe = tn.tensor([1.0], device=DEVICE)
+    probe.realize()
+    DEVICE_RESOLVED = probe.device
 except Exception:
     pytest.skip("Requested TINYTT_DEVICE is unavailable", allow_module_level=True)
 
 
 def _assert_tt_device(tensor):
     for core in tensor.cores:
-        assert DEVICE.lower() in str(core.device).lower()
+        assert DEVICE_RESOLVED.lower() in str(core.device).lower()
 
 
 def test_gpu_helpers_and_linalg():
