@@ -20,7 +20,7 @@ except Exception:
 
 def _supports_fp64():
     try:
-        t = tn.tensor([1.0], dtype=tn.float64, device=DEVICE)
+        t = tn.tensor([1.0], dtype=tn.float64, device=DEVICE_RESOLVED)
         t.realize()
         return True
     except Exception:
@@ -39,8 +39,8 @@ def _assert_tt_device(tensor):
 
 def test_gpu_helpers_and_linalg():
     full = np.arange(24, dtype=NP_DTYPE).reshape(2, 3, 4)
-    x = tt.TT(full, eps=1e-12, device=DEVICE, dtype=DTYPE)
-    y = tt.ones([2, 3, 4], device=DEVICE, dtype=DTYPE)
+    x = tt.TT(full, eps=1e-12, device=DEVICE_RESOLVED, dtype=DTYPE)
+    y = tt.ones([2, 3, 4], device=DEVICE_RESOLVED, dtype=DTYPE)
 
     _assert_tt_device(x)
     _assert_tt_device(y)
@@ -75,14 +75,14 @@ def test_gpu_helpers_and_linalg():
 
 
 def test_gpu_fast_products():
-    x = tt.random([2, 2, 2], [1, 2, 2, 1], device=DEVICE, dtype=DTYPE)
-    y = tt.random([2, 2, 2], [1, 2, 2, 1], device=DEVICE, dtype=DTYPE)
+    x = tt.random([2, 2, 2], [1, 2, 2, 1], device=DEVICE_RESOLVED, dtype=DTYPE)
+    y = tt.random([2, 2, 2], [1, 2, 2, 1], device=DEVICE_RESOLVED, dtype=DTYPE)
 
     z = tt.fast_hadammard(x, y, eps=1e-8)
     ref = x.full().numpy() * y.full().numpy()
     assert np.allclose(z.full().numpy(), ref, atol=1e-5)
 
-    A = tt.random([(2, 2), (2, 2), (2, 2)], [1, 2, 2, 1], device=DEVICE, dtype=DTYPE)
+    A = tt.random([(2, 2), (2, 2), (2, 2)], [1, 2, 2, 1], device=DEVICE_RESOLVED, dtype=DTYPE)
     mv = tt.fast_mv(A, x, eps=1e-8)
 
     A_full = A.full().numpy().reshape(8, 8)
@@ -96,14 +96,14 @@ def test_gpu_fast_products():
 
 
 def test_gpu_dmrg_and_solvers():
-    x = tt.random([2, 2, 2], [1, 2, 2, 1], device=DEVICE, dtype=DTYPE)
-    y = tt.random([2, 2, 2], [1, 2, 2, 1], device=DEVICE, dtype=DTYPE)
+    x = tt.random([2, 2, 2], [1, 2, 2, 1], device=DEVICE_RESOLVED, dtype=DTYPE)
+    y = tt.random([2, 2, 2], [1, 2, 2, 1], device=DEVICE_RESOLVED, dtype=DTYPE)
 
     z = tt.dmrg_hadamard(x, y, eps=1e-8, nswp=3, use_cpp=False, verb=False)
     ref = x.full().numpy() * y.full().numpy()
     assert np.allclose(z.full().numpy(), ref, atol=1e-5)
 
-    A = tt.eye([2, 2, 2], device=DEVICE, dtype=DTYPE)
+    A = tt.eye([2, 2, 2], device=DEVICE_RESOLVED, dtype=DTYPE)
     b = A @ x
     sol = tt.solvers.amen_solve(A, b, nswp=4, eps=1e-10, use_cpp=False, verbose=False)
     err = np.linalg.norm(sol.full().numpy() - x.full().numpy())
@@ -119,8 +119,8 @@ def test_gpu_matvec_and_fast_matvec():
     A_full = rng.rand(4, 4).astype(NP_DTYPE)
     x_full = rng.rand(4).astype(NP_DTYPE)
 
-    A = tt.TT(A_full.reshape(2, 2, 2, 2), shape=[(2, 2), (2, 2)], eps=1e-12, device=DEVICE, dtype=DTYPE)
-    x = tt.TT(x_full.reshape(2, 2), eps=1e-12, device=DEVICE, dtype=DTYPE)
+    A = tt.TT(A_full.reshape(2, 2, 2, 2), shape=[(2, 2), (2, 2)], eps=1e-12, device=DEVICE_RESOLVED, dtype=DTYPE)
+    x = tt.TT(x_full.reshape(2, 2), eps=1e-12, device=DEVICE_RESOLVED, dtype=DTYPE)
 
     y = A @ x
     ref = A_full @ x_full
@@ -135,15 +135,15 @@ def test_gpu_ttm_multiply_and_autograd():
     A_full = rng.rand(4, 4).astype(NP_DTYPE)
     B_full = rng.rand(4, 4).astype(NP_DTYPE)
 
-    A = tt.TT(A_full.reshape(2, 2, 2, 2), shape=[(2, 2), (2, 2)], eps=1e-12, device=DEVICE, dtype=DTYPE)
-    B = tt.TT(B_full.reshape(2, 2, 2, 2), shape=[(2, 2), (2, 2)], eps=1e-12, device=DEVICE, dtype=DTYPE)
+    A = tt.TT(A_full.reshape(2, 2, 2, 2), shape=[(2, 2), (2, 2)], eps=1e-12, device=DEVICE_RESOLVED, dtype=DTYPE)
+    B = tt.TT(B_full.reshape(2, 2, 2, 2), shape=[(2, 2), (2, 2)], eps=1e-12, device=DEVICE_RESOLVED, dtype=DTYPE)
 
     C = A @ B
     ref = A_full @ B_full
     assert np.allclose(C.full().numpy().reshape(4, 4), ref, atol=ATOL)
 
     x_full = rng.rand(2, 3, 2).astype(NP_DTYPE)
-    x = tt.TT(x_full, eps=1e-12, device=DEVICE, dtype=DTYPE)
+    x = tt.TT(x_full, eps=1e-12, device=DEVICE_RESOLVED, dtype=DTYPE)
     tt.grad.watch(x)
     val = tt.dot(x, x)
     grads = tt.grad.grad(val, x)
