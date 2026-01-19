@@ -1,0 +1,6 @@
+[submodule "tinygrad"]
+	path = tinygrad
+	url = https://github.com/tinygrad/tinygrad
+[submodule "torchtt_ref"]
+	path = torchtt_ref
+	url = https://github.com/ion-g-ion/torchTT
