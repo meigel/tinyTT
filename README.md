@@ -108,3 +108,4 @@ PyTorch is optional unless you run parity/reference tests.
 - `TINYTT_DEVICE=CUDA|METAL|...`: set the default tinygrad device for new tensors.
 - `TORCHTT_TINYJIT=1`: enable TinyJit in selected kernels.
 - `TINYTT_SVD_BACKEND=numpy|tinygrad`: choose SVD backend (default: numpy).
+- `TINYTT_FORCE_FP32=1`: force float32 when the device lacks fp64 support (auto-detected).

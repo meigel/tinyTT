@@ -51,17 +51,7 @@ class TT:
                 self.__is_ttm = False
                 self.shape = []
                 return
-            cores = []
-            for c in source:
-                if tn.is_tensor(c):
-                    core = c
-                    if dtype is not None:
-                        core = core.cast(dtype)
-                    if device is not None and core.device != device:
-                        core = core.to(device)
-                    cores.append(core)
-                else:
-                    cores.append(tn.tensor(c, dtype=dtype, device=device))
+            cores = [tn.tensor(c, dtype=dtype, device=device) for c in source]
             devices = {c.device for c in cores if tn.is_tensor(c)}
             if len(devices) > 1:
                 raise InvalidArguments("All cores must live on the same device.")
@@ -141,13 +131,7 @@ class TT:
             "Function only implemented for tinygrad tensors, numpy arrays, list of cores as tensors and None.")
 
     def to(self, device=None, dtype=None):
-        cores = []
-        for c in self.cores:
-            if device is not None:
-                c = c.to(device)
-            if dtype is not None:
-                c = c.cast(dtype)
-            cores.append(c)
+        cores = [tn.tensor(c, dtype=dtype, device=device) for c in self.cores]
         return TT(cores)
 
     def detach(self):

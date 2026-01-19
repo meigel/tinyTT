@@ -38,6 +38,66 @@ def maybe_jit(key, fn):
 
 float32 = dtypes.float32
 float64 = dtypes.float64
+_FORCE_FP32 = os.getenv("TINYTT_FORCE_FP32", "0").lower() in ("1", "true", "yes")
+_FP64_SUPPORT_CACHE: dict[str, bool] = {}
+
+
+def _is_cpu_device(device):
+    if device is None:
+        return True
+    dev = str(device).upper()
+    return dev.startswith("CPU") or dev in ("CLANG", "LLVM")
+
+
+def supports_fp64(device=None):
+    dev = _resolve_device(device)
+    if dev is None or _is_cpu_device(dev):
+        return True
+    dev_key = _normalize_device(dev)
+    if dev_key in _FP64_SUPPORT_CACHE:
+        return _FP64_SUPPORT_CACHE[dev_key]
+    try:
+        probe = Tensor([1.0], dtype=float64, device=dev_key)
+        (probe + probe).realize()
+        _FP64_SUPPORT_CACHE[dev_key] = True
+    except Exception:
+        _FP64_SUPPORT_CACHE[dev_key] = False
+    global _FORCE_FP32
+    if not _FP64_SUPPORT_CACHE[dev_key] and not _FORCE_FP32:
+        _FORCE_FP32 = True
+        os.environ["TINYTT_FORCE_FP32"] = "1"
+    return _FP64_SUPPORT_CACHE[dev_key]
+
+
+def _should_force_fp32(device):
+    if _FORCE_FP32:
+        return True
+    dev = _resolve_device(device)
+    if dev is None or _is_cpu_device(dev):
+        return False
+    return not supports_fp64(dev)
+
+
+def default_float_dtype(device=None):
+    return float32 if _should_force_fp32(device) else float64
+
+
+def _infer_dtype(data):
+    if isinstance(data, Tensor):
+        return data.dtype
+    if isinstance(data, np.ndarray):
+        if data.dtype == np.float32:
+            return float32
+        if data.dtype == np.float64:
+            return float64
+    return None
+
+
+def coerce_dtype(dtype, device=None, data=None):
+    target = dtype if dtype is not None else _infer_dtype(data)
+    if target == float64 and _should_force_fp32(device):
+        return float32
+    return target
 
 
 def default_device():
@@ -70,43 +130,70 @@ def is_tensor(x) -> bool:
 
 
 def tensor(data, dtype=None, device=None):
+    resolved = _resolve_device(device)
+    target_dtype = coerce_dtype(dtype, resolved, data)
     if isinstance(data, Tensor):
         out = data
-        if dtype is not None:
-            out = out.cast(dtype)
-        resolved = _resolve_device(device)
+        if target_dtype is not None and out.dtype != target_dtype:
+            out = out.cast(target_dtype)
         if resolved is not None and out.device != resolved:
             out = out.to(resolved)
         return out
-    return Tensor(data, dtype=dtype, device=_resolve_device(device))
+    if target_dtype is None and isinstance(data, (list, tuple, np.ndarray)):
+        target_dtype = default_float_dtype(resolved)
+    return Tensor(data, dtype=target_dtype, device=resolved)
 
 
 def ones(shape, dtype=None, device=None):
-    return Tensor.ones(*shape, dtype=dtype, device=_resolve_device(device))
+    resolved = _resolve_device(device)
+    target_dtype = coerce_dtype(dtype, resolved)
+    if target_dtype is None:
+        target_dtype = default_float_dtype(resolved)
+    return Tensor.ones(*shape, dtype=target_dtype, device=resolved)
 
 
 def zeros(shape, dtype=None, device=None):
-    return Tensor.zeros(*shape, dtype=dtype, device=_resolve_device(device))
+    resolved = _resolve_device(device)
+    target_dtype = coerce_dtype(dtype, resolved)
+    if target_dtype is None:
+        target_dtype = default_float_dtype(resolved)
+    return Tensor.zeros(*shape, dtype=target_dtype, device=resolved)
 
 
 def rand(shape, dtype=None, device=None):
-    return Tensor.rand(*shape, dtype=dtype, device=_resolve_device(device))
+    resolved = _resolve_device(device)
+    target_dtype = coerce_dtype(dtype, resolved)
+    if target_dtype is None:
+        target_dtype = default_float_dtype(resolved)
+    return Tensor.rand(*shape, dtype=target_dtype, device=resolved)
 
 
 def randn(shape, dtype=None, device=None):
-    return Tensor.randn(*shape, dtype=dtype, device=_resolve_device(device))
+    resolved = _resolve_device(device)
+    target_dtype = coerce_dtype(dtype, resolved)
+    if target_dtype is None:
+        target_dtype = default_float_dtype(resolved)
+    return Tensor.randn(*shape, dtype=target_dtype, device=resolved)
 
 
 def eye(n, m=None, dtype=None, device=None):
-    return Tensor.eye(n, m, dtype=dtype, device=_resolve_device(device))
+    resolved = _resolve_device(device)
+    target_dtype = coerce_dtype(dtype, resolved)
+    if target_dtype is None:
+        target_dtype = default_float_dtype(resolved)
+    return Tensor.eye(n, m, dtype=target_dtype, device=resolved)
 
 
 def arange(start, stop=None, step=1, dtype=None, device=None):
-    return Tensor.arange(start, stop, step, dtype=dtype, device=_resolve_device(device))
+    resolved = _resolve_device(device)
+    target_dtype = coerce_dtype(dtype, resolved)
+    return Tensor.arange(start, stop, step, dtype=target_dtype, device=resolved)
 
 
 def linspace(start, stop, steps, dtype=None, device=None):
-    return Tensor.linspace(start, stop, steps, dtype=dtype, device=_resolve_device(device))
+    resolved = _resolve_device(device)
+    target_dtype = coerce_dtype(dtype, resolved)
+    return Tensor.linspace(start, stop, steps, dtype=target_dtype, device=resolved)
 
 
 def reshape(x: Tensor, shape):
