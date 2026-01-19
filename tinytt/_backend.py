@@ -17,11 +17,11 @@ if _TINYGRAD_ROOT.exists() and str(_TINYGRAD_ROOT) not in sys.path:
 _TINYTT_DEVICE_ENV = os.getenv("TINYTT_DEVICE")
 _OPS_GPU_EXISTS = (_TINYGRAD_ROOT / "tinygrad" / "runtime" / "ops_gpu.py").exists()
 if _TINYTT_DEVICE_ENV and _TINYTT_DEVICE_ENV.upper().startswith("GPU") and not _OPS_GPU_EXISTS:
-    if "DEV" not in os.environ:
-        suffix = _TINYTT_DEVICE_ENV[3:]
-        mapped = "CL" + suffix
-        os.environ["DEV"] = mapped
-        os.environ.setdefault(mapped.split(":")[0], "1")
+    suffix = _TINYTT_DEVICE_ENV[3:]
+    mapped = "CL" + suffix
+    os.environ["DEV"] = mapped
+    os.environ.setdefault(mapped.split(":")[0], "1")
+    os.environ.pop("GPU", None)
 
 from tinygrad import Tensor, dtypes, TinyJit
 
