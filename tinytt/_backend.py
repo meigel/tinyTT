@@ -14,6 +14,9 @@ _TINYGRAD_ROOT = Path(__file__).resolve().parents[1] / "tinygrad"
 if _TINYGRAD_ROOT.exists() and str(_TINYGRAD_ROOT) not in sys.path:
     sys.path.insert(0, str(_TINYGRAD_ROOT))
 
+if not os.getenv("TINYTT_DEVICE") and not os.getenv("DEV"):
+    os.environ["DEV"] = "CPU"
+
 _TINYTT_DEVICE_ENV = os.getenv("TINYTT_DEVICE")
 _OPS_GPU_EXISTS = (_TINYGRAD_ROOT / "tinygrad" / "runtime" / "ops_gpu.py").exists()
 if _TINYTT_DEVICE_ENV and _TINYTT_DEVICE_ENV.upper().startswith("GPU") and not _OPS_GPU_EXISTS:
@@ -62,6 +65,10 @@ def supports_fp64(device=None):
         _FP64_SUPPORT_CACHE[dev_key] = True
     except Exception:
         _FP64_SUPPORT_CACHE[dev_key] = False
+        global _FORCE_FP32
+        if not _FORCE_FP32:
+            _FORCE_FP32 = True
+            os.environ["TINYTT_FORCE_FP32"] = "1"
     return _FP64_SUPPORT_CACHE[dev_key]
 
 
