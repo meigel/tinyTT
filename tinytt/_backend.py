@@ -62,19 +62,15 @@ def supports_fp64(device=None):
         _FP64_SUPPORT_CACHE[dev_key] = True
     except Exception:
         _FP64_SUPPORT_CACHE[dev_key] = False
-    global _FORCE_FP32
-    if not _FP64_SUPPORT_CACHE[dev_key] and not _FORCE_FP32:
-        _FORCE_FP32 = True
-        os.environ["TINYTT_FORCE_FP32"] = "1"
     return _FP64_SUPPORT_CACHE[dev_key]
 
 
 def _should_force_fp32(device):
-    if _FORCE_FP32:
-        return True
     dev = _resolve_device(device)
     if dev is None or _is_cpu_device(dev):
         return False
+    if _FORCE_FP32:
+        return True
     return not supports_fp64(dev)
 
 
