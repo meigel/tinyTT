@@ -18,23 +18,36 @@ try:
 except Exception:
     pytest.skip("Requested TINYTT_DEVICE is unavailable", allow_module_level=True)
 
+def _supports_fp64():
+    try:
+        t = tn.tensor([1.0], dtype=tn.float64, device=DEVICE)
+        t.realize()
+        return True
+    except Exception:
+        return False
+
+
+DTYPE = tn.float64 if _supports_fp64() else tn.float32
+NP_DTYPE = np.float64 if DTYPE == tn.float64 else np.float32
+ATOL = 1e-10 if DTYPE == tn.float64 else 1e-5
+
 
 def test_gpu_tt_basic_ops():
-    full = np.arange(8, dtype=np.float64).reshape(2, 2, 2)
-    x = tt.TT(full, eps=1e-12, device=DEVICE)
-    y = tt.ones([2, 2, 2])
+    full = np.arange(8, dtype=NP_DTYPE).reshape(2, 2, 2)
+    x = tt.TT(full, eps=1e-12, device=DEVICE, dtype=DTYPE)
+    y = tt.ones([2, 2, 2], device=DEVICE, dtype=DTYPE)
 
     assert DEVICE_RESOLVED.lower() in str(x.cores[0].device).lower()
     assert DEVICE_RESOLVED.lower() in str(y.cores[0].device).lower()
 
     z = x + y
     ref = full + np.ones_like(full)
-    assert np.allclose(z.full().numpy(), ref, atol=1e-10)
+    assert np.allclose(z.full().numpy(), ref, atol=ATOL)
 
 
 def test_gpu_tt_matrix_matvec():
-    A = tt.eye([2, 2, 2], device=DEVICE)
-    x = tt.random([2, 2, 2], [1, 2, 2, 1], device=DEVICE)
+    A = tt.eye([2, 2, 2], device=DEVICE, dtype=DTYPE)
+    x = tt.random([2, 2, 2], [1, 2, 2, 1], device=DEVICE, dtype=DTYPE)
     y = A @ x
 
-    assert np.allclose(y.full().numpy(), x.full().numpy(), atol=1e-10)
+    assert np.allclose(y.full().numpy(), x.full().numpy(), atol=ATOL)
