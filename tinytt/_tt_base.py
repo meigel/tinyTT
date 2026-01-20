@@ -5,6 +5,7 @@ Core TT class backed by tinygrad.
 from __future__ import annotations
 
 import sys
+import math
 import numpy as np
 import tinytt._backend as tn
 from tinytt._decomposition import mat_to_tt, to_tt, round_tt
@@ -291,3 +292,67 @@ class TT:
             rmax = [1] + len(self.__N) * [rmax] + [1]
         tt_cores, _ = round_tt(self.cores, self.__R.copy(), eps, rmax, self.__is_ttm)
         return TT(tt_cores)
+
+    def to_qtt(self, eps=1e-12, mode_size=2, rmax=sys.maxsize):
+        cores_new = []
+        if self.__is_ttm:
+            shape_new = []
+            for i in range(len(self.__N)):
+                if self.__N[i] != self.__M[i]:
+                    raise ShapeMismatch('Only quadratic TTM can be tranformed to QTT.')
+                if self.__N[i] == mode_size ** int(math.log(self.N[i], mode_size)):
+                    shape_new += [(mode_size, mode_size)] * int(math.log(self.__N[i], mode_size))
+                else:
+                    raise ShapeMismatch(
+                        'Reshaping error: check if the dimensions are powers of the desired mode size:\r\n'
+                        f'core size {list(self.cores[i].shape)} cannot be reshaped.'
+                    )
+            import tinytt._extras as _extras
+            result = _extras.reshape(self, shape_new, eps, rmax)
+        else:
+            for core in self.cores:
+                if int(math.log(core.shape[1], mode_size)) > 1:
+                    nnew = [core.shape[0] * mode_size] + [mode_size] * (
+                        int(math.log(core.shape[1], mode_size)) - 2
+                    ) + [core.shape[2] * mode_size]
+                    try:
+                        core = tn.reshape(core, nnew)
+                    except Exception as exc:
+                        raise ShapeMismatch(
+                            'Reshaping error: check if the dimensions are powers of the desired mode size:\r\n'
+                            f'core size {list(core.shape)} cannot be reshaped to {nnew}'
+                        ) from exc
+                    cores, _ = to_tt(core, nnew, eps, rmax, is_sparse=False)
+                    cores_new.append(tn.reshape(cores[0], [-1, mode_size, cores[0].shape[-1]]))
+                    cores_new += cores[1:-1]
+                    cores_new.append(tn.reshape(cores[-1], [cores[-1].shape[0], mode_size, -1]))
+                else:
+                    cores_new.append(core)
+            result = TT(cores_new)
+        return result
+
+    def qtt_to_tens(self, original_shape):
+        if not isinstance(original_shape, list):
+            raise InvalidArguments('Original shape must be a list.')
+
+        core = None
+        cores_new = []
+        if self.__is_ttm:
+            pass
+        else:
+            k = 0
+            for c in self.cores:
+                if core is None:
+                    core = c
+                    so_far = core.shape[1]
+                else:
+                    core = tn.einsum('...i,ijk->...jk', core, c)
+                    so_far *= c.shape[1]
+                if so_far == original_shape[k]:
+                    core = tn.reshape(core, [core.shape[0], -1, core.shape[-1]])
+                    cores_new.append(core)
+                    core = None
+                    k += 1
+            if k != len(original_shape):
+                raise ShapeMismatch('Mode sizes do not match.')
+        return TT(cores_new)

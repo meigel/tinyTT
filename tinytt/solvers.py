@@ -429,11 +429,7 @@ def _amen_solve_python(
                 B = tn.einsum('lsr,smnRL->lmLrnR', Phis[k], Bp)
                 B = tn.reshape(B, [rx[k] * N[k] * rx[k + 1], rx[k] * N[k] * rx[k + 1]])
 
-                solution_now = tn.tensor(
-                    np.linalg.solve(B.numpy(), rhs.numpy()),
-                    dtype=dtype,
-                    device=device,
-                )
+                solution_now = tn.linalg.solve(B, rhs)
 
                 res_old = _scalar(tn.linalg.norm(B @ previous_solution - rhs)) / norm_rhs
                 res_new = _scalar(tn.linalg.norm(B @ solution_now - rhs)) / norm_rhs
@@ -801,11 +797,7 @@ def _als_solve_python(
                 B = tn.einsum('lsr,smnRL->lmLrnR', Phis[k], Bp)
                 B = tn.reshape(B, [rx[k] * N[k] * rx[k + 1], rx[k] * N[k] * rx[k + 1]])
 
-                solution_now = tn.tensor(
-                    np.linalg.solve(B.numpy(), rhs.numpy()),
-                    dtype=dtype,
-                    device=device,
-                )
+                solution_now = tn.linalg.solve(B, rhs)
 
                 res_old = _scalar(tn.linalg.norm(B @ previous_solution - rhs)) / norm_rhs
                 res_new = _scalar(tn.linalg.norm(B @ solution_now - rhs)) / norm_rhs

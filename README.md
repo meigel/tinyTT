@@ -109,3 +109,18 @@ PyTorch is optional unless you run parity/reference tests.
 - `TORCHTT_TINYJIT=1`: enable TinyJit in selected kernels.
 - `TINYTT_SVD_BACKEND=numpy|tinygrad`: choose SVD backend (default: numpy).
 - `TINYTT_FORCE_FP32=1`: force float32 when the device lacks fp64 support (auto-detected).
+
+## Numpy Fallbacks and Performance Notes
+
+Some routines use NumPy fallbacks for stability or because tinygrad lacks
+equivalent ops. These run on CPU and can incur host/device transfers:
+
+- SVD in `tinytt/_decomposition.py` defaults to NumPy unless `TINYTT_SVD_BACKEND=tinygrad`.
+- Interpolation (`tinytt/interpolate.py`) uses NumPy for `maxvol` and linear solves.
+- UQ-ADF (`tinytt/uq_adf.py`) uses NumPy `solve` and `lgamma`-based scaling.
+- Some solver helpers use NumPy `solve` on small dense systems.
+
+Performance impact: these sections are likely to dominate runtime for
+interpolation/UQ-ADF on GPU because they force CPU execution and data transfer.
+Replacing them with tinygrad GPU ops (or batching solves) would be the most
+impactful path to GPU speedups.

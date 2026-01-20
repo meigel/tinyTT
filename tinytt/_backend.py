@@ -284,6 +284,47 @@ def abs(x: Tensor):
     return x.abs()
 
 
+def _stack_rows(rows):
+    if len(rows) == 1:
+        return rows[0].reshape(1, -1)
+    return rows[0].stack(*rows[1:], dim=0)
+
+
+def _backsolve(R: Tensor, y: Tensor):
+    n = int(R.shape[0])
+    y2 = y
+    squeeze = False
+    if y2.ndim == 1:
+        y2 = y2.reshape(n, 1)
+        squeeze = True
+    x_rows = [None] * n
+    for i in range(n - 1, -1, -1):
+        rhs = y2[i]
+        if i + 1 < n:
+            R_row = R[i, i + 1:]
+            x_tail = _stack_rows(x_rows[i + 1:])
+            rhs = rhs - (R_row.reshape(1, -1) @ x_tail).squeeze(0)
+        x_rows[i] = rhs / R[i, i]
+    x = _stack_rows(x_rows)
+    return x.squeeze(1) if squeeze else x
+
+
+def solve(a: Tensor, b: Tensor):
+    if not isinstance(a, Tensor) or not isinstance(b, Tensor):
+        a_np = np.asarray(a)
+        b_np = np.asarray(b)
+        return np.linalg.solve(a_np, b_np)
+    if a.ndim != 2 or a.shape[0] != a.shape[1]:
+        raise ValueError("solve expects a square 2D matrix")
+    backend = os.getenv("TINYTT_SOLVE_BACKEND", "numpy").lower()
+    if _is_cpu_device(a.device) and backend == "numpy":
+        out = np.linalg.solve(a.numpy(), b.numpy())
+        return Tensor(out, dtype=a.dtype, device=a.device)
+    q, r = a.qr()
+    y = q.transpose(0, 1) @ b
+    return _backsolve(r, y)
+
+
 class _Linalg:
     def norm(self, x: Tensor):
         return (x * x).sum().sqrt()
@@ -293,6 +334,9 @@ class _Linalg:
 
     def svd(self, x: Tensor, full_matrices: bool = False):
         return x.svd(full_matrices=full_matrices)
+
+    def solve(self, a: Tensor, b: Tensor):
+        return solve(a, b)
 
 
 linalg = _Linalg()

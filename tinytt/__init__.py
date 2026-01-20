@@ -27,6 +27,8 @@ from ._dmrg import dmrg_hadamard
 from ._fast_mult import fast_hadammard, fast_mv, fast_mm
 from . import grad
 from . import solvers
+from . import interpolate
+from . import uq_adf
 
 __all__ = [
     'TT',
@@ -50,6 +52,8 @@ __all__ = [
     'shape_tuple_to_mn',
     'grad',
     'solvers',
+    'interpolate',
+    'uq_adf',
     'dmrg_hadamard',
     'fast_hadammard',
     'fast_mv',
