@@ -98,6 +98,9 @@ Run reference tests (requires PyTorch):
 PYTHONPATH=. pytest -q tests_ref
 ```
 
+The `tests/test_uq_adf_skfem.py` case can be slow. It prints progress and
+skips automatically if it exceeds the time budget.
+
 ## Notes on Optional Reference Code
 
 `torchtt_ref/` is included for parity testing and API comparison. Installing
