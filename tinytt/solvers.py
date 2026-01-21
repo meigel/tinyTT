@@ -7,7 +7,7 @@ from __future__ import annotations
 import datetime
 import numpy as np
 import tinytt._backend as tn
-from tinytt._decomposition import QR, SVD, lr_orthogonal, rl_orthogonal
+from tinytt._decomposition import QR, SVD, lr_orthogonal, rl_orthogonal, rank_chop
 from tinytt._iterative_solvers import BiCGSTAB_reset, gmres_restart
 from tinytt._extras import ones, random
 from tinytt._tt_base import TT
@@ -142,6 +142,340 @@ class _LinearOp:
 
 def cpp_enabled():
     return False
+
+
+def _local_AB(Phi_left, Phi_right, coreA, coreB):
+    return tn.einsum('rab,amkA,bknB,RAB->rmnR', Phi_left, coreA, coreB, Phi_right)
+
+
+def _compute_phi_bck_x(Phi_now, core_left, core_right):
+    return tn.einsum('LR,lmnL,rmnR->lr', Phi_now, core_left, core_right)
+
+
+def _compute_phi_fwd_x(Phi_now, core_left, core_right):
+    return tn.einsum('lr,lMNL,rMNR->LR', Phi_now, core_left, core_right)
+
+
+def _compute_phi_bck_AB(Phi_now, coreA, coreB, core):
+    return tn.einsum('RAB,amkA,bknB,rmnR->rab', Phi_now, coreA, coreB, core)
+
+
+def _compute_phi_fwd_AB(Phi_now, coreA, coreB, core):
+    return tn.einsum('rab,amkA,bknB,rmnR->RAB', Phi_now, coreA, coreB, core)
+
+
+def _amen_mm_python(
+    A_cores,
+    B_cores,
+    M,
+    N,
+    K,
+    to_ttm,
+    nswp=22,
+    X0_cores=None,
+    rx=None,
+    eps=1e-10,
+    rmax=1024,
+    kickrank=4,
+    kick2=0,
+    verbose=False,
+):
+    if verbose:
+        time_total = datetime.datetime.now()
+
+    dtype = A_cores[0].dtype
+    device = A_cores[0].device
+    d = len(N)
+
+    if X0_cores is None:
+        x_cores = [tn.zeros([1, m, n, 1], dtype=dtype, device=device) for m, n in zip(M, N)]
+        rx = [1] * (d + 1)
+    else:
+        x_cores = [tn.reshape(c, [c.shape[0], m, n, c.shape[-1]]) for c, m, n in zip(X0_cores, M, N)]
+
+    if isinstance(rmax, int):
+        rmax = [1] + (d - 1) * [rmax] + [1]
+
+    rz = [1] + (d - 1) * [kickrank + kick2] + [1]
+    z_tt = random([(m, n) for m, n in zip(M, N)], rz, dtype, device=device)
+    z_cores = [tn.reshape(c, [c.shape[0], -1, c.shape[-1]]) for c in z_tt.cores]
+    z_cores, rz = rl_orthogonal(z_cores, rz, False)
+    z_cores = [tn.reshape(c, [c.shape[0], m, -1, c.shape[-1]]) for c, m in zip(z_cores, M)]
+
+    norms = np.zeros(d)
+    Phiz = [tn.ones((1, 1), dtype=dtype, device=device)] + [None] * (d - 1) + [
+        tn.ones((1, 1), dtype=dtype, device=device)
+    ]
+    Phiz_rhs = [tn.ones((1, 1, 1), dtype=dtype, device=device)] + [None] * (d - 1) + [
+        tn.ones((1, 1, 1), dtype=dtype, device=device)
+    ]
+
+    Phis = [tn.ones((1, 1), dtype=dtype, device=device)] + [None] * (d - 1) + [
+        tn.ones((1, 1), dtype=dtype, device=device)
+    ]
+    Phis_rhs = [tn.ones((1, 1, 1), dtype=dtype, device=device)] + [None] * (d - 1) + [
+        tn.ones((1, 1, 1), dtype=dtype, device=device)
+    ]
+
+    last = False
+
+    normA = np.ones((d - 1))
+    normb = np.ones((d - 1))
+    normx = np.ones((d - 1))
+    nrmsc = 1.0
+
+    if verbose:
+        print('Starting AMEn multiplication with:\n\tepsilon: %g\n\tsweeps: %d' % (eps, nswp))
+        print()
+
+    for swp in range(nswp):
+        if verbose:
+            print()
+            print('Starting sweep %d %s...' % (swp + 1, "(last one) " if last else ""))
+            tme_sweep = datetime.datetime.now()
+
+        for k in range(d - 1, 0, -1):
+            if not last:
+                if swp > 0:
+                    czx = tn.einsum('zr,rmnR,ZR->zmnZ', Phiz[k], x_cores[k], Phiz[k + 1])
+                    czAB = _local_AB(Phiz_rhs[k], Phiz_rhs[k + 1], A_cores[k], B_cores[k])
+
+                    cz_new = czAB * nrmsc - czx
+                    _, _, vz = SVD(tn.reshape(cz_new, [cz_new.shape[0], -1]))
+                    cz_new = tn.transpose(vz[: min(kickrank, vz.shape[0]), :], 0, 1)
+                    if k < d - 1:
+                        cz_new = tn.cat(
+                            (
+                                cz_new,
+                                tn.randn((cz_new.shape[0], kick2), dtype=dtype, device=device),
+                            ),
+                            1,
+                        )
+                else:
+                    cz_new = tn.transpose(tn.reshape(z_cores[k], [rz[k], -1]), 0, 1)
+
+                qz, _ = QR(cz_new)
+                rz[k] = qz.shape[1]
+                z_cores[k] = tn.reshape(tn.transpose(qz, 0, 1), [rz[k], M[k], N[k], rz[k + 1]])
+
+            if swp > 0:
+                nrmsc = nrmsc * normA[k - 1] * normx[k - 1] / normb[k - 1]
+
+            core = tn.transpose(tn.reshape(x_cores[k], [rx[k], M[k] * N[k] * rx[k + 1]]), 0, 1)
+            Qmat, Rmat = QR(core)
+
+            core_prev = tn.einsum('ijlk,km->ijlm', x_cores[k - 1], tn.transpose(Rmat, 0, 1))
+            rx[k] = Qmat.shape[1]
+
+            current_norm = _scalar(tn.linalg.norm(core_prev))
+            if current_norm > 0:
+                core_prev = core_prev / current_norm
+            else:
+                current_norm = 1.0
+            normx[k - 1] = normx[k - 1] * current_norm
+
+            x_cores[k] = tn.reshape(tn.transpose(Qmat, 0, 1), [rx[k], M[k], N[k], rx[k + 1]])
+            x_cores[k - 1] = core_prev
+
+            Phis[k] = _compute_phi_bck_x(Phis[k + 1], x_cores[k], x_cores[k])
+            Phis_rhs[k] = _compute_phi_bck_AB(Phis_rhs[k + 1], A_cores[k], B_cores[k], x_cores[k])
+
+            norm = _scalar(tn.linalg.norm(Phis_rhs[k]))
+            norm = norm if norm > 0 else 1.0
+            normb[k - 1] = norm
+            Phis_rhs[k] = Phis_rhs[k] / norm
+
+            nrmsc = nrmsc * normb[k - 1] / (normA[k - 1] * normx[k - 1])
+
+            if not last:
+                Phiz[k] = _compute_phi_bck_x(Phiz[k + 1], z_cores[k], x_cores[k]) / normA[k - 1]
+                Phiz_rhs[k] = _compute_phi_bck_AB(
+                    Phiz_rhs[k + 1], A_cores[k], B_cores[k], z_cores[k]
+                ) / normb[k - 1]
+
+        max_dx = 0.0
+
+        for k in range(d):
+            if verbose:
+                print('\tCore', k)
+            previous_solution = x_cores[k]
+
+            solution_now = _local_AB(Phis_rhs[k], Phis_rhs[k + 1], A_cores[k], B_cores[k]) * nrmsc
+            norm_solution = tn.linalg.norm(solution_now)
+
+            dx = _scalar(tn.linalg.norm(solution_now - previous_solution) / tn.linalg.norm(solution_now))
+            if verbose:
+                print('\t\tdx = %g' % (dx))
+
+            max_dx = max(dx, max_dx)
+
+            solution_now = tn.reshape(solution_now, [rx[k] * M[k] * N[k], rx[k + 1]])
+            if k < d - 1:
+                u, s, v = SVD(solution_now)
+
+                r = rank_chop(
+                    s.numpy(),
+                    (norm_solution * eps / (d ** (0.5 if last else 1.5))).numpy(),
+                )
+                r = min([r, tn.numel(s), rmax[k + 1]])
+                r = int(r)
+            else:
+                u, v = QR(solution_now)
+                r = int(u.shape[1])
+                s = tn.ones((r,), dtype=dtype, device=device)
+
+            u = u[:, :r]
+            v = tn.diag(s[:r]) @ v[:r, :]
+            v = tn.transpose(v, 0, 1)
+
+            if not last:
+                czx = tn.einsum(
+                    'zr,rmnR,ZR->zmnZ',
+                    Phiz[k],
+                    tn.reshape(u @ tn.transpose(v, 0, 1), [rx[k], M[k], N[k], rx[k + 1]]),
+                    Phiz[k + 1],
+                )
+                czAB = _local_AB(Phiz_rhs[k], Phiz_rhs[k + 1], A_cores[k], B_cores[k])
+
+                cz_new = czAB * nrmsc - czx
+
+                uz, _, _ = SVD(tn.reshape(cz_new, [rz[k] * M[k] * N[k], rz[k + 1]]))
+                cz_new = uz[:, : min(kickrank, uz.shape[1])]
+                if k < d - 1:
+                    cz_new = tn.cat(
+                        (
+                            cz_new,
+                            tn.randn((cz_new.shape[0], kick2), dtype=dtype, device=device),
+                        ),
+                        1,
+                    )
+
+                qz, _ = QR(cz_new)
+                rz[k + 1] = qz.shape[1]
+                z_cores[k] = tn.reshape(qz, [rz[k], M[k], N[k], rz[k + 1]])
+
+            if k < d - 1:
+                if not last:
+                    czx = tn.einsum(
+                        'zr,rmnR,ZR->zmnZ',
+                        Phis[k],
+                        tn.reshape(u @ tn.transpose(v, 0, 1), [rx[k], M[k], N[k], rx[k + 1]]),
+                        Phiz[k + 1],
+                    )
+                    czAB = _local_AB(Phis_rhs[k], Phiz_rhs[k + 1], A_cores[k], B_cores[k])
+
+                    uk = czAB * nrmsc - czx
+
+                    u, Rmat = QR(tn.cat((u, tn.reshape(uk, [u.shape[0], -1])), 1))
+                    r_add = uk.shape[-1]
+                    v = tn.cat((v, tn.zeros([rx[k + 1], r_add], dtype=dtype, device=device)), 1)
+                    v = v @ tn.transpose(Rmat, 0, 1)
+
+                r = u.shape[1]
+                v = tn.einsum('ji,jklm->iklm', v, x_cores[k + 1])
+
+                nrmsc = nrmsc * normA[k] * normx[k] / normb[k]
+
+                norm_now = tn.linalg.norm(v)
+
+                norm_now_val = _scalar(norm_now)
+                if norm_now_val > 0:
+                    v = v / norm_now
+                else:
+                    norm_now_val = 1.0
+                normx[k] = normx[k] * norm_now_val
+
+                x_cores[k] = tn.reshape(u, [rx[k], M[k], N[k], r])
+                x_cores[k + 1] = tn.reshape(v, [r, M[k + 1], N[k + 1], rx[k + 2]])
+                rx[k + 1] = r
+
+                Phis[k + 1] = _compute_phi_fwd_x(Phis[k], x_cores[k], x_cores[k])
+                Phis_rhs[k + 1] = _compute_phi_fwd_AB(Phis_rhs[k], A_cores[k], B_cores[k], x_cores[k])
+
+                norm = _scalar(tn.linalg.norm(Phis_rhs[k + 1]))
+                norm = norm if norm > 0 else 1.0
+                normb[k] = norm
+                Phis_rhs[k + 1] = Phis_rhs[k + 1] / norm
+
+                nrmsc = nrmsc * normb[k] / (normA[k] * normx[k])
+
+                if not last:
+                    Phiz[k + 1] = _compute_phi_fwd_x(Phiz[k], z_cores[k], x_cores[k]) / normA[k]
+                    Phiz_rhs[k + 1] = _compute_phi_fwd_AB(
+                        Phiz_rhs[k], A_cores[k], B_cores[k], z_cores[k]
+                    ) / normb[k]
+            else:
+                x_cores[k] = tn.reshape(
+                    u @ tn.diag(s[:r]) @ tn.transpose(v[:r, :], 0, 1),
+                    [rx[k], M[k], N[k], rx[k + 1]],
+                )
+
+        if verbose:
+            print('Solution rank is', rx)
+            print('Maxdx ', max_dx)
+            tme_sweep = datetime.datetime.now() - tme_sweep
+            print('Time ', tme_sweep)
+
+        if last:
+            break
+
+        if max_dx < eps:
+            last = True
+
+    if verbose:
+        time_total = datetime.datetime.now() - time_total
+        print()
+        print('Finished after', swp + 1, ' sweeps and ', time_total)
+        print()
+    normx = np.exp(np.sum(np.log(normx)) / d)
+
+    for k in range(d):
+        x_cores[k] = x_cores[k] * normx
+
+    if to_ttm:
+        return TT(x_cores)
+    return TT([tn.reshape(c, [c.shape[0], c.shape[1], c.shape[-1]]) for c in x_cores])
+
+
+def amen_mm(
+    A,
+    B,
+    nswp=22,
+    X0=None,
+    eps=1e-10,
+    rmax=1024,
+    kickrank=4,
+    kick2=0,
+    verbose=False,
+):
+    """
+    Perform the TTM-TTM product using AMEn optimization.
+    """
+    if not (isinstance(A, TT) and isinstance(B, TT)):
+        raise InvalidArguments('A and B must be TT instances.')
+    if not (A.is_ttm and B.is_ttm):
+        raise IncompatibleTypes('A and B must be TT-matrices.')
+    if A.N != B.M:
+        raise ShapeMismatch('Shapes do not match.')
+    if X0 is not None and not isinstance(X0, TT):
+        raise InvalidArguments('X0 must be a TT instance or None.')
+
+    return _amen_mm_python(
+        A.cores,
+        B.cores,
+        A.M,
+        B.N,
+        A.N,
+        True,
+        nswp,
+        X0.cores if X0 is not None else None,
+        X0.R if X0 is not None else None,
+        eps,
+        rmax,
+        kickrank,
+        kick2,
+        verbose,
+    )
 
 
 def amen_solve(

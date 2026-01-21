@@ -10,6 +10,7 @@ parity tests.
 - Optional TinyJit acceleration (`TORCHTT_TINYJIT=1`).
 - Optional numpy-backed SVD for faster CPU decomposition (`TINYTT_SVD_BACKEND=numpy`).
 - Parity tests against `torchtt_ref` when PyTorch is installed.
+- AMEn-based `amen_mm` and solver suite (ALS/AMEn/DMRG) in TT form.
 
 ## Repository Layout
 

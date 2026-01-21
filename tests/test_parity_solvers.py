@@ -121,3 +121,34 @@ def test_amen_solve_cprec_parity():
     assert res_ref < 1e-6
     assert res_tiny < 1e-6
     assert res_tiny <= res_ref * 10 + 1e-6
+
+
+def test_amen_mm_parity():
+    rng = np.random.RandomState(3)
+    N = [3, 3, 3]
+    rA = [1, 2, 2, 1]
+    rB = [1, 2, 2, 1]
+
+    A_cores = [
+        rng.rand(rA[0], N[0], N[0], rA[1]).astype(np.float64),
+        rng.rand(rA[1], N[1], N[1], rA[2]).astype(np.float64),
+        rng.rand(rA[2], N[2], N[2], rA[3]).astype(np.float64),
+    ]
+    B_cores = [
+        rng.rand(rB[0], N[0], N[0], rB[1]).astype(np.float64),
+        rng.rand(rB[1], N[1], N[1], rB[2]).astype(np.float64),
+        rng.rand(rB[2], N[2], N[2], rB[3]).astype(np.float64),
+    ]
+
+    A_ref = tt_ref.TT([torch.tensor(c) for c in A_cores])
+    B_ref = tt_ref.TT([torch.tensor(c) for c in B_cores])
+    A_tiny = tt_tiny.TT(A_cores)
+    B_tiny = tt_tiny.TT(B_cores)
+
+    ref = (A_ref @ B_ref).round(1e-12)
+    out = tt_tiny.amen_mm(A_tiny, B_tiny, kickrank=4, eps=1e-12, verbose=False)
+
+    ref_full = ref.full().detach().cpu().numpy()
+    out_full = out.full().numpy()
+    rel = np.linalg.norm(out_full - ref_full) / np.linalg.norm(ref_full)
+    assert rel < 1e-6
