@@ -30,6 +30,7 @@ from . import solvers
 from .solvers import amen_mm
 from . import interpolate
 from . import uq_adf
+from . import tdvp
 
 __all__ = [
     'TT',
@@ -56,6 +57,7 @@ __all__ = [
     'amen_mm',
     'interpolate',
     'uq_adf',
+    'tdvp',
     'dmrg_hadamard',
     'fast_hadammard',
     'fast_mv',

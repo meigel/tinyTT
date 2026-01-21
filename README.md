@@ -77,6 +77,7 @@ Examples are in `examples/`, including:
 - `examples/tt_helpers.py` and `examples/tt_linalg.py` for helper ops.
 - `examples/tt_fast_products.py` and `examples/tt_dmrg.py` for fast products.
 - `examples/tt_solvers.py` and `examples/tt_autograd.py` for solvers and AD.
+- `examples/mpo_ising_tdvp.py` for a minimal MPO + TDVP imaginary-time sweep.
 
 ## Tests
 
@@ -113,6 +114,16 @@ PyTorch is optional unless you run parity/reference tests.
 - `TORCHTT_TINYJIT=1`: enable TinyJit in selected kernels.
 - `TINYTT_SVD_BACKEND=numpy|tinygrad`: choose SVD backend (default: numpy).
 - `TINYTT_FORCE_FP32=1`: force float32 when the device lacks fp64 support (auto-detected).
+
+## TDVP (Imaginary and Real Time)
+
+`tinytt.tdvp.tdvp_imag_time` implements one-site or two-site imaginary-time TDVP
+sweeps for finite MPS/MPO. Local evolution uses dense eigendecomposition for
+small blocks and a Lanczos-based Krylov exp-action for larger blocks.
+
+`tinytt.tdvp.tdvp_real_time` evolves a real/imag split state and returns
+`(psi_re, psi_im)`. It uses the same local Krylov exp-action, but truncates
+real and imaginary parts separately (approximate).
 
 ## Numpy Fallbacks and Performance Notes
 
