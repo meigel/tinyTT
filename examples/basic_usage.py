@@ -13,8 +13,8 @@ scaled = 0.5 * (xt + ones)
 print("Scaled shape:", scaled.full().shape)
 
 # Simple TT-matrix matvec
-A_full = np.eye(4, dtype=np.float64)
-A_full = A_full.reshape(2, 2, 2, 2)
-A = tt.TT(A_full, shape=[(2, 2), (2, 2)], eps=1e-12)
+A_full = np.eye(8, dtype=np.float64)
+A_full = A_full.reshape(2, 2, 2, 2, 2, 2)
+A = tt.TT(A_full, shape=[(2, 2), (2, 2), (2, 2)], eps=1e-12)
 y = A @ xt
 print("Matvec error:", np.linalg.norm(y.full().numpy() - xt.full().numpy()))

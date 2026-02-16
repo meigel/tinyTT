@@ -31,6 +31,10 @@ classifiers = [
 [tool.pytest.ini_options]
 minversion = "6.0"
 addopts = "-ra -q"
+markers = [
+    "fast: quick smoke tests intended for tight feedback loops",
+    "slow: long-running integration or reference-quality tests",
+]
 testpaths = [
     "tests",
 ]

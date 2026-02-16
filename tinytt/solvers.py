@@ -620,7 +620,6 @@ def _amen_solve_python(
     damp = 2
 
     x = ones(b.N, dtype=dtype, device=device) if x0 is None else x0
-
     rA = A.R
     N = b.N
     d = len(N)
@@ -1039,7 +1038,17 @@ def _als_solve_python(
     device = A.cores[0].device
     damp = 2
 
-    x = ones(b.N, dtype=dtype, device=device) if x0 is None else x0
+    # ALS rank growth is limited by the current iterate ranks. Starting from a
+    # rank-1 tensor (ones) can stall on problems whose solution needs higher
+    # ranks (for example, identity systems with nontrivial RHS rank).
+    x = b.clone() if x0 is None else x0
+    b_norm = _scalar(b.norm())
+    if b_norm == 0.0:
+        return b.clone()
+    init_rel_res = _scalar((A @ x - b).norm()) / b_norm
+    if init_rel_res <= eps:
+        return x
+
     N = b.N
     d = len(N)
     x_cores = x.cores.copy()

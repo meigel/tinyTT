@@ -58,6 +58,7 @@ def _relative_l2_h1(err, ref, m, k):
     return np.sqrt(l2_num / l2_den), np.sqrt(h1_num / h1_den)
 
 
+@pytest.mark.slow
 def test_uq_adf_darcy_log_normal_skfem():
     skfem = pytest.importorskip("skfem")
     pytest.importorskip("scipy")

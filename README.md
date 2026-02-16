@@ -103,6 +103,11 @@ PYTHONPATH=. pytest -q tests_ref
 The `tests/test_uq_adf_skfem.py` case can be slow. It prints progress and
 skips automatically if it exceeds the time budget.
 
+For UQ-ADF specifically:
+
+- Fast smoke test: `PYTHONPATH=. pytest -q tests/test_uq_adf_fast.py`
+- Slow `skfem` integration: `PYTHONPATH=. pytest -q tests/test_uq_adf_skfem.py`
+
 ## Notes on Optional Reference Code
 
 `torchtt_ref/` is included for parity testing and API comparison. Installing
