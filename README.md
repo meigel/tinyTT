@@ -11,6 +11,7 @@ parity tests.
 - Optional numpy-backed SVD for faster CPU decomposition (`TINYTT_SVD_BACKEND=numpy`).
 - Parity tests against `torchtt_ref` when PyTorch is installed.
 - AMEn-based `amen_mm` and solver suite (ALS/AMEn/DMRG) in TT form.
+- TDVP and BUG time evolution methods.
 
 ## Repository Layout
 
@@ -20,6 +21,7 @@ parity tests.
 - `tests_ref/`: upstream reference tests (require PyTorch).
 - `examples/`: tinyTT examples.
 - `examples_ref/`: original torchTT examples (reference only).
+- `third party reference/`: reference implementations (BUG, TDVP).
 
 ## Setup
 

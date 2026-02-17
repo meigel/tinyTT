@@ -9,6 +9,7 @@ autograd utilities). Key supporting areas are organized as follows:
 - `examples_ref/` reference-only torchtt examples.
 - `tinygrad/` is a pinned submodule (optional if you use pip `tinygrad`).
 - `torchtt_ref/` is an optional submodule providing the `torchtt` reference.
+- `third party reference/` contains reference implementations (BUG, TDVP) ported from external sources.
 
 ## Build, Test, and Development Commands
 - `python -m venv venv && source venv/bin/activate` creates/activates the venv.
