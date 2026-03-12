@@ -281,11 +281,59 @@ A separate 5-seed convergence check for the same `d=10` nonlinear benchmark show
 - all runs stayed finite
 - all runs reduced training loss
 
+##### Parametric transport PDE benchmark: 1D advection-diffusion
+
+The most relevant PDE-style benchmark in this repository is the **parametric 1D advection-diffusion transport problem** implemented in `examples/benchmark_ctt_advection_diffusion.py`.
+
+We learn the transport map
+
+```math
+(a, \mu) \mapsto u(T),
+```
+
+where:
+
+- `a \in \mathbb{R}^d` is the **initial state sampled on a 1D grid**
+- `\mu \in \mathbb{R}^3` is the **PDE parameter vector**
+- `u(T)` is the **solution at final time**
+
+The PDE is a periodic 1D advection-diffusion equation of the form
+
+```math
+u_t + c(\mu) u_x = \nu(\mu) u_{xx} + f(x; \mu),
+```
+
+with periodic boundary conditions.
+
+In the benchmark, the parameterization is:
+
+- `\mu_1`: controls the **advection speed** `c(\mu)`
+- `\mu_2`: controls the **diffusion coefficient** `\nu(\mu)`
+- `\mu_3`: controls the **forcing amplitude** in a sinusoidal source term
+
+Concretely, the script uses:
+
+- `c(\mu) = 0.6 \mu_1`
+- `\nu(\mu) = 0.02 + 0.03 (\mu_2 + 1)/2`
+- `f(x;\mu) = 0.2 \mu_3 \sin(2\pi x)`
+
+This makes the problem genuinely **parametric** in PDE coefficients and forcing, while still retaining a transport interpretation.
+
+Why this benchmark is well matched to CTT:
+
+- the target is a **transport/evolution map** from initial condition to final state
+- the dynamics are **local and structured** on the grid
+- the parameter dependence enters through a **small interpretable vector** `\mu`
+- TT residual can exploit low-rank structure in the parameter-conditioned operator correction
+
+This is more aligned with the intended use of CTT than the Darcy parameter-to-state toy problem, which we are dropping for now.
+
 #### Interpretation
 
 - **TT residual is the best structured option** on the higher-dimensional linear benchmark tested so far.
 - **TT residual also performs best on the current higher-dimensional nonlinear benchmark (`d=10`)**, making it the strongest overall CTT variant currently implemented.
 - On the tested `d=10` nonlinear benchmark, **TT residual also appears to converge reliably**, not just achieve the best average error.
+- For PDE-style experiments, **parametric advection-diffusion is currently the preferred benchmark**, since CTT is much better matched to transport/evolution maps than to the Darcy toy parameter-to-state setup.
 - A newer **native TT-matrix layer** using `dense_matvec` is more stable than the earlier low-rank surrogate and improved a checked `d=4, p=4` benchmark from roughly **0.10 (linear)** to **0.055 (native TT)** across 2 seeds.
 - The strongest TT-based variant so far is **linear + TT residual correction**, which improved that checked benchmark to about **0.017 mean MSE** across 2 seeds.
 - Adding periodic TT orthogonalization during training (`recondition_every=5` or `10`) gave a small additional gain, improving the same benchmark from about **0.0168** to **0.0161** mean MSE.
@@ -338,6 +386,7 @@ See `examples/`:
 - `ctt_high_dim_example.py` - High-dimensional problem
 - `compare_methods.py` - CTT vs TT vs dense baselines
 - `nonlinear_transport.py` - Nonlinear transport benchmark
+- `benchmark_ctt_advection_diffusion.py` - Parametric transport PDE benchmark
 - `velocity_comparison.png` - Generated TT/FTT comparison figure
 
 Run:
