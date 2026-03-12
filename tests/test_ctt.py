@@ -12,6 +12,7 @@ try:
     from tinytt.ctt import (
         ComposedCTTMAPTG,
         TriangularResidualLayerFTT,
+        TriangularResidualLayerTG,
         TriangularResidualLayerTT,
         TriangularResidualLayerTTResidual,
         train_ctt_tinygrad,
@@ -485,6 +486,21 @@ class TestTinygradCTTRegression:
         assert np.isfinite(mse_tt)
         assert np.isfinite(mse_res)
         assert mse_res < mse_tt
+
+    def test_mlp_bias_parameters_train_without_nan(self):
+        np.random.seed(2)
+        a_train = np.random.randn(32, 2)
+        mu_train = np.random.uniform(-1, 1, (32, 2))
+        x_train = self._nonlinear_flow(a_train, mu_train)
+        a_test = np.random.randn(16, 2)
+        mu_test = np.random.uniform(-1, 1, (16, 2))
+
+        model = ComposedCTTMAPTG([TriangularResidualLayerTG(h=0.2, d=2, p=2, hidden_dim=8) for _ in range(3)])
+        losses = train_ctt_tinygrad(model, a_train, mu_train, x_train, n_epochs=15, lr=0.2, verbose=False)
+        pred = model.forward(Tensor(a_test), Tensor(mu_test)).numpy()
+
+        assert np.isfinite(np.asarray(losses)).all()
+        assert np.isfinite(pred).all()
 
 
 if __name__ == "__main__":

@@ -528,23 +528,25 @@ losses = train_ctt_tinygrad(
 
 ### Known Issues
 
-#### Tinygrad Bias Gradient Bug
+#### Tinygrad Parameter `requires_grad` Behavior
 
-**Issue**: In tinygrad, bias terms in linear layers do not compute gradients correctly. This affects MLP velocity fields.
+**Issue**: tinygrad's `nn.Linear` parameters are not automatically marked with `requires_grad=True` when used with direct `.backward()` calls outside the usual optimizer workflow.
 
-**Symptom**: Training fails with `AttributeError` when using bias terms.
+**Root cause**: tinygrad expects parameters to be passed to an optimizer, which then sets `requires_grad=True`. If you call `.backward()` directly without that step, parameters created by some high-level layers may keep `requires_grad=None`, so gradients are skipped.
 
-**Workaround**: Do NOT use bias terms in MLP velocity fields. The code automatically excludes bias:
+**Implication for this repository**: this is **not specifically a bias bug**. The safe pattern is to create parameters manually (or otherwise ensure `requires_grad=True` explicitly) when using direct autograd updates.
+
+**Current implementation**: the CTT tinygrad layers now set `requires_grad=True` explicitly for all learnable tensors, including MLP bias terms.
 
 ```python
-# This works (no bias)
-layer = TriangularResidualLayerTG(h=h, d=d, p=p, hidden_dim=16)
-
-# This will NOT work (bias causes gradient errors)
-# Do NOT use nn.Linear layers with bias
+# Manual parameters with explicit requires_grad=True
+self.W1 = Tensor.randn(hidden_dim, d + p, requires_grad=True)
+self.b1 = Tensor.zeros(hidden_dim, requires_grad=True)
+self.W2 = Tensor.randn(d, hidden_dim, requires_grad=True)
+self.b2 = Tensor.zeros(d, requires_grad=True)
 ```
 
-This appears to be a bug in tinygrad's autograd implementation for bias terms. The issue should be reported to the tinygrad GitHub.
+So bias terms can be used safely in the hand-written MLP layers in this repository.
 
 ## License
 

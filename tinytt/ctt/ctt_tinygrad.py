@@ -31,14 +31,16 @@ class TriangularResidualLayerTG:
         self.p = p
         
         if hidden_dim > 0:
-            # Nonlinear MLP velocity (NO bias - tinygrad gradient issue!)
+            # Nonlinear MLP velocity.
+            # tinygrad parameters need requires_grad=True explicitly when not
+            # handed to an optimizer-created parameter list first.
             self.nonlinear = True
             self.hidden_dim = hidden_dim
             
-            # Initialize weights WITHOUT bias (tinygrad issue with bias gradients)
             self.W1 = Tensor.randn(hidden_dim, d + p, requires_grad=True)
+            self.b1 = Tensor.zeros(hidden_dim, requires_grad=True)
             self.W2 = Tensor.randn(d, hidden_dim, requires_grad=True)
-            # No bias - tinygrad has issues with bias gradients
+            self.b2 = Tensor.zeros(d, requires_grad=True)
         else:
             # Linear velocity
             self.nonlinear = False
@@ -60,9 +62,9 @@ class TriangularResidualLayerTG:
         z = x.cat(mu, dim=1)
         
         if self.nonlinear:
-            # MLP: tanh(W1 @ z), then W2 @ h (no bias - tinygrad issue!)
-            h = (z @ self.W1.T).tanh()
-            psi = h @ self.W2.T
+            # MLP: tanh(W1 @ z + b1), then W2 @ h + b2
+            h = (z @ self.W1.T + self.b1).tanh()
+            psi = h @ self.W2.T + self.b2
         else:
             # Linear: W @ z
             psi = z @ self.W.T
@@ -75,7 +77,7 @@ class TriangularResidualLayerTG:
     def parameters(self):
         """Return all parameters for optimizer."""
         if self.nonlinear:
-            return [self.W1, self.W2]  # No bias - tinygrad issue!
+            return [self.W1, self.b1, self.W2, self.b2]
         return [self.W]
 
 
@@ -846,7 +848,7 @@ class NeuralODECTT:
         self.t_span = t_span
         
         # Velocity network: [x; mu; t] -> dx/dt
-        # No bias due to tinygrad issue
+        # Explicit requires_grad=True is needed for parameters in direct backward use.
         self.W1 = Tensor.randn(hidden_dim, d + p + 1, requires_grad=True)  # +1 for time
         self.W2 = Tensor.randn(d, hidden_dim, requires_grad=True)
     
