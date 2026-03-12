@@ -130,6 +130,89 @@ The CTT framework supports multiple velocity field types:
 | `TriangularResidualLayerTTResidual(tt_rank=r)` | Linear + TT residual | Linear + TT cores | Recommended TT variant |
 | `TriangularResidualLayerFTT` | Functional TT | Factorized | High dimensions |
 
+### How CTT with TT residual works
+
+The standard residual CTT layer is
+
+```math
+T_\ell(x, \mu) = x + h\,\Psi_\ell(x, \mu).
+```
+
+For a plain linear layer, the velocity is
+
+```math
+\Psi_\ell(x, \mu) = W_\ell [x;\mu].
+```
+
+In the **TT residual** variant used in this repository, we split the velocity into a coarse linear part and a structured TT correction:
+
+```math
+\Psi_\ell(x, \mu)
+= \Psi^{\text{lin}}_\ell(x, \mu) + \Psi^{\text{TT}}_\ell(x, \mu)
+= W_\ell [x;\mu] + A^{\text{TT}}_\ell [x;\mu].
+```
+
+So each layer becomes
+
+```math
+T_\ell(x, \mu) = x + h\left(W_\ell [x;\mu] + A^{\text{TT}}_\ell [x;\mu]\right).
+```
+
+Implementation-wise:
+
+- `W_\ell` is a dense linear backbone.
+- `A^{TT}_\ell` is a native TT-matrix stored as TT cores.
+- the TT part is applied with `dense_matvec(...)` rather than converting to a dense matrix.
+
+This means the linear term captures the easy/global part of the transport, while the TT term models the remaining structured error.
+
+#### Why this helps
+
+- pure TT is harder to optimize from scratch
+- linear CTT alone underfits structured high-dimensional problems
+- linear + TT residual gives a strong inductive bias: **fit the easy part densely, correct the hard part compactly**
+
+#### Is this described in the original CTT formulation?
+
+The **compositional residual CTT form** is part of the original framework:
+
+```math
+T = T_L \circ \cdots \circ T_1, \quad T_\ell(x,\mu)=x+h\,\Psi_\ell(x,\mu).
+```
+
+However, the specific choice
+
+```math
+\Psi_\ell = \Psi^{\text{lin}}_\ell + \Psi^{\text{TT}}_\ell
+```
+
+should be viewed here as an **implementation/engineering extension**, not a claim that the paper explicitly defines this exact hybrid parameterization.
+
+So the right way to describe it is:
+
+- **CTT residual composition**: from the CTT framework
+- **TT residual velocity parameterization**: a practical extension implemented in this repository
+
+#### Related correction variants in this repository
+
+Besides internal TT residual correction, two external correction strategies were tested:
+
+1. **Warm-start TT**  
+   Train linear CTT first, then initialize the hybrid TT residual layer from that linear solution and fine-tune.
+
+2. **Additive correction**  
+   Learn a second correction model `C(a, \mu)` and form
+
+   ```math
+   T_{final}(a,\mu) \approx T_{base}(a,\mu) + C(a,\mu) - a.
+   ```
+
+These are useful engineering tools, but the most natural compositional formulation remains the internal per-layer TT residual.
+
+#### Caveat
+
+The TT residual layer currently has the strongest empirical performance in this repository, but it should be presented as an **empirically effective hybrid parameterization**, not as a new proven theory of CTT.
+
 ### Benchmark Results
 
 #### Verified multi-seed quick benchmark
