@@ -273,10 +273,19 @@ A dedicated script `examples/benchmark_ctt_nonlinear_d10.py` tests a synthetic n
 | FTT | 1.06e-1 ± 1.2e-2 | 1620 |
 | **TT Residual** | **3.06e-2 ± 5.1e-3** | 1480 |
 
+A separate 5-seed convergence check for the same `d=10` nonlinear benchmark showed that **TT residual converged reliably in all tested runs**:
+
+- mean MSE: **3.22e-2**
+- std: **4.39e-3**
+- max MSE over 5 seeds: **3.63e-2**
+- all runs stayed finite
+- all runs reduced training loss
+
 #### Interpretation
 
 - **TT residual is the best structured option** on the higher-dimensional linear benchmark tested so far.
 - **TT residual also performs best on the current higher-dimensional nonlinear benchmark (`d=10`)**, making it the strongest overall CTT variant currently implemented.
+- On the tested `d=10` nonlinear benchmark, **TT residual also appears to converge reliably**, not just achieve the best average error.
 - A newer **native TT-matrix layer** using `dense_matvec` is more stable than the earlier low-rank surrogate and improved a checked `d=4, p=4` benchmark from roughly **0.10 (linear)** to **0.055 (native TT)** across 2 seeds.
 - The strongest TT-based variant so far is **linear + TT residual correction**, which improved that checked benchmark to about **0.017 mean MSE** across 2 seeds.
 - Adding periodic TT orthogonalization during training (`recondition_every=5` or `10`) gave a small additional gain, improving the same benchmark from about **0.0168** to **0.0161** mean MSE.
