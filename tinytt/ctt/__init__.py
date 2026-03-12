@@ -20,6 +20,8 @@ try:
         ComposedCTTMAPTG,
         train_ctt_tinygrad,
         AdamOptimizer,
+        NeuralODECTT,
+        train_neural_ode,
     )
     _TINYGRAD_AVAILABLE = True
 except ImportError:
@@ -43,4 +45,6 @@ if _TINYGRAD_AVAILABLE:
         'ComposedCTTMAPTG',
         'train_ctt_tinygrad',
         'AdamOptimizer',
+        'NeuralODECTT',
+        'train_neural_ode',
     ])

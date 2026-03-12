@@ -302,6 +302,216 @@ def train_ctt_tinygrad(model, a_train, mu_train, x_target, n_epochs, lr, verbose
     return losses
 
 
+# ============================================================================
+# Neural ODE (Continuous-time Flow) Implementation
+# ============================================================================
+
+def ode_solve_euler(dxdt, x0, t_span, dt=0.1):
+    """
+    Solve ODE using Euler method.
+    
+    Args:
+        dxdt: function (x, t, mu) -> dx/dt
+        x0: initial state (n, d)
+        t_span: (t_start, t_end)
+        dt: time step
+    
+    Returns:
+        x_end: final state
+    """
+    t_start, t_end = t_span
+    n_steps = int((t_end - t_start) / dt)
+    
+    x = x0
+    for _ in range(n_steps):
+        dx = dxdt(x, t_start, None)  # mu passed separately
+        x = x + dt * dx
+    
+    return x
+
+
+def ode_solve_rk4(dxdt, x0, t_span, dt=0.1, mu=None):
+    """
+    Solve ODE using 4th-order Runge-Kutta.
+    
+    Args:
+        dxdt: function (x, t, mu) -> dx/dt
+        x0: initial state (n, d)
+        t_span: (t_start, t_end)
+        dt: time step
+        mu: parameters (n, p) or (1, p)
+    
+    Returns:
+        x_end: final state
+    """
+    t_start, t_end = t_span
+    n_steps = int((t_end - t_start) / dt)
+    
+    x = x0
+    t = t_start
+    
+    for _ in range(n_steps):
+        # RK4 steps
+        k1 = dxdt(x, t, mu)
+        
+        x_mid = x + 0.5 * dt * k1
+        k2 = dxdt(x_mid, t + 0.5 * dt, mu)
+        
+        x_mid2 = x + 0.5 * dt * k2
+        k3 = dxdt(x_mid2, t + 0.5 * dt, mu)
+        
+        x_end = x + dt * k3
+        k4 = dxdt(x_end, t + dt, mu)
+        
+        # Combine
+        x = x + (dt / 6) * (k1 + 2*k2 + 2*k3 + k4)
+        t = t + dt
+    
+    return x
+
+
+class NeuralODECTT:
+    """
+    Neural ODE-based CTT using continuous-time flow.
+    
+    Instead of discrete layers, this uses an ODE solver to compute
+    the transformation: x(t=0) = a -> x(t=T) = x
+    
+    The velocity field is a neural network: dx/dt = velocity(x, mu, t)
+    """
+    
+    def __init__(self, d, p, hidden_dim=32, solver='rk4', t_span=(0, 1)):
+        """
+        Args:
+            d: state dimension
+            p: parameter dimension  
+            hidden_dim: hidden dimension for velocity MLP
+            solver: 'euler' or 'rk4'
+            t_span: (t_start, t_end) - time interval for flow
+        """
+        self.d = d
+        self.p = p
+        self.hidden_dim = hidden_dim
+        self.solver = solver
+        self.t_span = t_span
+        
+        # Velocity network: [x; mu; t] -> dx/dt
+        # No bias due to tinygrad issue
+        self.W1 = Tensor.randn(hidden_dim, d + p + 1, requires_grad=True)  # +1 for time
+        self.W2 = Tensor.randn(d, hidden_dim, requires_grad=True)
+    
+    def velocity(self, x, mu, t):
+        """
+        Compute velocity field: dx/dt = velocity(x, mu, t)
+        
+        Args:
+            x: state (n, d)
+            mu: parameters (n, p) or (1, p)
+            t: time scalar
+        
+        Returns:
+            dx: (n, d)
+        """
+        n = x.shape[0]
+        
+        # Broadcast mu and t
+        if mu.shape[0] == 1:
+            mu = mu.repeat(n)
+        
+        # Concatenate [x; mu; t]
+        if isinstance(t, (int, float)):
+            t = Tensor([t] * n, requires_grad=False).reshape(n, 1)
+        elif t.shape[0] == 1:
+            t = t.repeat(n).reshape(n, 1)
+        
+        z = x.cat(mu, dim=1).cat(t, dim=1)
+        
+        # MLP: tanh(W1 @ z), then W2 @ h
+        h = (z @ self.W1.T).tanh()
+        dx = h @ self.W2.T
+        
+        return dx
+    
+    def forward(self, a, mu, dt=0.1):
+        """
+        Solve ODE from t_start to t_end.
+        
+        Args:
+            a: initial state (n, d)
+            mu: parameters (n, p) or (1, p)
+            dt: time step for solver
+        
+        Returns:
+            x: final state (n, d)
+        """
+        # Ensure mu is 2D
+        if mu.ndim == 1:
+            mu = mu.reshape(1, -1)
+        
+        # Define wrapped velocity that captures mu
+        def dxdt(x, t, _mu):
+            return self.velocity(x, mu, t)
+        
+        # Solve ODE
+        if self.solver == 'euler':
+            x_end = ode_solve_euler(dxdt, a, self.t_span, dt)
+        else:  # rk4
+            x_end = ode_solve_rk4(dxdt, a, self.t_span, dt, mu)
+        
+        return x_end
+    
+    def __call__(self, a, mu, dt=0.1):
+        return self.forward(a, mu, dt)
+    
+    def parameters(self):
+        """Return all parameters."""
+        return [self.W1, self.W2]
+    
+    def train_step(self, a, mu, target, optimizer=None, lr=0.1, dt=0.1):
+        """Single training step."""
+        # Forward pass
+        output = self.forward(a, mu, dt=dt)
+        
+        # Compute loss
+        loss = ((output - target) ** 2).mean()
+        
+        # Backward
+        loss.backward()
+        
+        if optimizer is not None:
+            optimizer.step()
+        else:
+            for param in self.parameters():
+                if param.grad is not None:
+                    param.assign(param.detach() - lr * param.grad.detach())
+                    param.grad = None
+        
+        return float(loss.detach().numpy())
+
+
+def train_neural_ode(model, a_train, mu_train, x_target, n_epochs, lr, dt=0.1, verbose=True, use_adam=False):
+    """Train Neural ODE CTT."""
+    losses = []
+    
+    a_t = Tensor(a_train, requires_grad=True)
+    mu_t = Tensor(mu_train, requires_grad=True)
+    x_t = Tensor(x_target, requires_grad=True)
+    
+    if use_adam:
+        optimizer = AdamOptimizer(model.parameters(), lr=lr)
+    else:
+        optimizer = None
+    
+    for epoch in range(n_epochs):
+        loss = model.train_step(a_t, mu_t, x_t, optimizer=optimizer, lr=lr, dt=dt)
+        losses.append(loss)
+        
+        if verbose and epoch % 100 == 0:
+            print(f"  Epoch {epoch}: loss = {loss:.6f}")
+    
+    return losses
+
+
 def test_tinygrad_autograd():
     """Test that tinygrad autograd works for CTT."""
     print("=" * 60)
