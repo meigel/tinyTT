@@ -261,9 +261,22 @@ An updated quick benchmark including correction models shows the current best re
 | TT | 1.52e-1 ± 3.06e-2 | 120 |
 | FTT | 1.55e-1 ± 2.76e-2 | 240 |
 
+##### Higher-dimensional nonlinear benchmark (d=10, p=4)
+
+A dedicated script `examples/benchmark_ctt_nonlinear_d10.py` tests a synthetic nonlinear transport with nearest-neighbor coupling, quadratic terms, parameter interactions, and sinusoidal nonlinearities.
+
+| Velocity Type | Mean Test MSE | Params |
+|---------------|---------------|--------|
+| Linear | 3.79e-1 ± 5.8e-2 | 700 |
+| MLP | 1.70e+0 ± 9.3e-2 | 3840 |
+| TT | 1.06e-1 ± 1.2e-2 | 480 |
+| FTT | 1.06e-1 ± 1.2e-2 | 1620 |
+| **TT Residual** | **3.06e-2 ± 5.1e-3** | 1480 |
+
 #### Interpretation
 
 - **TT residual is the best structured option** on the higher-dimensional linear benchmark tested so far.
+- **TT residual also performs best on the current higher-dimensional nonlinear benchmark (`d=10`)**, making it the strongest overall CTT variant currently implemented.
 - A newer **native TT-matrix layer** using `dense_matvec` is more stable than the earlier low-rank surrogate and improved a checked `d=4, p=4` benchmark from roughly **0.10 (linear)** to **0.055 (native TT)** across 2 seeds.
 - The strongest TT-based variant so far is **linear + TT residual correction**, which improved that checked benchmark to about **0.017 mean MSE** across 2 seeds.
 - Adding periodic TT orthogonalization during training (`recondition_every=5` or `10`) gave a small additional gain, improving the same benchmark from about **0.0168** to **0.0161** mean MSE.
