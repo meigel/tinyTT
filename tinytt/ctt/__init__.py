@@ -17,6 +17,8 @@ try:
     from .ctt_tinygrad import (
         TriangularResidualLayerTG,
         TriangularResidualLayerTT,
+        TriangularResidualLayerTTFull,
+        TriangularResidualLayerFTT,
         ComposedCTTMAPTG,
         train_ctt_tinygrad,
         AdamOptimizer,
@@ -42,6 +44,8 @@ if _TINYGRAD_AVAILABLE:
         # Tinygrad version
         'TriangularResidualLayerTG',
         'TriangularResidualLayerTT',
+        'TriangularResidualLayerTTFull',
+        'TriangularResidualLayerFTT',
         'ComposedCTTMAPTG',
         'train_ctt_tinygrad',
         'AdamOptimizer',
