@@ -117,6 +117,55 @@ train_composed_ctt(model, ..., enforce_invertibility=True, q_target=0.5)
 
 This ensures the map is diffeomorphic (invertible with smooth inverse).
 
+## Velocity Field Options
+
+The CTT framework supports multiple velocity field types:
+
+| Class | Type | Parameters | Best For |
+|-------|------|------------|----------|
+| `TriangularResidualLayerTG(hidden_dim=0)` | Linear | d × (d+p) | Smooth linear ODEs |
+| `TriangularResidualLayerTG(hidden_dim>0)` | MLP | 2 × hidden × (d+p) | Nonlinear flows |
+| `TriangularResidualLayerTT(tt_rank=r)` | Low-rank TT | d×r + r×(d+p) | Parameterized problems |
+| `TriangularResidualLayerFTT` | Functional TT | Factorized | High dimensions |
+
+### Benchmark Results
+
+#### Linear parametric ODE
+
+2D state, 2D parameter, 5 layers.
+
+| Velocity Type | Test MSE | Notes |
+|---------------|----------|-------|
+| Linear | ~9e-2 | Baseline residual map |
+| TT (rank=4) | ~2e-4 | Best compact structured model |
+| FTT (4 factors) | ~1e-5 to 1e-4 | Best fit on this benchmark |
+
+TT/FTT substantially outperform the plain linear velocity by exploiting low-rank/function-factorized structure in the parameter-conditioned map.
+
+#### Nonlinear parametric ODE
+
+| Velocity Type | Test MSE | Notes |
+|---------------|----------|-------|
+| Linear CTT | ~2.1e-1 | Underfits nonlinear dynamics |
+| MLP CTT (hidden=16) | ~1.4e-1 | Better on stronger nonlinearities |
+
+#### Practical takeaway
+
+- Use **TT** when the transport is close to a structured low-rank parametric map.
+- Use **FTT** when you want a more expressive function-factorized velocity field.
+- Use **MLP velocity** when the target dynamics are strongly nonlinear and not well-captured by low-rank linear structure.
+
+### Neural ODE (Continuous-time)
+
+For continuous-time flows, use `NeuralODECTT`:
+
+```python
+from tinytt.ctt import NeuralODECTT, train_neural_ode
+
+model = NeuralODECTT(d=2, p=2, hidden_dim=32, solver='rk4', t_span=(0, 1))
+losses = train_neural_ode(model, a_train, mu_train, x_train, n_epochs=200, lr=0.01)
+```
+
 ## Comparison with Baselines
 
 | Method | Captures μ? | Parameters | MSE |
@@ -134,7 +183,9 @@ See `examples/`:
 - `ctt_param_ode.py` - Basic parametric ODE
 - `ctt_multilayer_example.py` - Multi-layer training
 - `ctt_high_dim_example.py` - High-dimensional problem
-- `visualize_ctt_complete.py` - Comprehensive visualization
+- `compare_methods.py` - CTT vs TT vs dense baselines
+- `nonlinear_transport.py` - Nonlinear transport benchmark
+- `velocity_comparison.png` - Generated TT/FTT comparison figure
 
 Run:
 ```bash
