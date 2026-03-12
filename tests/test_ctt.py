@@ -7,6 +7,19 @@ import pytest
 from tinytt.ctt import TTMap, LinearTTMap, TriangularResidualLayer, characteristic_matching_loss
 from tinytt.ctt.ctt_map import ComposedCTTMAP
 
+try:
+    from tinygrad import Tensor
+    from tinytt.ctt import (
+        ComposedCTTMAPTG,
+        TriangularResidualLayerFTT,
+        TriangularResidualLayerTT,
+        TriangularResidualLayerTTResidual,
+        train_ctt_tinygrad,
+    )
+    HAS_TINYGRAD_CTT = True
+except Exception:
+    HAS_TINYGRAD_CTT = False
+
 
 class TestTTMap:
     """Tests for base TTMap class."""
@@ -383,6 +396,95 @@ class TestTTVelocityField:
         J = vf.get_jacobian_x(x, mu)
         
         assert J.shape == (2, 2)
+
+
+@pytest.mark.skipif(not HAS_TINYGRAD_CTT, reason="tinygrad CTT not available")
+class TestTinygradCTTRegression:
+    def _nonlinear_flow(self, a, mu, n_steps=20):
+        x = a.copy()
+        dt = 1.0 / n_steps
+        for _ in range(n_steps):
+            for i in range(len(x)):
+                x1, x2 = x[i, 0], x[i, 1]
+                m1, m2 = mu[i, 0], mu[i, 1]
+                dx1 = -0.5 * x1 + 0.2 * x2 + 0.5 * m1 * (x1 ** 2) + 0.3 * m2 * x1 * x2
+                dx2 = 0.1 * x1 - 0.3 * x2 + 0.3 * m1 * x1 * x2 + 0.5 * m2 * (x2 ** 2)
+                x[i, 0] += dt * dx1
+                x[i, 1] += dt * dx2
+        return x
+
+    def _linear_flow(self, a, mu, n_steps=20):
+        d = a.shape[1]
+        x = a.copy()
+        rng = np.random.default_rng(0)
+        A0 = -0.25 * np.eye(d) + 0.05 * rng.standard_normal((d, d))
+        mats = [0.08 * rng.standard_normal((d, d)) for _ in range(min(mu.shape[1], 3))]
+        dt = 1.0 / n_steps
+        for _ in range(n_steps):
+            for i in range(len(x)):
+                A = A0.copy()
+                for j, M in enumerate(mats):
+                    A += mu[i, j] * M
+                x[i] = x[i] + dt * (A @ x[i])
+        return x
+
+    def test_plain_tt_no_nan_on_nonlinear_training(self):
+        np.random.seed(0)
+        a_train = np.random.randn(32, 2)
+        mu_train = np.random.uniform(-1, 1, (32, 2))
+        x_train = self._nonlinear_flow(a_train, mu_train)
+        a_test = np.random.randn(16, 2)
+        mu_test = np.random.uniform(-1, 1, (16, 2))
+        x_test = self._nonlinear_flow(a_test, mu_test)
+
+        model = ComposedCTTMAPTG([TriangularResidualLayerTT(h=0.2, d=2, p=2, tt_rank=4) for _ in range(5)])
+        losses = train_ctt_tinygrad(model, a_train, mu_train, x_train, n_epochs=20, lr=0.5, verbose=False)
+        pred = model.forward(Tensor(a_test), Tensor(mu_test)).numpy()
+
+        assert np.isfinite(np.asarray(losses)).all()
+        assert np.isfinite(pred).all()
+        assert np.isfinite(np.mean((pred - x_test) ** 2))
+
+    def test_ftt_no_nan_on_nonlinear_training(self):
+        np.random.seed(1)
+        a_train = np.random.randn(32, 2)
+        mu_train = np.random.uniform(-1, 1, (32, 2))
+        x_train = self._nonlinear_flow(a_train, mu_train)
+        a_test = np.random.randn(16, 2)
+        mu_test = np.random.uniform(-1, 1, (16, 2))
+        x_test = self._nonlinear_flow(a_test, mu_test)
+
+        model = ComposedCTTMAPTG([TriangularResidualLayerFTT(h=0.2, d=2, p=2, n_factors=4, factor_dim=4) for _ in range(5)])
+        losses = train_ctt_tinygrad(model, a_train, mu_train, x_train, n_epochs=20, lr=0.5, verbose=False)
+        pred = model.forward(Tensor(a_test), Tensor(mu_test)).numpy()
+
+        assert np.isfinite(np.asarray(losses)).all()
+        assert np.isfinite(pred).all()
+        assert np.isfinite(np.mean((pred - x_test) ** 2))
+
+    def test_tt_residual_outperforms_plain_tt_on_structured_linear_problem(self):
+        np.random.seed(0)
+        a_train = np.random.randn(48, 4)
+        mu_train = np.random.uniform(-1, 1, (48, 4))
+        x_train = self._linear_flow(a_train, mu_train)
+        a_test = np.random.randn(24, 4)
+        mu_test = np.random.uniform(-1, 1, (24, 4))
+        x_test = self._linear_flow(a_test, mu_test)
+
+        tt_model = ComposedCTTMAPTG([TriangularResidualLayerTT(h=0.2, d=4, p=4, tt_rank=4) for _ in range(5)])
+        tt_res_model = ComposedCTTMAPTG([TriangularResidualLayerTTResidual(h=0.2, d=4, p=4, tt_rank=4) for _ in range(5)])
+
+        train_ctt_tinygrad(tt_model, a_train, mu_train, x_train, n_epochs=25, lr=0.5, verbose=False)
+        train_ctt_tinygrad(tt_res_model, a_train, mu_train, x_train, n_epochs=25, lr=0.5, verbose=False, recondition_every=5)
+
+        pred_tt = tt_model.forward(Tensor(a_test), Tensor(mu_test)).numpy()
+        pred_res = tt_res_model.forward(Tensor(a_test), Tensor(mu_test)).numpy()
+        mse_tt = float(np.mean((pred_tt - x_test) ** 2))
+        mse_res = float(np.mean((pred_res - x_test) ** 2))
+
+        assert np.isfinite(mse_tt)
+        assert np.isfinite(mse_res)
+        assert mse_res < mse_tt
 
 
 if __name__ == "__main__":

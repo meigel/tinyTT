@@ -126,32 +126,80 @@ The CTT framework supports multiple velocity field types:
 | `TriangularResidualLayerTG(hidden_dim=0)` | Linear | d × (d+p) | Smooth linear ODEs |
 | `TriangularResidualLayerTG(hidden_dim>0)` | MLP | 2 × hidden × (d+p) | Nonlinear flows |
 | `TriangularResidualLayerTT(tt_rank=r)` | Low-rank TT | d×r + r×(d+p) | Parameterized problems |
+| `TriangularResidualLayerTTNative(tt_rank=r)` | Native TT-matrix | TT cores only | Structured higher-dimensional maps |
+| `TriangularResidualLayerTTResidual(tt_rank=r)` | Linear + TT residual | Linear + TT cores | Recommended TT variant |
 | `TriangularResidualLayerFTT` | Functional TT | Factorized | High dimensions |
 
 ### Benchmark Results
 
-#### Linear parametric ODE
+#### Verified multi-seed quick benchmark
 
-2D state, 2D parameter, 5 layers.
+The repository now includes `examples/benchmark_ctt_multiseed.py`, which runs a reproducible multi-seed comparison and writes:
 
-| Velocity Type | Test MSE | Notes |
-|---------------|----------|-------|
-| Linear | ~9e-2 | Baseline residual map |
-| TT (rank=4) | ~2e-4 | Best compact structured model |
-| FTT (4 factors) | ~1e-5 to 1e-4 | Best fit on this benchmark |
+- `benchmark_ctt_multiseed.json`
+- `benchmark_ctt_multiseed.png`
 
-TT/FTT substantially outperform the plain linear velocity by exploiting low-rank/function-factorized structure in the parameter-conditioned map.
+Quick verified run (`--quick`, 2 seeds) gave:
 
-#### Nonlinear parametric ODE
+##### Low-dimensional linear benchmark (d=2, p=2)
 
-| Velocity Type | Test MSE | Notes |
-|---------------|----------|-------|
-| Linear CTT | ~2.1e-1 | Underfits nonlinear dynamics |
-| MLP CTT (hidden=16) | ~1.4e-1 | Better on stronger nonlinearities |
+| Velocity Type | Mean Test MSE | Params |
+|---------------|---------------|--------|
+| Linear | 6.60e-2 ± 5.55e-2 | 40 |
+| MLP | **5.53e-2 ± 3.53e-3** | 480 |
+| TT | 6.14e-2 ± 5.41e-2 | 120 |
+| FTT | 2.33e-1 ± 2.28e-1 | 240 |
+
+##### Higher-dimensional linear benchmark (d=4, p=4)
+
+| Velocity Type | Mean Test MSE | Params |
+|---------------|---------------|--------|
+| Linear | 2.23e-1 ± 1.10e-4 | 160 |
+| MLP | 3.93e-1 ± 3.72e-2 | 960 |
+| TT | **1.86e-1 ± 2.24e-2** | 240 |
+| FTT | 4.02e-1 ± 1.11e-1 | 480 |
+
+An updated quick benchmark including correction models shows the current best result comes from **TT residual correction**:
+
+| Velocity Type | Mean Test MSE | Params |
+|---------------|---------------|--------|
+| Linear | 3.54e-1 ± 5.9e-2 | 160 |
+| TT | 2.19e-1 ± 4.5e-3 | 240 |
+| **TT Residual** | **1.96e-2 ± 6.2e-4** | 400 |
+| Warm-start TT | 4.51e-2 ± 1.3e-2 | 400 |
+| Additive correction | 9.55e-2 ± 5.5e-3 | 400 |
+
+##### Nonlinear benchmark (d=2, p=2)
+
+| Velocity Type | Mean Test MSE | Params |
+|---------------|---------------|--------|
+| Linear | 1.49e-1 ± 2.18e-2 | 40 |
+| MLP | **1.30e-1 ± 4.75e-2** | 480 |
+| TT | 1.52e-1 ± 3.06e-2 | 120 |
+| FTT | 1.55e-1 ± 2.76e-2 | 240 |
+
+#### Interpretation
+
+- **TT residual is the best structured option** on the higher-dimensional linear benchmark tested so far.
+- A newer **native TT-matrix layer** using `dense_matvec` is more stable than the earlier low-rank surrogate and improved a checked `d=4, p=4` benchmark from roughly **0.10 (linear)** to **0.055 (native TT)** across 2 seeds.
+- The strongest TT-based variant so far is **linear + TT residual correction**, which improved that checked benchmark to about **0.017 mean MSE** across 2 seeds.
+- Adding periodic TT orthogonalization during training (`recondition_every=5` or `10`) gave a small additional gain, improving the same benchmark from about **0.0168** to **0.0161** mean MSE.
+- A simple adaptive TT rank-growth schedule was tested, but did **not** improve this benchmark materially; fixed-rank TT residual remains the better default for now.
+- Residual analysis shows the linear CTT fit leaves a meaningful structured error (example `d=4, p=4`: train residual RMS about **0.21**), and both **warm-started hybrid TT** and **additive correction models** can exploit that residual. In one checked run, linear CTT test MSE dropped from about **0.057** to **0.024** with warm-started hybrid TT and to **0.026** with an additive correction stage.
+- A dedicated two-stage correction benchmark (`examples/benchmark_ctt_corrections.py`) confirms that corrections are useful but not always better than training the hybrid model directly. In a checked 2-seed `d=4, p=4` run: **Linear ≈ 0.114**, **Hybrid TT ≈ 0.016**, **Warm-start TT ≈ 0.031**, **Additive correction ≈ 0.026**, with residual RMS after linear fitting still around **0.18**.
+- The earlier plain-TT NaN issue was traced to overly aggressive unscaled initialization and lack of stabilization in `TriangularResidualLayerTT`. After switching to small initialization and adding norm clipping, plain TT no longer produced NaNs on the checked nonlinear benchmark, though it still underperforms TT residual. FTT remains the less stable path at the moment.
+- FTT showed the same failure pattern: large random initialization plus no stabilization. Applying the same safeguards (small initialization and clipping) removed the immediate NaN failure in targeted nonlinear checks, but FTT still trails TT residual in both robustness and accuracy.
+- **MLP currently wins on nonlinear dynamics**, though at much higher parameter count.
+- **FTT is not yet convincingly better** in the verified multi-seed benchmark and likely needs architectural tuning.
+- The earlier near-zero TT/FTT single-run results were promising, but the multi-seed benchmark shows the current implementations are not yet uniformly dominant.
 
 #### Practical takeaway
 
+- Use **TT residual** first when you want the best current TT-based performance.
 - Use **TT** when the transport is close to a structured low-rank parametric map.
+- Turn on periodic TT reconditioning for native/hybrid TT layers when training becomes unstable or plateaus.
+- If a linear CTT is already trained, prefer **warm-starting a TT residual correction** rather than training a TT model from scratch.
+- If training from scratch is acceptable, the current best default is still the **direct hybrid TT residual model**.
 - Use **FTT** when you want a more expressive function-factorized velocity field.
 - Use **MLP velocity** when the target dynamics are strongly nonlinear and not well-captured by low-rank linear structure.
 

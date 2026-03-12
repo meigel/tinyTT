@@ -14,6 +14,8 @@ if _TINYGRAD_ROOT.exists() and str(_TINYGRAD_ROOT) not in sys.path:
 import tinygrad
 from tinygrad import Tensor
 import tinytt as tt
+from tinytt._aux_ops import dense_matvec
+from tinytt._decomposition import lr_orthogonal
 
 
 class TriangularResidualLayerTG:
@@ -89,7 +91,7 @@ class TriangularResidualLayerTT:
     dense matrix W, we represent it as a TT with specified ranks.
     """
     
-    def __init__(self, h, d, p, tt_rank=4):
+    def __init__(self, h, d, p, tt_rank=4, init_scale=0.05):
         """
         Args:
             h: Step size
@@ -112,10 +114,11 @@ class TriangularResidualLayerTT:
         # Simpler: use a compressed representation
         # W = (d, r) @ (r, d+p) with small r
         self.rank = tt_rank
+        self.init_scale = init_scale
         
         # Two factor matrices
-        self.W1 = Tensor.randn(d, self.rank, requires_grad=True)  # (d, r)
-        self.W2 = Tensor.randn(self.rank, total_dim, requires_grad=True)  # (r, d+p)
+        self.W1 = Tensor.randn(d, self.rank, requires_grad=True) * init_scale  # (d, r)
+        self.W2 = Tensor.randn(self.rank, total_dim, requires_grad=True) * init_scale  # (r, d+p)
     
     def forward(self, x, mu):
         """Forward pass with TT velocity."""
@@ -149,13 +152,232 @@ class TriangularResidualLayerTT:
         """Return all parameters."""
         return [self.W1, self.W2]
 
+    def stabilize(self, max_norm=3.0):
+        for param in (self.W1, self.W2):
+            norm = float((param.detach() ** 2).sum().sqrt().numpy())
+            if norm > max_norm:
+                param.assign(param.detach() * (max_norm / norm))
+
+
+def _factor_into_two(n):
+    """Factor integer into two near-balanced factors."""
+    for a in range(int(np.sqrt(n)), 0, -1):
+        if n % a == 0:
+            return [a, n // a]
+    return [1, n]
+
+
+class TriangularResidualLayerTTNative:
+    """
+    Triangular residual layer with a native TT-matrix velocity field.
+
+    This parameterizes the velocity operator as TT-matrix cores and applies it
+    using tinyTT's native dense_matvec contraction instead of a dense surrogate.
+    """
+
+    def __init__(self, h, d, p, tt_rank=4, mode_out=None, mode_in=None, init_scale=0.05):
+        self.h = h
+        self.d = d
+        self.p = p
+        self.tt_rank = tt_rank
+        self.init_scale = init_scale
+
+        total_dim = d + p
+        self.mode_out = mode_out or _factor_into_two(d)
+        self.mode_in = mode_in or _factor_into_two(total_dim)
+
+        if len(self.mode_out) != len(self.mode_in):
+            raise ValueError("mode_out and mode_in must have the same number of TT cores")
+        if int(np.prod(self.mode_out)) != d:
+            raise ValueError("mode_out must multiply to d")
+        if int(np.prod(self.mode_in)) != total_dim:
+            raise ValueError("mode_in must multiply to d+p")
+
+        n_cores = len(self.mode_in)
+        ranks = [1] + [tt_rank] * (n_cores - 1) + [1]
+        self.cores = [
+            Tensor.randn(ranks[i], self.mode_out[i], self.mode_in[i], ranks[i + 1], requires_grad=True) * init_scale
+            for i in range(n_cores)
+        ]
+
+    def forward(self, x, mu):
+        if not isinstance(x, Tensor):
+            x = Tensor(x, requires_grad=True)
+        if not isinstance(mu, Tensor):
+            mu = Tensor(mu, requires_grad=True)
+
+        if mu.shape[0] == 1 and x.shape[0] > 1:
+            mu = mu.repeat(x.shape[0])
+
+        z = x.cat(mu, dim=1)
+        batch = z.shape[0]
+        z_tt = z.reshape([batch] + list(self.mode_in))
+        psi_tt = dense_matvec(self.cores, z_tt)
+        psi = psi_tt.reshape(batch, self.d)
+
+        x_new = x + self.h * psi
+        return x_new, mu
+
+    def parameters(self):
+        return self.cores
+
+    def stabilize(self, max_core_norm=2.0):
+        """Simple TT-core norm clipping for training stability."""
+        for core in self.cores:
+            norm = float((core.detach() ** 2).sum().sqrt().numpy())
+            if norm > max_core_norm:
+                core.assign(core.detach() * (max_core_norm / norm))
+
+    def orthogonalize(self):
+        """Left-to-right TT orthogonalization of TT-matrix cores."""
+        try:
+            ranks = [1] + [int(c.shape[-1]) for c in self.cores]
+            ortho_cores, _ = lr_orthogonal([c.detach() for c in self.cores], ranks, is_ttm=True)
+            for old, new in zip(self.cores, ortho_cores):
+                old.assign(new)
+        except Exception:
+            # Keep training robust even if reconditioning fails on some backend case
+            pass
+
+    def grow_ranks(self, max_rank=None, growth_scale=0.01):
+        """Increase internal TT ranks by padding cores with small random values."""
+        if len(self.cores) <= 1:
+            return False
+        if max_rank is None:
+            max_rank = max(self.tt_rank * 2, self.tt_rank + 1)
+
+        current = [int(c.shape[-1]) for c in self.cores[:-1]]
+        target = [min(max_rank, r + 1) for r in current]
+        if target == current:
+            return False
+
+        new_cores = []
+        left_rank = 1
+        for i, core in enumerate(self.cores):
+            out_rank = 1 if i == len(self.cores) - 1 else target[i]
+            new_shape = (left_rank, int(core.shape[1]), int(core.shape[2]), out_rank)
+            new_core = Tensor.randn(*new_shape, requires_grad=True) * growth_scale
+
+            old = core.detach()
+            copy_r0 = min(int(old.shape[0]), new_shape[0])
+            copy_m = min(int(old.shape[1]), new_shape[1])
+            copy_n = min(int(old.shape[2]), new_shape[2])
+            copy_r1 = min(int(old.shape[3]), new_shape[3])
+            new_core[:copy_r0, :copy_m, :copy_n, :copy_r1].assign(old[:copy_r0, :copy_m, :copy_n, :copy_r1])
+
+            new_cores.append(new_core)
+            left_rank = out_rank
+
+        self.cores = new_cores
+        self.tt_rank = max(target)
+        return True
+
+
+class TriangularResidualLayerTTResidual:
+    """
+    Hybrid velocity field: linear baseline + native TT residual correction.
+
+    This is easier to optimize than a pure TT operator and is the recommended
+    next-step TT model for structured parametric maps.
+    """
+
+    def __init__(self, h, d, p, tt_rank=4, mode_out=None, mode_in=None, linear_scale=0.05, tt_scale=0.02):
+        self.h = h
+        self.d = d
+        self.p = p
+        self.W = Tensor.randn(d, d + p, requires_grad=True) * linear_scale
+        self.tt_layer = TriangularResidualLayerTTNative(
+            h=1.0,
+            d=d,
+            p=p,
+            tt_rank=tt_rank,
+            mode_out=mode_out,
+            mode_in=mode_in,
+            init_scale=tt_scale,
+        )
+
+    def forward(self, x, mu):
+        if not isinstance(x, Tensor):
+            x = Tensor(x, requires_grad=True)
+        if not isinstance(mu, Tensor):
+            mu = Tensor(mu, requires_grad=True)
+        if mu.shape[0] == 1 and x.shape[0] > 1:
+            mu = mu.repeat(x.shape[0])
+
+        z = x.cat(mu, dim=1)
+        psi_linear = z @ self.W.T
+
+        batch = z.shape[0]
+        z_tt = z.reshape([batch] + list(self.tt_layer.mode_in))
+        psi_tt = dense_matvec(self.tt_layer.cores, z_tt).reshape(batch, self.d)
+
+        x_new = x + self.h * (psi_linear + psi_tt)
+        return x_new, mu
+
+    def parameters(self):
+        return [self.W] + self.tt_layer.parameters()
+
+    def stabilize(self, max_linear_norm=3.0):
+        norm = float((self.W.detach() ** 2).sum().sqrt().numpy())
+        if norm > max_linear_norm:
+            self.W.assign(self.W.detach() * (max_linear_norm / norm))
+        self.tt_layer.stabilize()
+
+    def orthogonalize(self):
+        self.tt_layer.orthogonalize()
+
+    def grow_ranks(self, max_rank=None, growth_scale=0.01):
+        return self.tt_layer.grow_ranks(max_rank=max_rank, growth_scale=growth_scale)
+
+    def warm_start_from_linear(self, W):
+        """Initialize the linear backbone from a trained linear layer weight."""
+        self.W.assign(W.detach() if hasattr(W, 'detach') else Tensor(W))
+
+
+class AdditiveCTTCorrectionTG:
+    """Stagewise additive correction model: base(x,mu) + correction(x,mu)."""
+
+    def __init__(self, base_model, correction_model):
+        self.base_model = base_model
+        self.correction_model = correction_model
+        self.layers = correction_model.layers
+        self.d = base_model.d
+        self.p = base_model.p
+
+    def forward(self, a, mu):
+        base = self.base_model.forward(a, mu)
+        corr = self.correction_model.forward(a, mu)
+        return base + corr - a
+
+    def __call__(self, a, mu):
+        return self.forward(a, mu)
+
+    def parameters(self):
+        return self.correction_model.parameters()
+
+    def train_step(self, a, mu, target, optimizer=None, lr=0.1):
+        output = self.forward(a, mu)
+        loss = ((output - target) ** 2).mean()
+        loss.backward()
+        if optimizer is not None:
+            optimizer.step()
+        else:
+            for param in self.parameters():
+                if param.grad is not None:
+                    param.assign(param.detach() - lr * param.grad.detach())
+                    param.grad = None
+        for layer in self.correction_model.layers:
+            if hasattr(layer, 'stabilize'):
+                layer.stabilize()
+        return float(loss.detach().numpy())
+
 
 class TriangularResidualLayerTTFull:
     """
     Triangular residual layer using full tinyTT TT matrix for velocity.
-    
-    This uses the actual TT decomposition from tinyTT for the velocity matrix.
-    Good for higher dimensions where TT compression helps.
+
+    Experimental / incomplete path.
+    This class is kept for reference but is not recommended for use.
     """
     
     def __init__(self, h, d, p, tt_ranks=None, n_cores=None):
@@ -272,7 +494,7 @@ class TriangularResidualLayerFTT:
     We use a tensor product factorization of this function.
     """
     
-    def __init__(self, h, d, p, n_factors=4, factor_dim=4):
+    def __init__(self, h, d, p, n_factors=4, factor_dim=4, init_scale=0.05):
         """
         Args:
             h: Step size
@@ -286,6 +508,7 @@ class TriangularResidualLayerFTT:
         self.p = p
         self.n_factors = n_factors
         self.factor_dim = factor_dim
+        self.init_scale = init_scale
         
         total_dim = d + p
         
@@ -300,12 +523,12 @@ class TriangularResidualLayerFTT:
             if i < total_dim % n_factors:
                 dim_per_factor += 1
             self.input_factors.append(
-                Tensor.randn(factor_dim, dim_per_factor, requires_grad=True)
+                Tensor.randn(factor_dim, dim_per_factor, requires_grad=True) * init_scale
             )
         
         # Output projection: combine factors to produce velocity
         # Simple approach: concatenate factors and project
-        self.W_out = Tensor.randn(d, factor_dim * n_factors, requires_grad=True)
+        self.W_out = Tensor.randn(d, factor_dim * n_factors, requires_grad=True) * init_scale
     
     def forward(self, x, mu):
         """Forward pass with FTT velocity."""
@@ -351,6 +574,12 @@ class TriangularResidualLayerFTT:
     def parameters(self):
         """Return all parameters."""
         return self.input_factors + [self.W_out]
+
+    def stabilize(self, max_norm=3.0):
+        for param in self.input_factors + [self.W_out]:
+            norm = float((param.detach() ** 2).sum().sqrt().numpy())
+            if norm > max_norm:
+                param.assign(param.detach() * (max_norm / norm))
 
 
 class ComposedCTTMAPTG:
@@ -405,6 +634,10 @@ class ComposedCTTMAPTG:
                     param.assign(param.detach() - lr * param.grad.detach())
                     # Zero grad for next iteration
                     param.grad = None
+
+        for layer in self.layers:
+            if hasattr(layer, 'stabilize'):
+                layer.stabilize()
         
         return float(loss.detach().numpy())
 
@@ -468,7 +701,7 @@ class AdamOptimizer:
         pass
 
 
-def train_ctt_tinygrad(model, a_train, mu_train, x_target, n_epochs, lr, verbose=True, use_adam=False, adam_lr=None):
+def train_ctt_tinygrad(model, a_train, mu_train, x_target, n_epochs, lr, verbose=True, use_adam=False, adam_lr=None, recondition_every=None, rank_growth_every=None, max_tt_rank=None):
     """
     Train CTT using tinygrad autograd.
     
@@ -502,6 +735,16 @@ def train_ctt_tinygrad(model, a_train, mu_train, x_target, n_epochs, lr, verbose
         # Forward + backward in one step
         loss = model.train_step(a_t, mu_t, x_t, optimizer=optimizer, lr=lr)
         losses.append(loss)
+
+        if recondition_every and (epoch + 1) % recondition_every == 0:
+            for layer in model.layers:
+                if hasattr(layer, 'orthogonalize'):
+                    layer.orthogonalize()
+
+        if rank_growth_every and (epoch + 1) % rank_growth_every == 0:
+            for layer in model.layers:
+                if hasattr(layer, 'grow_ranks'):
+                    layer.grow_ranks(max_rank=max_tt_rank)
         
         if verbose and epoch % 100 == 0:
             print(f"  Epoch {epoch}: loss = {loss:.6f}")
