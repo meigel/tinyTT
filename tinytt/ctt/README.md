@@ -119,7 +119,7 @@ This ensures the map is diffeomorphic (invertible with smooth inverse).
 
 ## Velocity Field Options
 
-The CTT framework supports multiple velocity field types:
+The CTT framework supports the reusable core velocity field types:
 
 | Class | Type | Parameters | Best For |
 |-------|------|------------|----------|
@@ -127,10 +127,17 @@ The CTT framework supports multiple velocity field types:
 | `TriangularResidualLayerTG(hidden_dim>0)` | MLP | 2 × hidden × (d+p) | Nonlinear flows |
 | `TriangularResidualLayerTT(tt_rank=r)` | Low-rank TT | d×r + r×(d+p) | Parameterized problems |
 | `TriangularResidualLayerTTNative(tt_rank=r)` | Native TT-matrix | TT cores only | Structured higher-dimensional maps |
-| `TriangularResidualLayerTTResidual(tt_rank=r)` | Linear + TT residual | Linear + TT cores | Recommended TT variant |
-| `TriangularResidualLayerFTT` | Functional TT | Factorized | High dimensions |
+Library-external benchmark variants such as TT-residual hybrids, additive corrections, and other paper-specific experimental models should live in a separate experiments repository rather than in the reusable `tinyTT` package.
 
-### How CTT with TT residual works
+### Note on paper-specific variants
+
+Hybrid TT-residual constructions, additive correction models, and benchmark-specific optimizer studies were useful for paper experiments, but they are not part of the minimal reusable CTT basis layer intended for `tinyTT`.
+
+### Benchmark Results
+
+Detailed benchmark results and convergence plots should be maintained in the paper/experiments repository, not in the library README.
+
+### How CTT layers work
 
 The standard residual CTT layer is
 
@@ -328,12 +335,44 @@ Why this benchmark is well matched to CTT:
 
 This is more aligned with the intended use of CTT than the Darcy parameter-to-state toy problem, which we are dropping for now.
 
+##### KL transport benchmark and high-accuracy regime
+
+For higher-accuracy transport experiments, the repository now also supports a **KL-parameterized version** of the advection-diffusion benchmark via `examples/benchmark_ctt_transport_driver.py`.
+
+In this setting, the initial condition is not given directly in grid coordinates. Instead, we learn
+
+```math
+(\xi, \mu) \mapsto u(T),
+```
+
+where:
+
+- `\xi \in \mathbb{R}^r` are KL coefficients of the initial condition
+- `\mu` still parameterizes the PDE coefficients and forcing
+- the loss is evaluated in physical space (or mixed coefficient/physical space)
+
+This benchmark is more favorable for identifying whether the TT representation itself is sufficient, since the input manifold is smoother and lower-dimensional while the output remains a full transport state.
+
+The key empirical finding is that **direct TT with the right optimizer is dramatically better than the earlier SGD-style training suggested**.
+
+Representative results with `coeff_plus_h1` loss and **Adam + learning-rate decay**:
+
+| Grid | KL rank | Model | Relative H1 |
+|------|---------|-------|-------------|
+| 64 | 8 | TT | **3.3e-4** |
+| 64 | 12 | TT | **3.9e-4** |
+| 128 | 12 | TT | **2.0e-4** |
+| 64 | 8 | TT residual | 1.3e-3 |
+
+These results show that the current TT representation is already capable of exceeding the `1e-3` target on a genuinely nontrivial transport benchmark when optimization is done well.
+
 #### Interpretation
 
 - **TT residual is the best structured option** on the higher-dimensional linear benchmark tested so far.
 - **TT residual also performs best on the current higher-dimensional nonlinear benchmark (`d=10`)**, making it the strongest overall CTT variant currently implemented.
 - On the tested `d=10` nonlinear benchmark, **TT residual also appears to converge reliably**, not just achieve the best average error.
 - For PDE-style experiments, **parametric advection-diffusion is currently the preferred benchmark**, since CTT is much better matched to transport/evolution maps than to the Darcy toy parameter-to-state setup.
+- On the KL transport benchmark, **the main bottleneck turned out to be optimization, not representation**: replacing the SGD-style update with Adam + LR decay reduced relative H1 from about `1e-2` to `2e-4`–`4e-4`.
 - A newer **native TT-matrix layer** using `dense_matvec` is more stable than the earlier low-rank surrogate and improved a checked `d=4, p=4` benchmark from roughly **0.10 (linear)** to **0.055 (native TT)** across 2 seeds.
 - The strongest TT-based variant so far is **linear + TT residual correction**, which improved that checked benchmark to about **0.017 mean MSE** across 2 seeds.
 - Adding periodic TT orthogonalization during training (`recondition_every=5` or `10`) gave a small additional gain, improving the same benchmark from about **0.0168** to **0.0161** mean MSE.
@@ -348,13 +387,9 @@ This is more aligned with the intended use of CTT than the Darcy parameter-to-st
 
 #### Practical takeaway
 
-- Use **TT residual** first when you want the best current TT-based performance.
-- Use **TT** when the transport is close to a structured low-rank parametric map.
-- Turn on periodic TT reconditioning for native/hybrid TT layers when training becomes unstable or plateaus.
-- If a linear CTT is already trained, prefer **warm-starting a TT residual correction** rather than training a TT model from scratch.
-- If training from scratch is acceptable, the current best default is still the **direct hybrid TT residual model**.
-- Use **FTT** when you want a more expressive function-factorized velocity field.
-- Use **MLP velocity** when the target dynamics are strongly nonlinear and not well-captured by low-rank linear structure.
+- Use `TriangularResidualLayerTG` for simple linear/MLP baselines.
+- Use `TriangularResidualLayerTT` or `TriangularResidualLayerTTNative` for reusable TT-structured CTT models.
+- Keep benchmark-specific hybrids, corrections, sweeps, and plotting code outside the library.
 
 ### Neural ODE (Continuous-time)
 
@@ -383,11 +418,8 @@ See `examples/`:
 
 - `ctt_param_ode.py` - Basic parametric ODE
 - `ctt_multilayer_example.py` - Multi-layer training
-- `ctt_high_dim_example.py` - High-dimensional problem
-- `compare_methods.py` - CTT vs TT vs dense baselines
-- `nonlinear_transport.py` - Nonlinear transport benchmark
-- `benchmark_ctt_advection_diffusion.py` - Parametric transport PDE benchmark
-- `velocity_comparison.png` - Generated TT/FTT comparison figure
+
+More elaborate comparisons, benchmark sweeps, convergence plots, and paper-specific transport experiments should live outside `tinyTT` in a dedicated experiments/paper repository.
 
 Run:
 ```bash
@@ -478,9 +510,6 @@ tinytt/ctt/
 examples/
 ├── ctt_param_ode.py
 ├── ctt_multilayer_example.py
-├── ctt_high_dim_example.py
-├── compare_methods.py       # CTT vs TT vs Dense
-├── nonlinear_transport.py   # Nonlinear density transport
 └── ...
 
 tests/

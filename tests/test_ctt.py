@@ -11,10 +11,8 @@ try:
     from tinygrad import Tensor
     from tinytt.ctt import (
         ComposedCTTMAPTG,
-        TriangularResidualLayerFTT,
         TriangularResidualLayerTG,
         TriangularResidualLayerTT,
-        TriangularResidualLayerTTResidual,
         train_ctt_tinygrad,
     )
     HAS_TINYGRAD_CTT = True
@@ -445,47 +443,6 @@ class TestTinygradCTTRegression:
         assert np.isfinite(np.asarray(losses)).all()
         assert np.isfinite(pred).all()
         assert np.isfinite(np.mean((pred - x_test) ** 2))
-
-    def test_ftt_no_nan_on_nonlinear_training(self):
-        np.random.seed(1)
-        a_train = np.random.randn(32, 2)
-        mu_train = np.random.uniform(-1, 1, (32, 2))
-        x_train = self._nonlinear_flow(a_train, mu_train)
-        a_test = np.random.randn(16, 2)
-        mu_test = np.random.uniform(-1, 1, (16, 2))
-        x_test = self._nonlinear_flow(a_test, mu_test)
-
-        model = ComposedCTTMAPTG([TriangularResidualLayerFTT(h=0.2, d=2, p=2, n_factors=4, factor_dim=4) for _ in range(5)])
-        losses = train_ctt_tinygrad(model, a_train, mu_train, x_train, n_epochs=20, lr=0.5, verbose=False)
-        pred = model.forward(Tensor(a_test), Tensor(mu_test)).numpy()
-
-        assert np.isfinite(np.asarray(losses)).all()
-        assert np.isfinite(pred).all()
-        assert np.isfinite(np.mean((pred - x_test) ** 2))
-
-    def test_tt_residual_outperforms_plain_tt_on_structured_linear_problem(self):
-        np.random.seed(0)
-        a_train = np.random.randn(48, 4)
-        mu_train = np.random.uniform(-1, 1, (48, 4))
-        x_train = self._linear_flow(a_train, mu_train)
-        a_test = np.random.randn(24, 4)
-        mu_test = np.random.uniform(-1, 1, (24, 4))
-        x_test = self._linear_flow(a_test, mu_test)
-
-        tt_model = ComposedCTTMAPTG([TriangularResidualLayerTT(h=0.2, d=4, p=4, tt_rank=4) for _ in range(5)])
-        tt_res_model = ComposedCTTMAPTG([TriangularResidualLayerTTResidual(h=0.2, d=4, p=4, tt_rank=4) for _ in range(5)])
-
-        train_ctt_tinygrad(tt_model, a_train, mu_train, x_train, n_epochs=25, lr=0.5, verbose=False)
-        train_ctt_tinygrad(tt_res_model, a_train, mu_train, x_train, n_epochs=25, lr=0.5, verbose=False, recondition_every=5)
-
-        pred_tt = tt_model.forward(Tensor(a_test), Tensor(mu_test)).numpy()
-        pred_res = tt_res_model.forward(Tensor(a_test), Tensor(mu_test)).numpy()
-        mse_tt = float(np.mean((pred_tt - x_test) ** 2))
-        mse_res = float(np.mean((pred_res - x_test) ** 2))
-
-        assert np.isfinite(mse_tt)
-        assert np.isfinite(mse_res)
-        assert mse_res < mse_tt
 
     def test_mlp_bias_parameters_train_without_nan(self):
         np.random.seed(2)
