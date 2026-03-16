@@ -1,66 +1,46 @@
 # tinyTT
 
-Tensor-Train (TT) decomposition library built on top of `tinygrad`, with an
-optional `torchtt_ref` submodule providing the `torchtt` reference used for
-parity tests.
+Tensor-Train (TT) tensors, operators, and solvers built on top of `tinygrad`.
 
 ## Highlights
 
-- CPU-only core implementation (real dtypes).
-- Optional TinyJit acceleration (`TORCHTT_TINYJIT=1`).
-- Optional numpy-backed SVD for faster CPU decomposition (`TINYTT_SVD_BACKEND=numpy`).
-- Parity tests against `torchtt_ref` when PyTorch is installed.
-- AMEn-based `amen_mm` and solver suite (ALS/AMEn/DMRG) in TT form.
-- TDVP and BUG time evolution methods.
+- TT tensors and TT-matrices on a `tinygrad` backend.
+- CPU is the default execution path; optional `tinygrad` devices such as CUDA,
+  Metal, or OpenCL can be selected with `TINYTT_DEVICE`.
+- **Core solvers**: ALS, AMEn, DMRG, TDVP for time evolution.
+- **QTT**: Quantized Tensor Train (QTT) format for high-dimensional problems.
+- **CTT**: Conditional Triangular Tensor transport maps for uncertainty quantification.
+- Interpolation, autograd helpers, and utility functions.
 
 ## Repository Layout
 
-- `tinytt/`: tinyTT implementation (tinygrad backend).
-- `torchtt_ref/`: optional submodule with the PyTorch-based reference.
-- `tests/`: parity tests comparing tinyTT to `torchtt_ref`.
-- `tests_ref/`: upstream reference tests (require PyTorch).
-- `examples/`: tinyTT examples.
-- `examples_ref/`: original torchTT examples (reference only).
-- `third party reference/`: reference implementations (BUG, TDVP).
+- `tinytt/`: main library code.
+- `tinytt/ctt/`: conditional transport-map module.
+- `tests/`: tinyTT test suite.
+- `examples/`: runnable tinyTT examples.
+- `tinygrad/`: optional pinned `tinygrad` submodule.
 
 ## Setup
 
-### Core (tinyTT only)
+Create a virtual environment, install runtime dependencies, and install the
+package in editable mode:
 
 ```bash
-python -m venv venv
+python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
+python3 -m pip install -e .
 ```
 
-### Optional reference dependencies (PyTorch)
+`requirements.txt` installs `tinygrad`. If the local `tinygrad/` submodule is
+present, `tinytt` prefers that checkout at import time so you can stay pinned
+to the repository version.
+
+Optional development dependencies:
 
 ```bash
-pip install -r requirements-ref.txt
+python3 -m pip install -r requirements-dev.txt
 ```
-
-### Optional dev dependencies (pytest)
-
-```bash
-pip install -r requirements-dev.txt
-```
-
-## Submodules
-
-This repo expects a `tinygrad/` checkout. Use the submodule when you want a
-pinned version:
-
-```bash
-git submodule update --init --recursive
-```
-
-If you prefer a pip-installed `tinygrad`, remove/ignore the submodule and
-install `tinygrad` in your environment. The backend will use the local
-submodule if present, otherwise it falls back to the installed package.
-
-To enable parity tests, make the `torchtt` package importable by either
-initializing `torchtt_ref/` as a submodule or installing `torchtt` into your
-environment.
 
 ## Usage
 
@@ -70,79 +50,94 @@ import tinytt as tt
 
 full = np.arange(8, dtype=np.float64).reshape(2, 2, 2)
 xt = tt.TT(full, eps=1e-12)
-print(xt.R)
+print("TT ranks:", xt.R)
+print("Reconstruction error:", np.linalg.norm(xt.full().numpy() - full))
 ```
 
-Examples are in `examples/`, including:
+Representative examples:
 
-- `examples/basic_usage.py` and `examples/tt_basics.py` for core TT usage.
-- `examples/tt_helpers.py` and `examples/tt_linalg.py` for helper ops.
-- `examples/tt_fast_products.py` and `examples/tt_dmrg.py` for fast products.
-- `examples/tt_solvers.py` and `examples/tt_autograd.py` for solvers and AD.
-- `examples/mpo_ising_tdvp.py` for a minimal MPO + TDVP imaginary-time sweep.
+- `examples/basic_usage.py`: TT construction, arithmetic, and matvec.
+- `examples/tt_basics.py`: rounding and dense reconstruction.
+- `examples/tt_helpers.py`, `examples/tt_linalg.py`: helper routines and linear algebra.
+- `examples/tt_fast_products.py`, `examples/tt_dmrg.py`: fast contractions and DMRG.
+- `examples/tt_solvers.py`, `examples/tt_autograd.py`: solvers and differentiation.
+- `examples/mpo_ising_tdvp.py`: minimal MPO + TDVP sweep.
+- `examples/ctt_param_ode.py`, `examples/ctt_multilayer_example.py`: CTT demos.
+- `examples/heat_equation.py`: QTT heat equation solver.
+
+Some example scripts write plots and therefore require `matplotlib` in addition
+to the runtime dependencies.
 
 ## Tests
 
-Run tinyTT parity tests (skip if `torchtt` is not importable):
+Run the tinyTT test suite:
 
 ```bash
-PYTHONPATH=. pytest -q tests
+PYTHONPATH=. python3 -m pytest -q tests
 ```
 
-GPU tests are opt-in and require `TINYTT_DEVICE` (for example `CUDA`, or `CL`
-for Intel OpenCL backends):
+GPU tests are opt-in and require `TINYTT_DEVICE`:
 
 ```bash
-TINYTT_DEVICE=CUDA PYTHONPATH=. pytest -q tests/test_gpu_ops.py
+TINYTT_DEVICE=CUDA PYTHONPATH=. python3 -m pytest -q tests/test_gpu_ops.py
+TINYTT_DEVICE=CUDA PYTHONPATH=. python3 -m pytest -q tests/test_gpu_smoke.py
 ```
 
-Run reference tests (requires PyTorch):
+The `tests/test_uq_adf_skfem.py` case is intentionally slow and skips itself if
+it exceeds the time budget. The faster UQ-ADF smoke test is:
 
 ```bash
-PYTHONPATH=. pytest -q tests_ref
+PYTHONPATH=. python3 -m pytest -q tests/test_uq_adf_fast.py
 ```
-
-The `tests/test_uq_adf_skfem.py` case can be slow. It prints progress and
-skips automatically if it exceeds the time budget.
-
-For UQ-ADF specifically:
-
-- Fast smoke test: `PYTHONPATH=. pytest -q tests/test_uq_adf_fast.py`
-- Slow `skfem` integration: `PYTHONPATH=. pytest -q tests/test_uq_adf_skfem.py`
-
-## Notes on Optional Reference Code
-
-`torchtt_ref/` is included for parity testing and API comparison. Installing
-PyTorch is optional unless you run parity/reference tests.
 
 ## Environment Flags
 
-- `TINYTT_DEVICE=CUDA|METAL|...`: set the default tinygrad device for new tensors.
-- `TORCHTT_TINYJIT=1`: enable TinyJit in selected kernels.
-- `TINYTT_SVD_BACKEND=numpy|tinygrad`: choose SVD backend (default: numpy).
-- `TINYTT_FORCE_FP32=1`: force float32 when the device lacks fp64 support (auto-detected).
+- `TINYTT_DEVICE=CUDA|METAL|CL|...`: default `tinygrad` device for new tensors.
+- `TINYTT_SVD_BACKEND=numpy|tinygrad`: choose the SVD backend.
+- `TINYTT_FORCE_FP32=1`: force `float32` on devices without usable `float64`.
 
-## TDVP (Imaginary and Real Time)
+## Features
 
-`tinytt.tdvp.tdvp_imag_time` implements one-site or two-site imaginary-time TDVP
-sweeps for finite MPS/MPO. Local evolution uses dense eigendecomposition for
-small blocks and a Lanczos-based Krylov exp-action for larger blocks.
+### Tensor Train (TT)
 
-`tinytt.tdvp.tdvp_real_time` evolves a real/imag split state and returns
-`(psi_re, psi_im)`. It uses the same local Krylov exp-action, but truncates
-real and imaginary parts separately (approximate).
+Full-featured TT implementation with:
+- Construction from dense tensors, arrays, or cores
+- QTT conversion (`to_qtt()`, `qtt_to_tens()`)
+- Arithmetic operations, matvec, einsum
+- Rank truncation with SVD
 
-## Numpy Fallbacks and Performance Notes
+### Solvers
 
-Some routines use NumPy fallbacks for stability or because tinygrad lacks
-equivalent ops. These run on CPU and can incur host/device transfers:
+- **ALS**: Alternating Least Squares for linear systems
+- **DMRG**: Density Matrix Renormalization Group
+- **AMEn**: Alternating Minimal Energy methods
+- **TDVP**: Time-Dependent Variational Principle for time evolution
 
-- SVD in `tinytt/_decomposition.py` defaults to NumPy unless `TINYTT_SVD_BACKEND=tinygrad`.
-- Interpolation (`tinytt/interpolate.py`) uses NumPy for `maxvol` and linear solves.
-- UQ-ADF (`tinytt/uq_adf.py`) uses NumPy `solve` and `lgamma`-based scaling.
-- Some solver helpers use NumPy `solve` on small dense systems.
+### QTT (Quantized Tensor Train)
 
-Performance impact: these sections are likely to dominate runtime for
-interpolation/UQ-ADF on GPU because they force CPU execution and data transfer.
-Replacing them with tinygrad GPU ops (or batching solves) would be the most
-impactful path to GPU speedups.
+For high-dimensional problems (e.g., PDEs):
+- Automatic conversion to QTT format
+- Efficient representation of operators in QTT
+- See `examples/heat_equation.py` for 2D heat equation example
+
+### CTT (Conditional Transport Maps)
+
+Experimental module for building conditional transport maps:
+- Triangular residual layers
+- Composed CTT maps
+- Training utilities
+- See `examples/ctt_param_ode.py` and `examples/ctt_multilayer_example.py`
+
+## NumPy Fallbacks
+
+Several routines still rely on NumPy for stability or because `tinygrad` does
+not provide a matching primitive. These paths run on CPU and can dominate
+runtime on accelerator backends:
+
+- SVD in `tinytt/_decomposition.py` defaults to NumPy.
+- `tinytt/interpolate.py` uses NumPy for `maxvol` and dense solves.
+- `tinytt/uq_adf.py` uses NumPy dense linear algebra and special-function helpers.
+- Some solver helpers use NumPy solves on small dense systems.
+
+This makes tinyTT best described as CPU-first today, with partial accelerator
+support where the backend path stays inside `tinygrad`.

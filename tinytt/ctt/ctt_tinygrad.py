@@ -18,6 +18,17 @@ from tinytt._aux_ops import dense_matvec
 from tinytt._decomposition import lr_orthogonal
 
 
+def _as_batch_tensor(value):
+    if isinstance(value, Tensor):
+        tensor = value
+    else:
+        tensor = Tensor(value)
+    single = len(tensor.shape) == 1
+    if single:
+        tensor = tensor.reshape(1, tensor.shape[0])
+    return tensor, single
+
+
 class TriangularResidualLayerTG:
     """
     Triangular residual layer using tinygrad autograd.
@@ -48,15 +59,12 @@ class TriangularResidualLayerTG:
     
     def forward(self, x, mu):
         """Forward pass - tinygrad tracks gradients automatically."""
-        # Convert inputs to tensors if needed
-        if not isinstance(x, Tensor):
-            x = Tensor(x, requires_grad=True)
-        if not isinstance(mu, Tensor):
-            mu = Tensor(mu, requires_grad=True)
+        x, single = _as_batch_tensor(x)
+        mu, _ = _as_batch_tensor(mu)
         
         # Broadcast mu if needed
         if mu.shape[0] == 1 and x.shape[0] > 1:
-            mu = mu.repeat(x.shape[0])
+            mu = mu.repeat(x.shape[0], 1)
         
         # Concatenate [x; mu]
         z = x.cat(mu, dim=1)
@@ -71,7 +79,9 @@ class TriangularResidualLayerTG:
         
         # Residual update
         x_new = x + self.h * psi
-        
+
+        if single:
+            return x_new.reshape(self.d), mu.reshape(self.p)
         return x_new, mu
     
     def parameters(self):
@@ -124,15 +134,12 @@ class TriangularResidualLayerTT:
     
     def forward(self, x, mu):
         """Forward pass with TT velocity."""
-        # Convert inputs to tensors if needed
-        if not isinstance(x, Tensor):
-            x = Tensor(x, requires_grad=True)
-        if not isinstance(mu, Tensor):
-            mu = Tensor(mu, requires_grad=True)
+        x, single = _as_batch_tensor(x)
+        mu, _ = _as_batch_tensor(mu)
         
         # Broadcast mu if needed
         if mu.shape[0] == 1 and x.shape[0] > 1:
-            mu = mu.repeat(x.shape[0])
+            mu = mu.repeat(x.shape[0], 1)
         
         # Concatenate [x; mu]
         z = x.cat(mu, dim=1)  # (n, d+p)
@@ -147,7 +154,9 @@ class TriangularResidualLayerTT:
         
         # Residual update
         x_new = x + self.h * psi
-        
+
+        if single:
+            return x_new.reshape(self.d), mu.reshape(self.p)
         return x_new, mu
     
     def parameters(self):
@@ -203,13 +212,11 @@ class TriangularResidualLayerTTNative:
         ]
 
     def forward(self, x, mu):
-        if not isinstance(x, Tensor):
-            x = Tensor(x, requires_grad=True)
-        if not isinstance(mu, Tensor):
-            mu = Tensor(mu, requires_grad=True)
+        x, single = _as_batch_tensor(x)
+        mu, _ = _as_batch_tensor(mu)
 
         if mu.shape[0] == 1 and x.shape[0] > 1:
-            mu = mu.repeat(x.shape[0])
+            mu = mu.repeat(x.shape[0], 1)
 
         z = x.cat(mu, dim=1)
         batch = z.shape[0]
@@ -218,6 +225,8 @@ class TriangularResidualLayerTTNative:
         psi = psi_tt.reshape(batch, self.d)
 
         x_new = x + self.h * psi
+        if single:
+            return x_new.reshape(self.d), mu.reshape(self.p)
         return x_new, mu
 
     def parameters(self):
@@ -416,9 +425,9 @@ def train_ctt_tinygrad(model, a_train, mu_train, x_target, n_epochs, lr, verbose
     losses = []
     
     # Convert to tensors
-    a_t = Tensor(a_train, requires_grad=True)
-    mu_t = Tensor(mu_train, requires_grad=True)
-    x_t = Tensor(x_target, requires_grad=True)
+    a_t = Tensor(a_train)
+    mu_t = Tensor(mu_train)
+    x_t = Tensor(x_target)
     
     # Create optimizer
     if use_adam:
@@ -437,9 +446,12 @@ def train_ctt_tinygrad(model, a_train, mu_train, x_target, n_epochs, lr, verbose
                     layer.orthogonalize()
 
         if rank_growth_every and (epoch + 1) % rank_growth_every == 0:
+            grew = False
             for layer in model.layers:
                 if hasattr(layer, 'grow_ranks'):
-                    layer.grow_ranks(max_rank=max_tt_rank)
+                    grew = bool(layer.grow_ranks(max_rank=max_tt_rank)) or grew
+            if grew and use_adam:
+                optimizer = AdamOptimizer(model.parameters(), lr=adam_lr or lr)
         
         if verbose and epoch % 100 == 0:
             print(f"  Epoch {epoch}: loss = {loss:.6f}")
@@ -655,4 +667,3 @@ def train_neural_ode(model, a_train, mu_train, x_target, n_epochs, lr, dt=0.1, v
             print(f"  Epoch {epoch}: loss = {loss:.6f}")
     
     return losses
-

@@ -2,8 +2,8 @@
 requires = ["setuptools>=61", "setuptools-scm>=8.0", "wheel", "numpy>=1.18"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["tinytt"]
+[tool.setuptools.packages.find]
+include = ["tinytt*"]
 
 #[tool.setuptools.package-data]
 #torchtt = ["cpp/*"]
@@ -15,7 +15,8 @@ description = "Tensor-Train decomposition in tinygrad."
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
-    "numpy>=1.18"
+    "numpy>=1.18",
+    "tinygrad",
 ]
 license = {file = "LICENSE"}
 authors = [

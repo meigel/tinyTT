@@ -35,6 +35,8 @@ class TTMap:
         """
         self.d = d
         self.p = p
+        self.W_dense = np.random.randn(self.d, self.p) * 0.1
+        self.b_bias = np.random.randn(self.d) * 0.1
         
         if ranks is None:
             ranks = [1, 2, 2, 1]  # Simple rank-2 TT
@@ -112,10 +114,7 @@ class TTMap:
                 mu = np.tile(mu, (batch_size, 1))
             
             # Simple linear map (placeholder for TT)
-            W = np.random.randn(self.d, self.p) * 0.1
-            b = np.random.randn(self.d) * 0.1
-            
-            x = a + a @ W[:, :self.d].T * 0 + mu @ W.T * 0.5 + b
+            x = a + 0.5 * (mu @ self.W_dense.T) + self.b_bias
             
             if single:
                 x = x[0]
@@ -153,11 +152,17 @@ class TriangularResidualLayer:
             hidden_dim: if > 0, use nonlinear MLP velocity with this hidden size
         """
         self.h = h
+        self.hidden_dim = hidden_dim
+        self.W = None
         
         if tt_psi is not None:
             self.tt_psi = tt_psi
-            self.d = tt_psi.N[0] if hasattr(tt_psi, 'N') else None
-            self.p = len(tt_psi.N) - self.d if self.d else None
+            self.d = getattr(tt_psi, 'd', d)
+            self.p = getattr(tt_psi, 'p', p)
+            if self.d is None or self.p is None:
+                if hasattr(tt_psi, 'N') and tt_psi.N:
+                    self.d = tt_psi.N[0]
+                    self.p = len(tt_psi.N) - self.d
             self.nonlinear = False
         else:
             self.tt_psi = None
@@ -187,45 +192,25 @@ class TriangularResidualLayer:
                     self.W = np.random.randn(d, d + p) * 0.01
                 else:
                     self.W = None
-    
-    def forward(self, x, mu):
-        """
-        Apply the residual layer.
-        
-        T_ℓ(x, μ) = (x + h * Ψ_ℓ(x, μ), μ)
-        
-        Args:
-            x: state, shape (d,) or (batch, d)
-            mu: parameter, shape (p,) or (batch, p) or (1, p)
-            
-        Returns:
-            x_new: updated state
-            mu: unchanged parameter
-        """
-        # Compute velocity
-        if self.tt_psi is not None:
-            # Full TT evaluation (placeholder)
-            psi = self._eval_tt_velocity(x, mu)
-        elif self.nonlinear:
-            psi = self._eval_nonlinear_velocity(x, mu)
-        else:
-            psi = self._eval_linear_velocity(x, mu)
-        
-        # Residual update
-        x_new = x + self.h * psi
-        
-        return x_new, mu
+
+    def _prepare_batch_inputs(self, x, mu):
+        x = np.asarray(x)
+        mu = np.asarray(mu)
+        single = x.ndim == 1
+        if single:
+            x = x.reshape(1, -1)
+            mu = mu.reshape(1, -1)
+        elif mu.ndim == 1:
+            mu = mu.reshape(1, -1)
+
+        if mu.shape[0] == 1 and x.shape[0] > 1:
+            mu = np.tile(mu, (x.shape[0], 1))
+
+        return x, mu, single
     
     def _eval_nonlinear_velocity(self, x, mu):
         """Evaluate nonlinear MLP velocity."""
-        if x.ndim == 1:
-            x = x.reshape(1, -1)
-            mu = mu.reshape(1, -1)
-            single = True
-        else:
-            single = False
-            if mu.shape[0] == 1 and x.shape[0] > 1:
-                mu = np.tile(mu, (x.shape[0], 1))
+        x, mu, single = self._prepare_batch_inputs(x, mu)
         
         # Concatenate [x; mu]
         z = np.concatenate([x, mu], axis=1)
@@ -242,7 +227,20 @@ class TriangularResidualLayer:
     def jacobian_x(self, x, mu):
         """Compute Jacobian with respect to x."""
         if self.tt_psi is not None:
-            raise NotImplementedError("TT Jacobian not implemented")
+            if hasattr(self.tt_psi, 'get_jacobian_x'):
+                return np.eye(self.d) + self.h * self.tt_psi.get_jacobian_x(x, mu)
+
+            eps = 1e-6
+            x = np.asarray(x, dtype=float)
+            mu = np.asarray(mu, dtype=float)
+            base = np.asarray(self._eval_tt_velocity(x, mu), dtype=float)
+            jac = np.zeros((self.d, self.d))
+            for idx in range(self.d):
+                perturb = np.zeros(self.d)
+                perturb[idx] = eps
+                shifted = np.asarray(self._eval_tt_velocity(x + perturb, mu), dtype=float)
+                jac[:, idx] = (shifted - base) / eps
+            return np.eye(self.d) + self.h * jac
         
         if self.nonlinear:
             # Approximate Jacobian for nonlinear case
@@ -261,7 +259,9 @@ class TriangularResidualLayer:
     def is_near_identity(self, q=0.5):
         """Check near-identity condition."""
         if self.tt_psi is not None:
-            return True
+            jac = self.jacobian_x(np.zeros(self.d), np.zeros(self.p))
+            bound = np.linalg.norm(jac - np.eye(self.d), ord=2)
+            return bool(bound <= q)
         if self.nonlinear:
             # Approximate bound
             bound = self.h * (np.linalg.norm(self.W2, ord=2) * 
@@ -274,45 +274,30 @@ class TriangularResidualLayer:
     def forward(self, x, mu):
         """
         Apply the residual layer.
-        
+
         T_ℓ(x, μ) = (x + h * Ψ_ℓ(x, μ), μ)
-        
-        Args:
-            x: state, shape (d,) or (batch, d)
-            mu: parameter, shape (p,) or (batch, p) or (1, p)
-            
-        Returns:
-            x_new: updated state
-            mu: unchanged parameter
         """
-        # Compute velocity
         if self.tt_psi is not None:
-            # Full TT evaluation (placeholder)
             psi = self._eval_tt_velocity(x, mu)
         elif self.nonlinear:
             psi = self._eval_nonlinear_velocity(x, mu)
         else:
             psi = self._eval_linear_velocity(x, mu)
-        
-        # Residual update
-        x_new = x + self.h * psi
-        
+
+        x_new = np.asarray(x) + self.h * np.asarray(psi)
         return x_new, mu
     
     def _eval_tt_velocity(self, x, mu):
         """Evaluate TT velocity field."""
-        raise NotImplementedError("TT velocity evaluation not yet implemented")
+        if hasattr(self.tt_psi, 'forward'):
+            return self.tt_psi.forward(x, mu)
+        if callable(self.tt_psi):
+            return self.tt_psi(x, mu)
+        raise TypeError("tt_psi must provide a forward method or be callable")
     
     def _eval_linear_velocity(self, x, mu):
         """Evaluate simple linear velocity field."""
-        if x.ndim == 1:
-            x = x.reshape(1, -1)
-            mu = mu.reshape(1, -1)
-            single = True
-        else:
-            single = False
-            if mu.shape[0] == 1 and x.shape[0] > 1:
-                mu = np.tile(mu, (x.shape[0], 1))
+        x, mu, single = self._prepare_batch_inputs(x, mu)
         
         z = np.concatenate([x, mu], axis=1)
         psi = z @ self.W.T
@@ -322,21 +307,6 @@ class TriangularResidualLayer:
         
         return psi
     
-    def jacobian_x(self, x, mu):
-        """Compute Jacobian with respect to x."""
-        if self.tt_psi is not None:
-            raise NotImplementedError("TT Jacobian not implemented")
-        J = np.eye(self.d) + self.h * self.W[:, :self.d].T
-        return J
-    
-    def is_near_identity(self, q=0.5):
-        """Check near-identity condition."""
-        if self.W is None:
-            return True
-        bound = self.h * np.linalg.norm(self.W[:, :self.d], ord=2)
-        return bool(bound <= q)
-
-
 class TTVelocityField:
     """
     Tensor Train velocity field for CTT.
@@ -470,6 +440,8 @@ class TTVelocityField:
         # For prototype, just convert to dense and compute
         # Full implementation would use TT matvec
         W = self.tt_matrix.full()
+        if hasattr(W, 'numpy'):
+            W = W.numpy()
         v = z @ W.T
         
         return v
@@ -477,13 +449,14 @@ class TTVelocityField:
     def get_weights(self):
         """Get current weight matrix as dense."""
         if self.tt_matrix is not None:
-            return self.tt_matrix.full()
+            weights = self.tt_matrix.full()
+            return weights.numpy() if hasattr(weights, 'numpy') else weights
         return self.W_dense
     
     def set_weights(self, W):
         """Set weights from dense matrix."""
         if self.tt_matrix is not None:
-            self.tt_matrix = TT(W.reshape(-1), shape=[(self.d, self.input_dim)], eps=self.eps)
+            self.tt_matrix = tt.TT(W.reshape(-1), shape=[(self.d, self.input_dim)], eps=self.eps)
         else:
             self.W_dense = W
     
@@ -495,6 +468,8 @@ class TTVelocityField:
         """
         if self.tt_matrix is not None:
             W = self.tt_matrix.full()
+            if hasattr(W, 'numpy'):
+                W = W.numpy()
         else:
             W = self.W_dense
         
