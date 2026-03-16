@@ -5,8 +5,7 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["tinytt*"]
 
-#[tool.setuptools.package-data]
-#torchtt = ["cpp/*"]
+
 
 [project]
 name = "tinyTT"

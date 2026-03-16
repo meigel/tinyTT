@@ -1,6 +1,5 @@
 """
-Fast products in TT.
-Adapted from torchtt_ref/_fast_mult.py to tinygrad backend.
+Fast products in TT (matrix-vector, matrix-matrix, Hadamard).
 """
 
 from __future__ import annotations

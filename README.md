@@ -93,6 +93,7 @@ PYTHONPATH=. python3 -m pytest -q tests/test_uq_adf_fast.py
 ## Environment Flags
 
 - `TINYTT_DEVICE=CUDA|METAL|CL|...`: default `tinygrad` device for new tensors.
+- `TINYTT_TINYJIT=1`: enable `TinyJit` for selected kernels.
 - `TINYTT_SVD_BACKEND=numpy|tinygrad`: choose the SVD backend.
 - `TINYTT_FORCE_FP32=1`: force `float32` on devices without usable `float64`.
 

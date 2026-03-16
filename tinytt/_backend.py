@@ -28,7 +28,7 @@ if _TINYTT_DEVICE_ENV and _TINYTT_DEVICE_ENV.upper().startswith("GPU") and not _
 
 from tinygrad import Tensor, dtypes, TinyJit
 
-USE_TINYJIT = os.getenv("TORCHTT_TINYJIT", "0").lower() in ("1", "true", "yes")
+USE_TINYJIT = os.getenv("TINYTT_TINYJIT", "0").lower() in ("1", "true", "yes")
 _jit_cache: dict[tuple, TinyJit] = {}
 
 
