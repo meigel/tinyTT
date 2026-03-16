@@ -66,5 +66,5 @@ __all__ = [
     'fast_mm',
 ]
 
-# keep a stable alias for typo parity with torchtt_ref
+# keep alias for typo
 fast_hadamard = fast_hadammard

@@ -1,19 +1,13 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
-
-REF_ROOT = Path(__file__).resolve().parent / "torchtt_ref"
-if REF_ROOT.exists():
-    sys.path.insert(0, str(REF_ROOT))
+import tinytt._backend as tnb
 
 
 def pytest_collection_modifyitems(config, items):
-    import tinytt._backend as tnb
+    """Skip float64-dependent tests if device lacks fp64 support."""
     if tnb.default_float_dtype() != tnb.float64:
-        skip = pytest.mark.skip(reason="Parity tests require float64; device lacks fp64 support.")
+        skip = pytest.mark.skip(reason="Tests require float64; device lacks fp64 support.")
         for item in items:
-            if "tests/test_parity_" in str(item.fspath):
+            if "float64" in item.name or "accuracy" in item.name:
                 item.add_marker(skip)
