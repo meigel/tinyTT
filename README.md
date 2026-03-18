@@ -8,6 +8,7 @@ Tensor-Train (TT) tensors, operators, and solvers built on top of `tinygrad`.
 - CPU is the default execution path; optional `tinygrad` devices such as CUDA,
   Metal, or OpenCL can be selected with `TINYTT_DEVICE`.
 - **Core solvers**: ALS, AMEn, DMRG, TDVP for time evolution.
+- **Streaming TT**: Randomized one-pass approximation (STTA) for large or streaming data.
 - **QTT**: Quantized Tensor Train (QTT) format for high-dimensional problems.
 - **CTT**: Conditional Triangular Tensor transport maps for uncertainty quantification.
 - Interpolation, autograd helpers, and utility functions.
@@ -47,10 +48,18 @@ python3 -m pip install -r requirements-dev.txt
 ```python
 import numpy as np
 import tinytt as tt
+from tinytt.streaming import streaming_tt
 
+# Standard TT-SVD construction
 full = np.arange(8, dtype=np.float64).reshape(2, 2, 2)
 xt = tt.TT(full, eps=1e-12)
-print("TT ranks:", xt.R)
+
+# Streaming TT (one-pass randomized)
+# useful for large tensors or streaming data
+st = streaming_tt(shape=[2, 2, 2], ranks=2, data_stream=full)
+
+print("TT ranks (SVD):", xt.R)
+print("TT ranks (Streaming):", st.R)
 print("Reconstruction error:", np.linalg.norm(xt.full().numpy() - full))
 ```
 
@@ -106,6 +115,14 @@ Full-featured TT implementation with:
 - QTT conversion (`to_qtt()`, `qtt_to_tens()`)
 - Arithmetic operations, matvec, einsum
 - Rank truncation with SVD
+
+### Streaming TT (STTA)
+
+Randomized one-pass approximation for tensors that are too large to fit in memory or arrive as a stream:
+- **One-pass algorithm**: Only requires a single pass over the data using randomized sketching.
+- **Incremental updates**: Update the approximation slice-by-slice along any axis (optimized for last axis).
+- **Oversampling**: Improved accuracy using randomized range-finding.
+- See `tinytt/streaming.py` and `tests/test_streaming_convergence.py`.
 
 ### Solvers
 
