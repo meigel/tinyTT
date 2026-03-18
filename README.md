@@ -71,6 +71,7 @@ Representative examples:
 - `examples/tt_fast_products.py`, `examples/tt_dmrg.py`: fast contractions and DMRG.
 - `examples/tt_solvers.py`, `examples/tt_autograd.py`: solvers and differentiation.
 - `examples/mpo_ising_tdvp.py`: minimal MPO + TDVP sweep.
+- `examples/stta_qtt_example.py`: one-pass QTT construction for functions.
 - `examples/ctt_param_ode.py`, `examples/ctt_multilayer_example.py`: CTT demos.
 - `examples/heat_equation.py`: QTT heat equation solver.
 
