@@ -32,6 +32,10 @@ from . import interpolate
 from . import uq_adf
 from . import tdvp
 from . import bug
+from . import truncation
+from . import basis
+from . import functional
+from . import regression
 
 __all__ = [
     'TT',
@@ -64,6 +68,10 @@ __all__ = [
     'fast_hadammard',
     'fast_mv',
     'fast_mm',
+    'truncation',
+    'basis',
+    'functional',
+    'regression',
 ]
 
 # keep alias for typo

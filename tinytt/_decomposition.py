@@ -7,6 +7,7 @@ Basic decomposition and orthogonalization.
 import os
 import tinytt._backend as tn
 import numpy as np
+from tinytt.truncation import apply_truncation_rule
 
 
         
@@ -194,7 +195,7 @@ def rl_orthogonal(tt_cores, R, is_ttm, no_gpu = False):
 
     
 
-def round_tt(tt_cores,R,eps,Rmax,is_ttm=False):
+def round_tt(tt_cores, R, eps, Rmax, is_ttm=False, rule=None):
     """
     Rounds a TT-tensor (tt_cores have to be orthogonal)
 
@@ -208,6 +209,8 @@ def round_tt(tt_cores,R,eps,Rmax,is_ttm=False):
         desired rounding accuracy.
     Rmax : list of integers
         the maximum rank that is allowed.
+    rule : TruncationRule, optional
+        A callable that takes a tensor of singular values and returns an int rank.
 
     Returns
     -------
@@ -223,34 +226,46 @@ def round_tt(tt_cores,R,eps,Rmax,is_ttm=False):
         return tt_cores, R
     tt_cores, R = lr_orthogonal(tt_cores, R, is_ttm)
     core_now = tt_cores[-1]
-    eps = eps / np.sqrt(d-1) 
+    eps = eps / np.sqrt(d-1)
 
-    
-    for i in range(d-1,0,-1):
+    for i in range(d-1, 0, -1):
         core_next = tt_cores[i-1]
-        
-        core_now = tn.reshape(core_now,[R[i],-1])
-        core_next = tn.reshape(core_next,[-1,R[i]])
-        
-        
+
+        core_now = tn.reshape(core_now, [R[i], -1])
+        core_next = tn.reshape(core_next, [-1, R[i]])
+
         U, S, V = SVD(core_now)
-        r_now = min([Rmax[i], rank_chop(S.numpy(), tn.linalg.norm(S).numpy()*eps)])
+        r_now = min([
+            Rmax[i],
+            rank_chop(
+                S,
+                eps=tn.linalg.norm(S).numpy() * eps,
+                rmax=Rmax[i],
+                rule=rule,
+                position=i - 1,
+                current_rank=R[i],
+                max_rank=Rmax[i],
+                matrix_shape=tuple(core_now.shape),
+                u=U,
+                v=V,
+            ),
+        ])
         r_now = int(r_now)
-    
-        U = U[:,:r_now]
+
+        U = U[:, :r_now]
         S = S[:r_now]
-        V = V[:r_now,:]
-        
+        V = V[:r_now, :]
+
         U = U @ tn.diag(S)
         R[i] = r_now
         core_next = core_next @ U
         core_now = V
-        
-        tt_cores[i] = tn.reshape(core_now,[R[i]]+list(tt_cores[i].shape[1:-1])+[R[i+1]])
-        tt_cores[i-1] = tn.reshape(core_next,[R[i-1]]+list(tt_cores[i-1].shape[1:-1])+[R[i]])
-        
+
+        tt_cores[i] = tn.reshape(core_now, [R[i]] + list(tt_cores[i].shape[1:-1]) + [R[i+1]])
+        tt_cores[i-1] = tn.reshape(core_next, [R[i-1]] + list(tt_cores[i-1].shape[1:-1]) + [R[i]])
+
         core_now = core_next
-    
+
     return tt_cores, R
 
     
@@ -312,7 +327,7 @@ def mat_to_tt(A,M,N,eps,rmax = 1000,is_sparse=False):
 
     return cores, R
 
-def rank_chop(s,eps):
+def rank_chop(s, eps=1e-14, rmax=None, rule=None, **rule_context):
     """
     Chop the rank.
 
@@ -322,15 +337,29 @@ def rank_chop(s,eps):
         Vector of singular values.
     eps : double
         Desired accuracy.
+    rmax : int, optional
+        Maximum rank.
+    rule : TruncationRule, optional
+        A callable that takes a tensor of singular values and returns an int rank.
+        If provided, eps and rmax are ignored.
 
     Returns
     -------
     R : int
         Rank.
     """
+    if rule is not None:
+        S = tn.tensor(s, dtype=tn.float64) if not tn.is_tensor(s) else s
+        r = apply_truncation_rule(rule, S, **rule_context)
+        if rmax is not None:
+            r = min(r, rmax)
+        return max(1, int(r))
+
+    if tn.is_tensor(s):
+        s = s.numpy()
     if np.linalg.norm(s) == 0.0:
         return 1
-    
+
     if eps <= 0.0:
         return s.size
     

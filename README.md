@@ -11,7 +11,7 @@ Tensor-Train (TT) tensors, operators, and solvers built on top of `tinygrad`.
 - **Streaming TT**: Randomized one-pass approximation (STTA) for large or streaming data.
 - **QTT**: Quantized Tensor Train (QTT) format for high-dimensional problems.
 - **CTT**: Conditional Triangular Tensor transport maps for uncertainty quantification.
-- Interpolation, autograd helpers, and utility functions.
+- Interpolation, autograd helpers, utility functions, and a small functional-TT layer for basis-based models.
 
 ## Repository Layout
 
@@ -63,9 +63,53 @@ print("TT ranks (Streaming):", st.R)
 print("Reconstruction error:", np.linalg.norm(xt.full().numpy() - full))
 ```
 
+Functional TT workflow (small and explicit):
+
+```python
+import tinytt._backend as tn
+from tinytt.basis import OrthogonalPolynomialBasis
+from tinytt.functional import FunctionalTT
+from tinytt.regression import als_regression
+
+bases = [OrthogonalPolynomialBasis(3), OrthogonalPolynomialBasis(3)]
+scalar_model = FunctionalTT([
+    tn.tensor([[[1.0], [0.3], [-0.1], [0.2]]], dtype=tn.float64),
+    tn.tensor([[[0.7], [-0.4], [0.2], [0.1]]], dtype=tn.float64),
+], bases)
+
+x = tn.tensor([[0.2, -0.1]], dtype=tn.float64)
+print(scalar_model(x).numpy())
+print(scalar_model.grad(x).numpy())
+
+# Vector-valued models use the first TT rank as output_dim.
+vector_field = FunctionalTT([
+    tn.tensor([
+        [[1.0], [0.0], [0.2], [0.0]],
+        [[0.0], [1.0], [0.0], [-0.1]],
+    ], dtype=tn.float64),
+    tn.tensor([[[0.5], [0.2], [-0.3], [0.1]]], dtype=tn.float64),
+], bases)
+print(vector_field.jacobian(x).numpy())
+print(vector_field.divergence(x).numpy())
+
+# ALS infers the output dimension from Y.
+train_x = tn.tensor([[0.0], [0.5], [-0.5]], dtype=tn.float64)
+train_y = 1.0 + 0.5 * train_x[:, 0]
+fit = als_regression(train_x, train_y, [OrthogonalPolynomialBasis(3)], sweeps=3)
+```
+
+Simple rules for the functional layer:
+
+- Use one one-dimensional basis object per input dimension.
+- For scalar outputs, prefer `grad()` and `laplace()`.
+- For vector outputs, use `jacobian()`, `divergence()`, and vector-valued `laplace()`.
+- In the current implementation, vector-valued differential operators assume the trailing TT rank is `1`.
+- In `als_regression`, `ranks` means only the internal TT ranks; the output dimension comes from `Y`.
+
 Representative examples:
 
 - `examples/basic_usage.py`: TT construction, arithmetic, and matvec.
+- `examples/functional_tt.py`: scalar and vector-valued FunctionalTT models, differential operators, and a small ALS fit.
 - `examples/tt_basics.py`: rounding and dense reconstruction.
 - `examples/tt_helpers.py`, `examples/tt_linalg.py`: helper routines and linear algebra.
 - `examples/tt_fast_products.py`, `examples/tt_dmrg.py`: fast contractions and DMRG.
@@ -74,6 +118,9 @@ Representative examples:
 - `examples/stta_qtt_example.py`: one-pass QTT construction for functions.
 - `examples/ctt_param_ode.py`, `examples/ctt_multilayer_example.py`: CTT demos.
 - `examples/heat_equation.py`: QTT heat equation solver.
+
+Run examples either after `pip install -e .` or from a checkout with `PYTHONPATH=.`.
+For example: `PYTHONPATH=. python3 examples/functional_tt.py`.
 
 Some example scripts write plots and therefore require `matplotlib` in addition
 to the runtime dependencies.

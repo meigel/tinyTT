@@ -12,6 +12,7 @@ from tinytt._iterative_solvers import BiCGSTAB_reset, gmres_restart
 from tinytt._extras import ones, random
 from tinytt._tt_base import TT
 from tinytt.errors import InvalidArguments, IncompatibleTypes, ShapeMismatch
+from tinytt.truncation import apply_truncation_rule
 
 
 def _scalar(val):
@@ -313,12 +314,26 @@ def _amen_mm_python(
             if k < d - 1:
                 u, s, v = SVD(solution_now)
 
-                r = rank_chop(
-                    s.numpy(),
-                    (norm_solution * eps / (d ** (0.5 if last else 1.5))).numpy(),
-                )
-                r = min([r, tn.numel(s), rmax[k + 1]])
-                r = int(r)
+                if truncation_rule is not None:
+                    r = apply_truncation_rule(
+                        truncation_rule,
+                        s,
+                        position=k,
+                        current_rank=rx[k + 1],
+                        max_rank=rmax[k + 1],
+                        matrix_shape=tuple(solution_now.shape),
+                        u=u,
+                        v=v,
+                    )
+                    r = min([r, tn.numel(s), rmax[k + 1]])
+                    r = max(1, int(r))
+                else:
+                    r = rank_chop(
+                        s.numpy(),
+                        (norm_solution * eps / (d ** (0.5 if last else 1.5))).numpy(),
+                    )
+                    r = min([r, tn.numel(s), rmax[k + 1]])
+                    r = int(r)
             else:
                 u, v = QR(solution_now)
                 r = int(u.shape[1])
@@ -489,6 +504,7 @@ def amen_solve(
     kickrank=4,
     kick2=0,
     trunc_norm='res',
+    truncation_rule=None,
     local_solver=1,
     local_iterations=40,
     resets=2,
@@ -519,6 +535,7 @@ def amen_solve(
             kickrank,
             kick2,
             trunc_norm,
+            truncation_rule,
             local_solver,
             local_iterations,
             resets,
@@ -538,6 +555,7 @@ def amen_solve(
         kickrank,
         kick2,
         trunc_norm,
+        truncation_rule,
         local_solver,
         local_iterations,
         resets,
@@ -557,6 +575,7 @@ def als_solve(
     rmax=32768,
     max_full=500,
     trunc_norm='res',
+    truncation_rule=None,
     local_solver=1,
     local_iterations=40,
     resets=2,
@@ -583,6 +602,7 @@ def als_solve(
         rmax,
         max_full,
         trunc_norm,
+        truncation_rule,
         local_solver,
         local_iterations,
         resets,
@@ -604,6 +624,7 @@ def _amen_solve_python(
     kickrank=4,
     kick2=0,
     trunc_norm='res',
+    truncation_rule=None,
     local_solver=1,
     local_iterations=40,
     resets=2,
@@ -882,7 +903,20 @@ def _amen_solve_python(
             solution_now = tn.reshape(solution_now, [rx[k] * N[k], rx[k + 1]])
             if k < d - 1:
                 u, s, v = SVD(solution_now)
-                if trunc_norm != 'fro':
+                if truncation_rule is not None:
+                    r = apply_truncation_rule(
+                        truncation_rule,
+                        s,
+                        position=k,
+                        current_rank=rx[k + 1],
+                        max_rank=rmax[k + 1],
+                        matrix_shape=tuple(solution_now.shape),
+                        u=u,
+                        v=v,
+                    )
+                    r = min([r, tn.numel(s), rmax[k + 1]])
+                    r = max(1, int(r))
+                elif trunc_norm != 'fro':
                     r = 0
                     for r in range(u.shape[1] - 1, 0, -1):
                         solution = u[:, :r] @ tn.diag(s[:r]) @ v[:r, :]
@@ -1023,6 +1057,7 @@ def _als_solve_python(
     rmax=1024,
     max_full=500,
     trunc_norm='res',
+    truncation_rule=None,
     local_solver=1,
     local_iterations=40,
     resets=2,
@@ -1260,7 +1295,20 @@ def _als_solve_python(
             solution_now = tn.reshape(solution_now, [rx[k] * N[k], rx[k + 1]])
             if k < d - 1:
                 u, s, v = SVD(solution_now)
-                if trunc_norm != 'fro':
+                if truncation_rule is not None:
+                    r = apply_truncation_rule(
+                        truncation_rule,
+                        s,
+                        position=k,
+                        current_rank=rx[k + 1],
+                        max_rank=rmax[k + 1],
+                        matrix_shape=tuple(solution_now.shape),
+                        u=u,
+                        v=v,
+                    )
+                    r = min([r, tn.numel(s), rmax[k + 1]])
+                    r = max(1, int(r))
+                elif trunc_norm != 'fro':
                     r = 0
                     for r in range(u.shape[1] - 1, 0, -1):
                         solution = u[:, :r] @ tn.diag(s[:r]) @ v[:r, :]
