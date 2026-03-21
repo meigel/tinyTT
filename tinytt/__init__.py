@@ -1,5 +1,8 @@
 r"""
 Tensor-Train (TT) decomposition using tinygrad as the backend.
+
+The `basis`, `functional`, `regression`, and `truncation` modules expose a
+small experimental functional-TT subset for basis-driven models.
 """
 
 from ._tt_base import TT

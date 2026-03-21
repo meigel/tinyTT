@@ -69,7 +69,7 @@ Functional TT workflow (small and explicit):
 import tinytt._backend as tn
 from tinytt.basis import OrthogonalPolynomialBasis
 from tinytt.functional import FunctionalTT
-from tinytt.regression import als_regression
+from tinytt.regression import als_continuity_fit, als_regression
 
 bases = [OrthogonalPolynomialBasis(3), OrthogonalPolynomialBasis(3)]
 scalar_model = FunctionalTT([
@@ -98,18 +98,24 @@ train_y = 1.0 + 0.5 * train_x[:, 0]
 fit = als_regression(train_x, train_y, [OrthogonalPolynomialBasis(3)], sweeps=3)
 ```
 
-Simple rules for the functional layer:
+Experimental functional subset (supported boundary):
 
+- `tinytt.basis`, `tinytt.functional`, `tinytt.regression`, and `tinytt.truncation` form a small experimental subset for basis-driven function models.
 - Use one one-dimensional basis object per input dimension.
 - For scalar outputs, prefer `grad()` and `laplace()`.
 - For vector outputs, use `jacobian()`, `divergence()`, and vector-valued `laplace()`.
 - In the current implementation, vector-valued differential operators assume the trailing TT rank is `1`.
 - In `als_regression`, `ranks` means only the internal TT ranks; the output dimension comes from `Y`.
+- `als_continuity_fit` adds a small PDE-oriented path for stationary continuity fits of the form `<F_grad(x), V(x)> + div(V)(x) ~= y(x)`.
+- This subset is intentionally explicit and CPU-first. It is a compact replacement for a few `vectorTT` workflows, not a port of the original monolithic architecture.
 
 Representative examples:
 
 - `examples/basic_usage.py`: TT construction, arithmetic, and matvec.
-- `examples/functional_tt.py`: scalar and vector-valued FunctionalTT models, differential operators, and a small ALS fit.
+- `examples/functional_tt.py`: scalar and vector-valued FunctionalTT models, differential operators, ALS fitting, and continuity fitting.
+- `examples/interpolate_basics.py`: TT interpolation for multivariate functions and TT-valued functions.
+- `examples/qtt_basics.py`: direct QTT roundtrip and rank inspection.
+- `examples/uq_adf_basics.py`: minimal UQ-ADF fit on a small Legendre example.
 - `examples/tt_basics.py`: rounding and dense reconstruction.
 - `examples/tt_helpers.py`, `examples/tt_linalg.py`: helper routines and linear algebra.
 - `examples/tt_fast_products.py`, `examples/tt_dmrg.py`: fast contractions and DMRG.
@@ -121,6 +127,8 @@ Representative examples:
 
 Run examples either after `pip install -e .` or from a checkout with `PYTHONPATH=.`.
 For example: `PYTHONPATH=. python3 examples/functional_tt.py`.
+
+Notebook tutorials are available in `notebooks/`. They are generated from the example scripts, so the script versions remain the canonical runnable sources. Regenerate them with `python3 scripts/generate_notebooks.py`.
 
 Some example scripts write plots and therefore require `matplotlib` in addition
 to the runtime dependencies.

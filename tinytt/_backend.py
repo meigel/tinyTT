@@ -284,6 +284,30 @@ def abs(x: Tensor):
     return x.abs()
 
 
+def sin(x: Tensor):
+    return x.sin()
+
+
+def cos(x: Tensor):
+    return x.cos()
+
+
+def where(condition, x, y):
+    return condition.where(x, y)
+
+
+def zeros_like(x: Tensor):
+    return Tensor.zeros(*x.shape, dtype=x.dtype, device=x.device)
+
+
+def ones_like(x: Tensor):
+    return Tensor.ones(*x.shape, dtype=x.dtype, device=x.device)
+
+
+def astype(x: Tensor, dtype):
+    return x.cast(dtype)
+
+
 def _stack_rows(rows):
     if len(rows) == 1:
         return rows[0].reshape(1, -1)

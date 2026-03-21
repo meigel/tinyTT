@@ -1,7 +1,9 @@
 import numpy as np
 import pytest
+
 import tinytt as tt
 import tinytt._backend as tn
+from tinytt._decomposition import rank_chop, round_tt
 from tinytt.truncation import (
     AdaptiveThreshold,
     Doerfler,
@@ -10,7 +12,6 @@ from tinytt.truncation import (
     TruncationRule,
     apply_truncation_rule,
 )
-from tinytt._decomposition import rank_chop, round_tt
 
 
 def test_truncation_rule_is_protocol():
@@ -128,3 +129,40 @@ def test_backward_compat_round_tt():
         Rmax=[1, 10, 10, 1], is_ttm=False, rule=None,
     )
     assert len(rounded[0]) == 2
+
+
+def test_amen_solve_uses_doerfler_adaptivity_through_solver_path():
+    class RecordingDoerfler(DoerflerAdaptivity):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.calls = []
+
+        def __call__(self, S, **context):
+            self.calls.append(dict(context))
+            return super().__call__(S, **context)
+
+    tn.Tensor.manual_seed(0)
+    x_true = tt.random([2, 2, 2], [1, 2, 2, 1], dtype=tn.float64)
+    A = tt.eye([2, 2, 2], dtype=tn.float64)
+    b = A @ x_true
+    x0 = tt.ones([2, 2, 2], dtype=tn.float64)
+    rule = RecordingDoerfler(delta=0.1, rank_increase=1, max_ranks=[2, 4])
+
+    sol = tt.solvers.amen_solve(
+        A,
+        b,
+        x0=x0,
+        nswp=4,
+        eps=1e-10,
+        rmax=4,
+        kickrank=2,
+        truncation_rule=rule,
+        use_cpp=False,
+        verbose=False,
+    )
+
+    assert rule.calls
+    assert any('position' in call and 'current_rank' in call for call in rule.calls)
+    rel_err = np.linalg.norm(sol.full().numpy() - x_true.full().numpy()) / (np.linalg.norm(x_true.full().numpy()) + 1e-12)
+    assert rel_err < 1e-8
+    assert max(sol.R) > 1

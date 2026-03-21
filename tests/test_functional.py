@@ -1,6 +1,6 @@
 import numpy as np
 import tinytt._backend as tn
-from tinytt.basis import FourierBasis, LegendreBasis
+from tinytt.basis import FourierBasis, LegendreBasis, OrthogonalPolynomialBasis
 from tinytt.functional import FunctionalTT
 
 
@@ -237,3 +237,91 @@ def test_functional_tt_fourier():
     x = tn.tensor([[0.0, 0.0], [np.pi / 2, np.pi]], dtype=tn.float64)
     out = ftt(x)
     assert out.shape == (2,)
+
+
+def test_functional_tt_divergence_matches_jacobian_trace_scalar_case():
+    rng = np.random.RandomState(12)
+    bases = [LegendreBasis(degree=3)]
+    ftt = FunctionalTT(_make1(rng), bases)
+    x = tn.tensor([[0.25], [-0.5]], dtype=tn.float64)
+
+    jac = ftt.jacobian(x).numpy()
+    div = ftt.divergence(x).numpy()
+
+    np.testing.assert_allclose(div, jac[:, 0], atol=1e-10)
+
+
+def test_functional_tt_with_hermite_basis_smoke():
+    rng = np.random.RandomState(13)
+    bases = [OrthogonalPolynomialBasis(degree=3, family='hermite_e')]
+    ftt = FunctionalTT(_make1(rng), bases)
+    x = tn.tensor([[-0.5], [0.0], [0.5]], dtype=tn.float64)
+
+    values = ftt(x)
+    grads = ftt.grad(x)
+    laps = ftt.laplace(x)
+
+    assert values.shape == (3,)
+    assert grads.shape == (3, 1)
+    assert laps.shape == (3,)
+
+
+def test_functional_tt_trailing_output_layout_call_and_output_dim():
+    bases = [LegendreBasis(degree=3), LegendreBasis(degree=3)]
+    c0 = tn.tensor([[[0.8], [-0.2], [0.1], [0.3]]], dtype=tn.float64)
+    c1 = tn.tensor([
+        [[0.5, -0.4], [0.2, 0.1], [-0.1, 0.3], [0.05, -0.2]],
+    ], dtype=tn.float64)
+    ftt = FunctionalTT([c0, c1], bases)
+    x = tn.tensor([[0.2, -0.1], [0.4, 0.3]], dtype=tn.float64)
+
+    out = ftt(x).numpy()
+    phi0 = bases[0](x[:, 0]).numpy()
+    phi1 = bases[1](x[:, 1]).numpy()
+    a = c0.numpy()[0, :, 0]
+    b = c1.numpy()[0, :, :]
+    expected = (phi0 @ a)[:, None] * (phi1 @ b)
+
+    assert ftt.output_layout == 'trailing'
+    assert ftt.output_dim == 2
+    np.testing.assert_allclose(out, expected, atol=1e-10)
+
+
+def test_functional_tt_trailing_output_layout_jacobian_and_divergence_dense():
+    bases = [LegendreBasis(degree=3), LegendreBasis(degree=3)]
+    c0 = tn.tensor([[[0.8], [-0.2], [0.1], [0.3]]], dtype=tn.float64)
+    c1 = tn.tensor([
+        [[0.5, -0.4], [0.2, 0.1], [-0.1, 0.3], [0.05, -0.2]],
+    ], dtype=tn.float64)
+    ftt = FunctionalTT([c0, c1], bases)
+    x = tn.tensor([[0.2, -0.1], [0.4, 0.3]], dtype=tn.float64)
+
+    jac = ftt.jacobian(x).numpy()
+    div = ftt.divergence(x).numpy()
+    phi0 = bases[0](x[:, 0]).numpy()
+    phi1 = bases[1](x[:, 1]).numpy()
+    dphi0 = bases[0].grad(x[:, 0]).numpy()
+    dphi1 = bases[1].grad(x[:, 1]).numpy()
+    a = c0.numpy()[0, :, 0]
+    b = c1.numpy()[0, :, :]
+
+    expected = np.zeros((x.shape[0], 2, 2), dtype=np.float64)
+    expected[:, :, 0] = (dphi0 @ a)[:, None] * (phi1 @ b)
+    expected[:, :, 1] = (phi0 @ a)[:, None] * (dphi1 @ b)
+
+    np.testing.assert_allclose(jac, expected, atol=1e-10)
+    np.testing.assert_allclose(div, expected[:, 0, 0] + expected[:, 1, 1], atol=1e-10)
+
+
+def test_functional_tt_ambiguous_output_layout_raises_for_vector_ops():
+    bases = [LegendreBasis(degree=2), LegendreBasis(degree=2)]
+    c0 = tn.tensor(np.arange(12, dtype=np.float64).reshape(2, 3, 2), dtype=tn.float64)
+    c1 = tn.tensor(np.arange(12, 24, dtype=np.float64).reshape(2, 3, 2), dtype=tn.float64)
+    ftt = FunctionalTT([c0, c1], bases)
+    x = tn.tensor([[0.1, -0.2]], dtype=tn.float64)
+
+    assert ftt.output_layout == 'ambiguous'
+    with np.testing.assert_raises(NotImplementedError):
+        _ = ftt.jacobian(x)
+    with np.testing.assert_raises(NotImplementedError):
+        _ = ftt.output_dim

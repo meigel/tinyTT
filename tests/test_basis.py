@@ -174,3 +174,65 @@ def test_fourier_laplace():
     x = tn.tensor([0.5, 1.0], dtype=tn.float64)
     lap = basis.laplace(x)
     assert lap.shape == (2, 5)
+
+
+def test_fourier_basis_preserves_dtype_and_device():
+    basis = FourierBasis(num_terms=2)
+    x = tn.tensor([0.0, 0.25, 0.5], dtype=tn.float32)
+    out = basis(x)
+    grad = basis.grad(x)
+    lap = basis.laplace(x)
+
+    assert out.dtype == x.dtype
+    assert grad.dtype == x.dtype
+    assert lap.dtype == x.dtype
+    assert str(out.device) == str(x.device)
+
+
+def test_legendre_basis_preserves_dtype_and_device():
+    basis = LegendreBasis(degree=4)
+    x = tn.tensor([-0.5, 0.0, 0.5], dtype=tn.float32)
+    out = basis(x)
+    grad = basis.grad(x)
+    lap = basis.laplace(x)
+
+    assert out.dtype == x.dtype
+    assert grad.dtype == x.dtype
+    assert lap.dtype == x.dtype
+    assert str(out.device) == str(x.device)
+
+
+def test_legendre_basis_laplace_matches_numpy_polynomial_second_derivative():
+    from numpy.polynomial import legendre
+
+    degree = 4
+    basis = LegendreBasis(degree=degree)
+    x_np = np.linspace(-0.9, 0.9, 13)
+    x = tn.tensor(x_np, dtype=tn.float64)
+    out = basis.laplace(x).numpy()
+
+    expected = np.column_stack([
+        legendre.Legendre([0.0] * n + [1.0]).deriv(2)(x_np) for n in range(degree + 1)
+    ])
+    np.testing.assert_allclose(out, expected, atol=1e-10)
+
+
+def test_orthogonal_polynomial_basis_hermite_e_matches_numpy():
+    from numpy.polynomial.hermite_e import HermiteE
+
+    basis = OrthogonalPolynomialBasis(degree=4, family='hermite_e')
+    x_np = np.linspace(-1.2, 1.2, 11)
+    x = tn.tensor(x_np, dtype=tn.float64)
+
+    expected = np.column_stack([HermiteE([0.0] * n + [1.0])(x_np) for n in range(5)])
+    expected_grad = np.column_stack([HermiteE([0.0] * n + [1.0]).deriv(1)(x_np) for n in range(5)])
+    expected_lap = np.column_stack([HermiteE([0.0] * n + [1.0]).deriv(2)(x_np) for n in range(5)])
+
+    np.testing.assert_allclose(basis(x).numpy(), expected, atol=1e-10)
+    np.testing.assert_allclose(basis.grad(x).numpy(), expected_grad, atol=1e-10)
+    np.testing.assert_allclose(basis.laplace(x).numpy(), expected_lap, atol=1e-10)
+
+
+def test_orthogonal_polynomial_basis_hermite_e_rejects_custom_domain():
+    with pytest.raises(ValueError):
+        OrthogonalPolynomialBasis(degree=2, family='hermite_e', domain=(0.0, 1.0))
