@@ -106,3 +106,37 @@ def test_als_continuity_fit_1d_exact_recovery():
 
     np.testing.assert_allclose(pred_values, target(x).numpy(), atol=1e-8)
     np.testing.assert_allclose(pred_residual, y.numpy(), atol=1e-8)
+
+
+def test_als_continuity_fit_2d_manufactured_solution_reduces_residual():
+    bases = [LegendreBasis(degree=1), LegendreBasis(degree=1)]
+    c0 = tn.tensor(
+        [
+            [[1.0], [0.5]],
+            [[-0.2], [0.3]],
+        ],
+        dtype=tn.float64,
+    )
+    c1 = tn.tensor([[[1.0], [-0.25]]], dtype=tn.float64)
+    target = FunctionalTT([c0, c1], bases)
+
+    x0, x1 = np.meshgrid(np.linspace(-0.8, 0.8, 9), np.linspace(-0.7, 0.7, 8), indexing='ij')
+    x = tn.tensor(np.column_stack([x0.ravel(), x1.ravel()]), dtype=tn.float64)
+    f_grad = tn.tensor(
+        np.column_stack([
+            0.4 + 0.2 * x.numpy()[:, 0],
+            -0.3 + 0.1 * x.numpy()[:, 1],
+        ]),
+        dtype=tn.float64,
+    )
+    y = (f_grad * target(x)).sum(axis=1) + target.divergence(x)
+
+    tn.Tensor.manual_seed(0)
+    fitted = als_continuity_fit(x, y, f_grad, bases, ranks=[1], sweeps=12)
+
+    pred_residual = (f_grad * fitted(x)).sum(axis=1) + fitted.divergence(x)
+    rel_err = np.linalg.norm(pred_residual.numpy() - y.numpy()) / (np.linalg.norm(y.numpy()) + 1e-12)
+
+    assert fitted(x).shape == target(x).shape
+    assert fitted.divergence(x).shape == (x.shape[0],)
+    assert rel_err < 1.5e-2

@@ -104,7 +104,7 @@ Experimental functional subset (supported boundary):
 - Use one one-dimensional basis object per input dimension.
 - For scalar outputs, prefer `grad()` and `laplace()`.
 - For vector outputs, use `jacobian()`, `divergence()`, and vector-valued `laplace()`.
-- In the current implementation, vector-valued differential operators assume the trailing TT rank is `1`.
+- In the current implementation, vector-valued differential operators work when exactly one TT boundary rank is nontrivial; the case where both boundary ranks carry output channels is still unsupported.
 - In `als_regression`, `ranks` means only the internal TT ranks; the output dimension comes from `Y`.
 - `als_continuity_fit` adds a small PDE-oriented path for stationary continuity fits of the form `<F_grad(x), V(x)> + div(V)(x) ~= y(x)`.
 - This subset is intentionally explicit and CPU-first. It is a compact replacement for a few `vectorTT` workflows, not a port of the original monolithic architecture.
@@ -113,6 +113,7 @@ Representative examples:
 
 - `examples/basic_usage.py`: TT construction, arithmetic, and matvec.
 - `examples/functional_tt.py`: scalar and vector-valued FunctionalTT models, differential operators, ALS fitting, and continuity fitting.
+- `examples/device_basics.py`: backend selection, dtype defaults, and device placement basics.
 - `examples/interpolate_basics.py`: TT interpolation for multivariate functions and TT-valued functions.
 - `examples/qtt_basics.py`: direct QTT roundtrip and rank inspection.
 - `examples/uq_adf_basics.py`: minimal UQ-ADF fit on a small Legendre example.
