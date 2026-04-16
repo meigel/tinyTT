@@ -10,6 +10,12 @@ styles:
 The API is usable, but it should be treated as experimental rather than a
 stable public interface.
 
+## Requirements
+
+- Python 3.11 or later
+- `tinygrad` (version 0.10.x recommended)
+- `clang` for tinygrad CPU kernel compilation (or use GPU backend)
+
 ## Available Components
 
 Manual / NumPy-oriented classes from `tinytt.ctt.ctt_map`:
@@ -99,11 +105,11 @@ losses = train_ctt_tinygrad(
 
 ## Examples
 
-From the repository root:
+From the repository root with the package installed:
 
 ```bash
-PYTHONPATH=. python3 examples/ctt_param_ode.py
-PYTHONPATH=. python3 examples/ctt_multilayer_example.py
+python3 examples/ctt_param_ode.py
+python3 examples/ctt_multilayer_example.py
 ```
 
 These scripts are the current source of truth for end-to-end CTT usage in this
