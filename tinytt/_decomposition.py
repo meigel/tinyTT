@@ -9,7 +9,12 @@ import tinytt._backend as tn
 import numpy as np
 
 
-        
+def _scalar(val):
+    if tn.is_tensor(val):
+        return float(val.numpy().item())
+    return float(val)
+
+
 def QR(mat):
     """
     Compute the QR decomposition. Backend can be changed.
@@ -28,7 +33,8 @@ def QR(mat):
     Q, R = tn.linalg.qr(mat)
     r = min(mat.shape[0], mat.shape[1])
     return Q[:, :r], R[:r, :]
-    
+
+
 _SVD_BACKEND = os.getenv("TINYTT_SVD_BACKEND", "numpy").lower()
 
 
@@ -64,30 +70,27 @@ def SVD(mat):
     Returns:
         U, S, V: the SVD factors.
     """
-    prefer_tinygrad = _SVD_BACKEND == "tinygrad" or not _device_is_cpu(mat.device)
-    use_numpy = not prefer_tinygrad
-    if mat.shape[0] < 10 * mat.shape[1]:
-        if use_numpy:
-            return _svd_numpy(mat)
+    is_gpu = not _device_is_cpu(mat.device)
+    prefer_tinygrad = _SVD_BACKEND == "tinygrad" or is_gpu
+
+    if prefer_tinygrad:
         try:
-            return _svd_tinygrad(mat)
+            if mat.shape[0] < 10 * mat.shape[1]:
+                return _svd_tinygrad(mat)
+            u, s, v = _svd_tinygrad(mat.T)
+            return v.T, s, u.T
         except Exception:
+            if is_gpu:
+                raise
             return _svd_numpy(mat)
-
-    if use_numpy:
-        u, s, v = _svd_numpy(mat.T)
-        return v.T, s, u.T
-    try:
-        u, s, v = _svd_tinygrad(mat.T)
-        return v.T, s, u.T
-    except Exception:
+    else:
+        if mat.shape[0] < 10 * mat.shape[1]:
+            return _svd_numpy(mat)
         u, s, v = _svd_numpy(mat.T)
         return v.T, s, u.T
 
 
-
-
-def lr_orthogonal(tt_cores, R, is_ttm, no_gpu = False):
+def lr_orthogonal(tt_cores, R, is_ttm, no_gpu=False):
     """
     Orthogonalize the TT-cores left to right.
 
@@ -101,46 +104,47 @@ def lr_orthogonal(tt_cores, R, is_ttm, no_gpu = False):
     tt_cores : list of torch tensors.
         The orthogonal TT-cores as a list.
 
-    """  
-    
+    """
+
     d = len(tt_cores)
 
     rank_next = R[0]
-    
+
     core_now = tt_cores[0]
-    cores_new = d*[None]
-    for i in range(d-1):
-        
-               
+    cores_new = d * [None]
+    for i in range(d - 1):
         if is_ttm:
-            mode_shape = [core_now.shape[1],core_now.shape[2]]
-            core_now = tn.reshape(core_now,[core_now.shape[0]*core_now.shape[1]*core_now.shape[2],-1])
+            mode_shape = [core_now.shape[1], core_now.shape[2]]
+            core_now = tn.reshape(
+                core_now,
+                [core_now.shape[0] * core_now.shape[1] * core_now.shape[2], -1],
+            )
         else:
             mode_shape = [core_now.shape[1]]
-            core_now = tn.reshape(core_now,[core_now.shape[0]*core_now.shape[1],-1])
-            
+            core_now = tn.reshape(core_now, [core_now.shape[0] * core_now.shape[1], -1])
+
         # perform QR
         Qmat, Rmat = QR(core_now)
-        core_now= Qmat
-             
+        core_now = Qmat
+
         # take next core
-        core_next = tt_cores[i+1]
+        core_next = tt_cores[i + 1]
         shape_next = list(core_next.shape[1:])
-        core_next = tn.reshape(core_next,[core_next.shape[0],-1])
+        core_next = tn.reshape(core_next, [core_next.shape[0], -1])
         core_next = Rmat @ core_next
-        core_next = tn.reshape(core_next,[core_now.shape[1]]+shape_next)
-        
+        core_next = tn.reshape(core_next, [core_now.shape[1]] + shape_next)
+
         # update the cores
-        cores_new[i] = tn.reshape(core_now,[R[i]]+mode_shape+[-1])
-        R[i+1] = core_now.shape[1]
-        cores_new[i+1] = core_next
-        
+        cores_new[i] = tn.reshape(core_now, [R[i]] + mode_shape + [-1])
+        R[i + 1] = core_now.shape[1]
+        cores_new[i + 1] = core_next
+
         core_now = core_next
-        
-        
+
     return cores_new, R
 
-def rl_orthogonal(tt_cores, R, is_ttm, no_gpu = False):
+
+def rl_orthogonal(tt_cores, R, is_ttm, no_gpu=False):
     """
     Orthogonalize the TT-cores right to left.
 
@@ -154,47 +158,76 @@ def rl_orthogonal(tt_cores, R, is_ttm, no_gpu = False):
     tt_cores : list of torch tensors.
         The orthogonal TT-cores as a list.
 
-    """  
-    
-    d = len(tt_cores)
-        
-    
-    
-    cores_new = d*[None]
-    cores_new[-1] = tt_cores[-1]+0
-    for i in range(d-1,0,-1):
+    """
 
+    d = len(tt_cores)
+
+    cores_new = d * [None]
+    cores_new[-1] = tt_cores[-1] + 0
+    for i in range(d - 1, 0, -1):
         if is_ttm:
-            mode_shape = [cores_new[i].shape[1],cores_new[i].shape[2]]
-            core_now = tn.reshape(cores_new[i],[cores_new[i].shape[0],cores_new[i].shape[2]*cores_new[i].shape[3]*cores_new[i].shape[1]]).T
+            mode_shape = [cores_new[i].shape[1], cores_new[i].shape[2]]
+            core_now = tn.reshape(
+                cores_new[i],
+                [
+                    cores_new[i].shape[0],
+                    cores_new[i].shape[2]
+                    * cores_new[i].shape[3]
+                    * cores_new[i].shape[1],
+                ],
+            ).T
         else:
             mode_shape = [cores_new[i].shape[1]]
-            core_now = tn.reshape(cores_new[i],[cores_new[i].shape[0],cores_new[i].shape[1]*cores_new[i].shape[2]]).T
-        
+            core_now = tn.reshape(
+                cores_new[i],
+                [cores_new[i].shape[0], cores_new[i].shape[1] * cores_new[i].shape[2]],
+            ).T
+
         # perform QR
-        
+
         Qmat, Rmat = QR(core_now)
-            # print('QR ',list(Qmat.shape),list(Rmat.shape))
-        rnew = min([core_now.shape[0],core_now.shape[1]])
+        # print('QR ',list(Qmat.shape),list(Rmat.shape))
+        rnew = min([core_now.shape[0], core_now.shape[1]])
         rnew = Rmat.shape[0]
         # update current core
-        cores_new[i] = tn.reshape(Qmat.T,[rnew]+mode_shape+[-1])
+        cores_new[i] = tn.reshape(Qmat.T, [rnew] + mode_shape + [-1])
         # print('R ',tt_cores[i].shape,cores_new[i].shape,tt_cores[i-1].shape)
         R[i] = cores_new[i].shape[0]
         # and the k-1 one
         if is_ttm:
-            mode_shape = [tt_cores[i-1].shape[1],tt_cores[i-1].shape[2]]
-            core_next = tn.reshape(tt_cores[i-1],[tt_cores[i-1].shape[0]*tt_cores[i-1].shape[1]*tt_cores[i-1].shape[2],tt_cores[i-1].shape[3]]) @ Rmat.T
+            mode_shape = [tt_cores[i - 1].shape[1], tt_cores[i - 1].shape[2]]
+            core_next = (
+                tn.reshape(
+                    tt_cores[i - 1],
+                    [
+                        tt_cores[i - 1].shape[0]
+                        * tt_cores[i - 1].shape[1]
+                        * tt_cores[i - 1].shape[2],
+                        tt_cores[i - 1].shape[3],
+                    ],
+                )
+                @ Rmat.T
+            )
         else:
-            mode_shape = [tt_cores[i-1].shape[1]]
-            core_next = tn.reshape(tt_cores[i-1],[tt_cores[i-1].shape[0]*tt_cores[i-1].shape[1],tt_cores[i-1].shape[2]]) @ Rmat.T
-        cores_new[i-1] = tn.reshape(core_next,[tt_cores[i-1].shape[0]]+mode_shape+[-1])
-        
+            mode_shape = [tt_cores[i - 1].shape[1]]
+            core_next = (
+                tn.reshape(
+                    tt_cores[i - 1],
+                    [
+                        tt_cores[i - 1].shape[0] * tt_cores[i - 1].shape[1],
+                        tt_cores[i - 1].shape[2],
+                    ],
+                )
+                @ Rmat.T
+            )
+        cores_new[i - 1] = tn.reshape(
+            core_next, [tt_cores[i - 1].shape[0]] + mode_shape + [-1]
+        )
+
     return cores_new, R
 
-    
 
-def round_tt(tt_cores,R,eps,Rmax,is_ttm=False):
+def round_tt(tt_cores, R, eps, Rmax, is_ttm=False):
     """
     Rounds a TT-tensor (tt_cores have to be orthogonal)
 
@@ -223,39 +256,40 @@ def round_tt(tt_cores,R,eps,Rmax,is_ttm=False):
         return tt_cores, R
     tt_cores, R = lr_orthogonal(tt_cores, R, is_ttm)
     core_now = tt_cores[-1]
-    eps = eps / np.sqrt(d-1) 
+    eps = eps / np.sqrt(d - 1)
 
-    
-    for i in range(d-1,0,-1):
-        core_next = tt_cores[i-1]
-        
-        core_now = tn.reshape(core_now,[R[i],-1])
-        core_next = tn.reshape(core_next,[-1,R[i]])
-        
-        
+    for i in range(d - 1, 0, -1):
+        core_next = tt_cores[i - 1]
+
+        core_now = tn.reshape(core_now, [R[i], -1])
+        core_next = tn.reshape(core_next, [-1, R[i]])
+
         U, S, V = SVD(core_now)
-        r_now = min([Rmax[i], rank_chop(S.numpy(), tn.linalg.norm(S).numpy()*eps)])
+        r_now = min([Rmax[i], rank_chop(S, _scalar(tn.linalg.norm(S)) * eps)])
         r_now = int(r_now)
-    
-        U = U[:,:r_now]
+
+        U = U[:, :r_now]
         S = S[:r_now]
-        V = V[:r_now,:]
-        
+        V = V[:r_now, :]
+
         U = U @ tn.diag(S)
         R[i] = r_now
         core_next = core_next @ U
         core_now = V
-        
-        tt_cores[i] = tn.reshape(core_now,[R[i]]+list(tt_cores[i].shape[1:-1])+[R[i+1]])
-        tt_cores[i-1] = tn.reshape(core_next,[R[i-1]]+list(tt_cores[i-1].shape[1:-1])+[R[i]])
-        
+
+        tt_cores[i] = tn.reshape(
+            core_now, [R[i]] + list(tt_cores[i].shape[1:-1]) + [R[i + 1]]
+        )
+        tt_cores[i - 1] = tn.reshape(
+            core_next, [R[i - 1]] + list(tt_cores[i - 1].shape[1:-1]) + [R[i]]
+        )
+
         core_now = core_next
-    
+
     return tt_cores, R
 
-    
 
-def mat_to_tt(A,M,N,eps,rmax = 1000,is_sparse=False):
+def mat_to_tt(A, M, N, eps, rmax=1000, is_sparse=False):
     """
     Computes the TT-matrix decomposition of A. A has the shape M x N, where M, N are of length d.
     The eps and rmax are given.
@@ -284,41 +318,58 @@ def mat_to_tt(A,M,N,eps,rmax = 1000,is_sparse=False):
 
     """
     d = len(M)
-    if len(M)!=len(N):
-        raise('Dimension mismatch')
+    if len(M) != len(N):
+        raise ("Dimension mismatch")
         return
-    
+
     if is_sparse:
         pass
     else:
-        
-        A = tn.reshape(A, M+N)
+        A = tn.reshape(A, M + N)
 
-        permute = tuple( np.arange(2*d).reshape([2,d]).transpose().flatten() )
-        A = tn.permute(A,permute)
+        permute = tuple(np.arange(2 * d).reshape([2, d]).transpose().flatten())
+        A = tn.permute(A, permute)
 
-        A = tn.reshape(A, [i[0]*i[1] for i in zip(M,N)])
-        
-        ttv, R = to_tt(A,eps=eps,rmax=rmax)
-    
-    cores= []
-    # cores have to be in the TT-matrix format ( rIr' -> rijr')    
+        A = tn.reshape(A, [i[0] * i[1] for i in zip(M, N)])
+
+        ttv, R = to_tt(A, eps=eps, rmax=rmax)
+
+    cores = []
+    # cores have to be in the TT-matrix format ( rIr' -> rijr')
     for i in range(d):
-        tmp = tn.permute(ttv[i],  [1,0,2])
-        tmp = tn.reshape(tmp,[M[i],N[i],tmp.shape[1],tmp.shape[2]])
-        tmp = tn.permute(tmp, [2,0,1,3])
+        tmp = tn.permute(ttv[i], [1, 0, 2])
+        tmp = tn.reshape(tmp, [M[i], N[i], tmp.shape[1], tmp.shape[2]])
+        tmp = tn.permute(tmp, [2, 0, 1, 3])
         cores.append(tmp)
-
 
     return cores, R
 
-def rank_chop(s,eps):
+
+def _rank_chop_tinygrad(s, eps):
+    norm_s = _scalar(tn.linalg.norm(s))
+    if norm_s == 0.0:
+        return 1
+    if eps <= 0.0:
+        return int(s.shape[0])
+    n = int(s.shape[0])
+    s_sq = s * s
+    tail_energy = s_sq.sum()
+    for r in range(n - 1, -1, -1):
+        if r < n - 1:
+            tail_energy = tail_energy - s_sq[r + 1]
+        if tail_energy <= eps * eps:
+            continue
+        return max(1, r + 1)
+    return 1
+
+
+def rank_chop(s, eps):
     """
     Chop the rank.
 
     Parameters
     ----------
-    s : numpy vector
+    s : numpy vector or tinygrad tensor
         Vector of singular values.
     eps : double
         Desired accuracy.
@@ -328,106 +379,101 @@ def rank_chop(s,eps):
     R : int
         Rank.
     """
+    if tn.is_tensor(s):
+        return _rank_chop_tinygrad(s, float(eps))
     if np.linalg.norm(s) == 0.0:
         return 1
-    
+
     if eps <= 0.0:
         return s.size
-    
+
     R = s.size - 1
-   
-    sc = np.cumsum(np.abs(s[::-1])**2)[::-1]
-    R = np.argmax(sc<eps**2)
-   #  print(sc,eps**2,sc<eps**2,R)
-   #  while R>0:
-   #      if np.sum(s[R:]**2) >= eps**2:
-   #          break;
-   #      R -= 1
-        
-    R = R if R>0 else 1
-    R = s.size if sc[-1]>eps**2 else R
+
+    sc = np.cumsum(np.abs(s[::-1]) ** 2)[::-1]
+    R = np.argmax(sc < eps**2)
+
+    R = R if R > 0 else 1
+    R = s.size if sc[-1] > eps**2 else R
 
     return R
-    
-def to_tt(A,N=None,eps=1e-14,rmax=100,is_sparse=False):
-    """
-    Computes the TT cores of a full tensor A given the tolerance eps and the maximum rank.
-    The TT-cores are returned as a list.
-    
-    Parameters
-    ----------
-    A : torch tensor
-        Tensor to decompose.
-    N : vector of integers, optional
-        DESCRIPTION. The default is None.
-    eps : double, optional
-        DESCRIPTION. The default is 1e-14.
-    rmax : int or list of integers, optional
-        maximum rand either as scalar or list. The default is 100.
-   is_sparse : boolean, optional
-        Is True if the tensor is of type sparse type. The default is False.
 
-    Returns
-    -------
-    cores : list of torch tensors.
-        The TT-cores of the decomposition.
-    r : list of integers.
-        The TT-ranks.
+
+def to_tt(A, N=None, eps=1e-14, rmax=100, is_sparse=False):
+    """
+     Computes the TT cores of a full tensor A given the tolerance eps and the maximum rank.
+     The TT-cores are returned as a list.
+
+     Parameters
+     ----------
+     A : torch tensor
+         Tensor to decompose.
+     N : vector of integers, optional
+         DESCRIPTION. The default is None.
+     eps : double, optional
+         DESCRIPTION. The default is 1e-14.
+     rmax : int or list of integers, optional
+         maximum rand either as scalar or list. The default is 100.
+    is_sparse : boolean, optional
+         Is True if the tensor is of type sparse type. The default is False.
+
+     Returns
+     -------
+     cores : list of torch tensors.
+         The TT-cores of the decomposition.
+     r : list of integers.
+         The TT-ranks.
 
     """
-    
+
     if N == None:
         N = list(A.shape)
-      
+
     d = len(N)
-    r = [1]*(d+1)
-    
+    r = [1] * (d + 1)
+
     # check if rmax is a list
-    if not isinstance(rmax,list):
-        rmax = [1] + (d-1)*[rmax] + [1]
-        
-    C = A   
-    cores = [] 
-    ep = eps/np.sqrt(d-1)
-    
-   
-    for i in range(d-1):
-        
-        m = N[i]*r[i]
-        
-        # reshape C to a matrix 
-        C = tn.reshape(C, [m,-1])
-        
+    if not isinstance(rmax, list):
+        rmax = [1] + (d - 1) * [rmax] + [1]
+
+    C = A
+    cores = []
+    ep = eps / np.sqrt(d - 1)
+
+    for i in range(d - 1):
+        m = N[i] * r[i]
+
+        # reshape C to a matrix
+        C = tn.reshape(C, [m, -1])
+
         # tme = datetime.datetime.now()
-        # perform svd 
-        
+        # perform svd
+
         u, s, v = SVD(C)
-        
+
         # tme = datetime.datetime.now()-tme
         # print('time1',tme)
-      
+
         # tme = datetime.datetime.now()
         # choose the rank according to eps tolerance
-        r1 = rank_chop(s.numpy(), ep*tn.linalg.norm(s).numpy())
-        r1 = min([r1, rmax[i+1]])
+        r1 = rank_chop(s, _scalar(tn.linalg.norm(s)) * ep)
+        r1 = min([r1, rmax[i + 1]])
         r1 = int(r1)
-        
-        u = u[:,:r1]
+
+        u = u[:, :r1]
         s = s[:r1]
-        r[i+1] = r1
-        
+        r[i + 1] = r1
+
         # reshape and append the core
-        cores.append(tn.reshape(u,[r[i],N[i],r1]))
-        
+        cores.append(tn.reshape(u, [r[i], N[i], r1]))
+
         # truncate the right singular vector
-        v = v[:r1,:]
-        
-        # update the core    
+        v = v[:r1, :]
+
+        # update the core
         v = tn.diag(s) @ v
 
         C = v
         # tme = datetime.datetime.now()-tme
         # print('time2',tme)
-    cores.append(tn.reshape(C,[r[-2],N[-1],-1]))
+    cores.append(tn.reshape(C, [r[-2], N[-1], -1]))
     return cores, r
-    
