@@ -33,6 +33,24 @@ from . import uq_adf
 from . import tdvp
 from . import bug
 
+# ── new in this extension ──────────────────────────────────────────────
+from ._riemannian import (
+    qr_retraction,
+    horizontal_projection,
+    left_orthogonalize,
+    right_orthogonalize,
+    check_left_orthogonal,
+    check_right_orthogonal,
+)
+from ._iterative_solvers import cg
+from ._linesearch import armijo_ls
+from ._functional import monomial_features, legendre_features, hermite_features
+from .functional_tt import FunctionalTT, random_ftt
+
+import tinytt._riemannian as riemannian
+import tinytt._linesearch as linesearch
+import tinytt._functional as functional
+
 __all__ = [
     'TT',
     'eye',
@@ -64,6 +82,23 @@ __all__ = [
     'fast_hadammard',
     'fast_mv',
     'fast_mm',
+    # new
+    'cg',
+    'armijo_ls',
+    'qr_retraction',
+    'horizontal_projection',
+    'left_orthogonalize',
+    'right_orthogonalize',
+    'check_left_orthogonal',
+    'check_right_orthogonal',
+    'monomial_features',
+    'legendre_features',
+    'hermite_features',
+    'FunctionalTT',
+    'random_ftt',
+    'riemannian',
+    'linesearch',
+    'functional',
 ]
 
 # keep alias for typo
