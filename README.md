@@ -15,6 +15,11 @@ Tensor-Train (TT) tensors, operators, and solvers built on top of `tinygrad`.
 - **Core solvers**: ALS, AMEn, DMRG, TDVP for time evolution.
 - **QTT**: Quantized Tensor Train (QTT) format for high-dimensional problems.
 - **CTT**: Conditional Triangular Tensor transport maps for uncertainty quantification.
+- **Riemannian optimisation**: QR gauge sweeps, horizontal-space projection,
+  QR retraction for the fixed-rank TT manifold.
+- **Conjugate gradient solver**: SPD-optimised CG solver with regularisation.
+- **Armijo line search**: Two-way backtracking line search for Riemannian/Euclidean optimisation.
+- **Functional feature maps**: Monomial, Legendre, and Hermite polynomial bases for functional TT models.
 - Interpolation, autograd helpers, and utility functions.
 
 ## Repository Layout
@@ -155,6 +160,37 @@ Experimental module for building conditional transport maps:
 - Composed CTT maps
 - Training utilities
 - See `examples/ctt_param_ode.py` and `examples/ctt_multilayer_example.py`
+
+### Riemannian Optimisation
+
+Tools for optimisation on the fixed-rank TT quotient manifold:
+- **QR gauge sweeps**: `left_orthogonalize()` / `right_orthogonalize()` bring TT cores
+  into left/right-canonical form via sequences of QR decompositions.
+- **Horizontal projection**: `horizontal_projection()` projects Euclidean gradients
+  onto the horizontal space of the TT manifold (removes gauge-dependent components).
+- **QR retraction**: `qr_retraction()` maps a tangent vector back to the manifold
+  while restoring the left-canonical gauge.
+- **Gauge checks**: `check_left_orthogonal()` / `check_right_orthogonal()` verify
+  the canonical form numerically.
+
+### Conjugate Gradient Solver
+
+- `cg()` solves SPD systems ``(A + reg·I) x = b`` matrix-free.
+- Includes automatic regularisation for ill-conditioned problems.
+- Supports batched (matrix) right-hand sides.
+
+### Armijo Line Search
+
+- `armijo_ls()` is a generic two-way Armijo-Goldstein backtracking line search.
+- Works with any callable ``loss_fn`` and optional custom retraction.
+- Supports both flat tensors and structured parameter lists (e.g., TT cores).
+
+### Functional Feature Maps
+
+Polynomial basis functions for functional TT models:
+- `monomial_features()` — monomials ``1, x, x², …``
+- `legendre_features()` — Legendre polynomials, optionally orthonormal on ``[-1,1]``
+- `hermite_features()` — probabilist Hermite polynomials, optionally orthonormal w.r.t. the standard Gaussian
 
 ## NumPy Fallbacks
 

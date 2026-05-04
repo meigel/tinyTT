@@ -159,3 +159,67 @@ def _apply_givens_rotation(h, cs, sn, k):
 def _givens_rotation(v1, v2):
     den = np.sqrt(v1**2 + v2**2)
     return v1 / den, v2 / den
+
+
+def cg(matvec, b, reg: float = 1e-5, tol: float = 1e-6, maxiter: int = 50,
+       x0=None):
+    """
+    Conjugate gradient solver for the symmetric positive-definite system
+
+        (A + reg * I) x = b
+
+    where *matvec* computes A @ x **without** regularisation.  The
+    regularisation is added internally.
+
+    Parameters
+    ----------
+    matvec : callable
+        ``matvec(x) -> A @ x``.  Must accept and return tensors of the same
+        shape as *b*.
+    b : Tensor
+        Right-hand side.
+    reg : float
+        Tikhonov regularisation added to the diagonal.
+    tol : float
+        Relative residual tolerance ``||r|| / ||b|| < tol``.
+    maxiter : int
+        Maximum number of CG iterations.
+    x0 : Tensor or None
+        Initial guess (default: zero).
+
+    Returns
+    -------
+    x : Tensor
+        Approximate solution (same shape as *b*).
+    """
+    b_flat = b.reshape(-1)
+    x = b_flat * 0.0 if x0 is None else x0.reshape(-1).clone()
+
+    def _mv(v):
+        return matvec(v.reshape(b.shape)).reshape(-1) + reg * v
+
+    r = b_flat - _mv(x)
+    p = r.clone()
+    rs = _dot(r, r)
+    rs0 = _scalar(rs)
+
+    if rs0 == 0.0:
+        return x.reshape(b.shape)
+
+    for _ in range(maxiter):
+        Ap = _mv(p)
+        denom = _dot(p, Ap)
+        denom_val = _scalar(denom)
+        if denom_val == 0.0:
+            break
+        alpha = rs / denom
+        x = x + alpha * p
+        r = r - alpha * Ap
+        rs_new = _dot(r, r)
+        rs_new_val = _scalar(rs_new)
+        if rs_new_val / rs0 < tol * tol:
+            break
+        p = r + (rs_new / rs) * p
+        rs = rs_new
+
+    return x.reshape(b.shape)
