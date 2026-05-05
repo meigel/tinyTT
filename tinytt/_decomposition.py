@@ -81,7 +81,18 @@ def SVD(mat):
             return v.T, s, u.T
         except Exception:
             if is_gpu:
-                raise
+                # tinygrad SVD can fail on GPU (contiguity bugs). Fall back
+                # to numpy: copy to CPU, compute, copy result back to GPU.
+                try:
+                    return _svd_numpy(mat)
+                except Exception:
+                    mat_cpu = mat.numpy()
+                    u_cpu, s_cpu, v_cpu = np.linalg.svd(mat_cpu, full_matrices=False)
+                    return (
+                        tn.tensor(u_cpu, dtype=mat.dtype, device=mat.device),
+                        tn.tensor(s_cpu, dtype=mat.dtype, device=mat.device),
+                        tn.tensor(v_cpu, dtype=mat.dtype, device=mat.device),
+                    )
             return _svd_numpy(mat)
     else:
         if mat.shape[0] < 10 * mat.shape[1]:
