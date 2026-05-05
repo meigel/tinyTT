@@ -1,11 +1,25 @@
 # tinyTT
 
+[![CI](https://github.com/meigel/tinyTT/actions/workflows/testing.yml/badge.svg)](https://github.com/meigel/tinyTT/actions/workflows/testing.yml)
+[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 Tensor-Train (TT) tensors, operators, and solvers built on top of `tinygrad`.
+
+## Quickstart
+
+```python
+import tinytt as tt
+
+x = tt.ones([4, 4])         # 4×4 all-ones TT tensor
+print(x.R)                  # ranks: [1, 1]
+print(x.full().numpy())     # materialise as numpy array
+```
 
 ## Requirements
 
 - Python 3.11 or later
-- `tinygrad` (installed via requirements.txt or pip)
+- `tinygrad` (installed via `pip install tinygrad` or `requirements.txt`)
 
 ## Highlights
 
@@ -32,14 +46,20 @@ Tensor-Train (TT) tensors, operators, and solvers built on top of `tinygrad`.
 
 ## Setup
 
-Create a virtual environment with Python 3.11+, install dependencies, and install
-the package in editable mode:
+Install from PyPI (once published):
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-python3 -m pip install -r requirements.txt
-python3 -m pip install -e .
+pip install tinytt
+```
+
+Or from source:
+
+```bash
+git clone https://github.com/meigel/tinyTT.git
+cd tinyTT
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt    # installs tinygrad + numpy
+pip install -e .
 ```
 
 `requirements.txt` installs `tinygrad` from PyPI. If the local `tinygrad/` submodule
@@ -61,10 +81,22 @@ from `typing`. Python 3.10 is not supported.
 import numpy as np
 import tinytt as tt
 
+# 1. Create a TT tensor from a full array
 full = np.arange(8, dtype=np.float64).reshape(2, 2, 2)
-xt = tt.TT(full, eps=1e-12)
-print("TT ranks:", xt.R)
-print("Reconstruction error:", np.linalg.norm(xt.full().numpy() - full))
+x = tt.TT(full, eps=1e-12)
+print("Ranks:", x.R)                          # [1, 2, 2, 1]
+
+# 2. Arithmetic
+y = 0.5 * (x + tt.ones([2, 2, 2]))
+print("Reconstruction rel_err:",
+      np.linalg.norm(y.full().numpy() - 0.5 * (full + 1))
+      / np.linalg.norm(full))
+
+# 3. TT-matrix matvec (A @ x where A is a TT-matrix)
+A = tt.eye([2, 2, 2])                         # identity TTM
+z = A @ x
+print("Matvec rel_err:",
+      np.linalg.norm(z.full().numpy() - full) / np.linalg.norm(full))
 ```
 
 Representative examples:
