@@ -527,7 +527,7 @@ def uq_adf(measurements, dimensions, basis, targeteps=1e-8, maxitr=1000, device=
                     return tinytt.TT(cores)
                 residuals.append(float(rel_res.numpy()))
                 if len(residuals) >= rank_window:
-                    stagnation = residuals[-1] / residuals[-rank_window] > 0.99
+                    stagnation = residuals[-1] / residuals[-rank_window] > 0.95
                     if stagnation and adapt_rank:
                         ranks = _ranks_from_cores(cores)
                         max_rank = max(ranks)

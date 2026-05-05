@@ -82,6 +82,10 @@ Representative examples:
   with Legendre basis functions and gradient descent training.
 - `examples/tt_vector_valued.py`: Learning a vector-valued map f(k) → R⁴
   using a TT-matrix as a trainable linear operator.
+- `examples/tt_qtt_functional.py`: QTT function regression and vector-valued
+  QTT on a 2D tensor grid, demonstrating QTT compression.
+- `examples/tt_uq_adf_darcy.py`: UQ-ADF for parametric Darcy flow PDE with
+  uncertain log-permeability (KL expansion, adaptive rank).
 
 All examples report **relative error** where applicable (‖pred − truth‖ / ‖truth‖)
 rather than absolute error, since relative error is scale-invariant and more

@@ -34,14 +34,26 @@ autograd utilities). Key supporting areas are organized as follows:
 | Interpolation | `test_interpolate.py` |
 | ALS reliability | `test_als_reliability.py` |
 | UQ-ADF | `test_uq_adf.py`, `test_uq_adf_fast.py`, `test_uq_adf_skfem.py` |
+| UQ-ADF (fast) | `test_uq_adf_fast_skfem.py` |
 | CTT | `test_ctt.py` |
 | TDVP | `test_tdvp_mpo_smoke.py` |
 | GPU | `test_gpu_ops.py`, `test_gpu_smoke.py` |
 | **Riemannian** | `test_riemannian.py` |
 | **CG solver** | `test_cg.py` |
+| **GMRES** | `test_gmres.py` |
+| **BiCGSTAB** | `test_bicgstab.py` |
+| **AMEn** | `test_amen.py` |
 | **Line search** | `test_linesearch.py` |
 | **Functional** | `test_functional.py` |
 | **Functional TT** | `test_functional_tt.py` |
+| **Fast products** | `test_fast_mult.py` |
+| **Extras** | `test_extras_full.py` |
+| **Aux ops** | `test_aux_ops.py` |
+| **BUG** | `test_bug.py` |
+| **Grad helpers** | `test_grad_extras.py` |
+| **Decomp internals** | `test_decomposition_internals.py` |
+| **Vector QTT** | `test_qtt_vector.py` |
+| **DMRG Hadamard** | `test_dmrg_hadamard.py` |
 
 ## Build, Test, and Development Commands
 

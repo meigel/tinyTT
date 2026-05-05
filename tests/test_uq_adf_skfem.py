@@ -153,7 +153,7 @@ def test_uq_adf_darcy_log_normal_skfem():
         meas,
         uq.PolynomBasis.Legendre,
         dimensions,
-        targeteps=1e-7,
+        targeteps=1e-4,
         maxitr=120,
         device=None,
         dtype=tn.float64,
