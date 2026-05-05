@@ -126,8 +126,8 @@ Install it via your system package manager (e.g., `apt install clang` on Debian/
 or set a different device (e.g., `TINYTT_DEVICE=CUDA`) if a GPU is available.
 
 ### tinygrad Version
-Recommended tinygrad version: `>=0.10,<0.11`. Newer versions may have API changes.
-If you encounter import errors, try: `pip install 'tinygrad>=0.10,<0.11'`
+Recommended tinygrad version: `>=0.10`. Tested with 0.12.0. If you encounter
+import errors with newer versions, pin to an older release.
 
 ## Features
 

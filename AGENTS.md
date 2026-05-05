@@ -41,6 +41,7 @@ autograd utilities). Key supporting areas are organized as follows:
 | **CG solver** | `test_cg.py` |
 | **Line search** | `test_linesearch.py` |
 | **Functional** | `test_functional.py` |
+| **Functional TT** | `test_functional_tt.py` |
 
 ## Build, Test, and Development Commands
 

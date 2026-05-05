@@ -352,11 +352,13 @@ def _rank_chop_tinygrad(s, eps):
     if eps <= 0.0:
         return int(s.shape[0])
     n = int(s.shape[0])
-    s_sq = s * s
-    tail_energy = s_sq.sum()
+    # Convert to numpy to avoid __bool__ on Tensor in comparisons
+    # Build tail energy from the smallest SV upward, matching numpy's:
+    #   sc = np.cumsum(np.abs(s[::-1]) ** 2)[::-1]; R = np.argmax(sc < eps**2)
+    s_sq_np = (s * s).numpy()
+    tail_energy = 0.0
     for r in range(n - 1, -1, -1):
-        if r < n - 1:
-            tail_energy = tail_energy - s_sq[r + 1]
+        tail_energy += float(s_sq_np[r])
         if tail_energy <= eps * eps:
             continue
         return max(1, r + 1)
