@@ -74,6 +74,11 @@ def SVD(mat):
     prefer_tinygrad = _SVD_BACKEND == "tinygrad" or is_gpu
 
     if prefer_tinygrad:
+        # On GPU, tinygrad uses an O(n³) Jacobi-like SVD that is
+        # extremely slow for matrices above ~100×100. Fall back to
+        # numpy to avoid multi-minute stalls.
+        if is_gpu and mat.shape[0] * mat.shape[1] > 10000:
+            return _svd_numpy(mat)
         try:
             if mat.shape[0] < 10 * mat.shape[1]:
                 return _svd_tinygrad(mat)
@@ -438,10 +443,21 @@ def to_tt(A, N=None, eps=1e-14, rmax=100, is_sparse=False):
 
     """
 
-    if N == None:
+    if N is None:
         N = list(A.shape)
 
     d = len(N)
+
+    # ── GPU safety: copy to CPU, decompose in numpy, copy cores back ──────
+    is_gpu = tn.is_tensor(A) and not _device_is_cpu(A.device)
+    if is_gpu:
+        A_np = A.numpy()
+        rmax_list = rmax if isinstance(rmax, list) else [1] + (d - 1) * [rmax] + [1]
+        cores_np, r = _to_tt_np(A_np, N, eps, rmax_list)
+        device = A.device
+        cores = [tn.tensor(c, dtype=A.dtype, device=device) for c in cores_np]
+        return cores, r
+
     r = [1] * (d + 1)
 
     # check if rmax is a list
@@ -490,3 +506,46 @@ def to_tt(A, N=None, eps=1e-14, rmax=100, is_sparse=False):
         # print('time2',tme)
     cores.append(tn.reshape(C, [r[-2], N[-1], -1]))
     return cores, r
+
+
+def _to_tt_np(A_np, N, eps, rmax):
+    """NumPy-only TT decomposition (no tinygrad ops)."""
+    d = len(N)
+    r = [1] * (d + 1)
+    cores = []
+    ep = eps / np.sqrt(d - 1)
+
+    C = A_np
+    for i in range(d - 1):
+        m = N[i] * r[i]
+        C = C.reshape(m, -1)
+        u, s, v = np.linalg.svd(C, full_matrices=False)
+        # rank_chop using numpy directly
+        r1 = _rank_chop_np(s, np.linalg.norm(s) * ep)
+        r1 = min(r1, rmax[i + 1])
+        r1 = int(r1)
+        u = u[:, :r1]
+        s = s[:r1]
+        r[i + 1] = r1
+        cores.append(u.reshape(r[i], N[i], r1))
+        v = v[:r1, :]
+        C = np.diag(s) @ v
+    cores.append(C.reshape(r[-2], N[-1], -1))
+    return cores, r
+
+
+def _rank_chop_np(s, eps):
+    """NumPy rank chopping (no tinygrad)."""
+    norm_s = np.linalg.norm(s)
+    if norm_s == 0.0:
+        return 1
+    if eps <= 0.0:
+        return s.size
+    n = s.size
+    tail_energy = 0.0
+    for r_idx in range(n - 1, -1, -1):
+        tail_energy += float(s[r_idx] ** 2)
+        if tail_energy <= eps * eps:
+            continue
+        return max(1, r_idx + 1)
+    return 1
