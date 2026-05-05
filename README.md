@@ -77,6 +77,15 @@ Representative examples:
 - `examples/mpo_ising_tdvp.py`: minimal MPO + TDVP sweep.
 - `examples/ctt_param_ode.py`, `examples/ctt_multilayer_example.py`: CTT demos.
 - `examples/heat_equation.py`: QTT heat equation solver.
+- `examples/tt_riemannian_gd.py`: Riemannian gradient descent on the TT manifold.
+- `examples/tt_functional.py`: Scalar and vector-valued FunctionalTT regression
+  with Legendre basis functions and gradient descent training.
+- `examples/tt_vector_valued.py`: Learning a vector-valued map f(k) → R⁴
+  using a TT-matrix as a trainable linear operator.
+
+All examples report **relative error** where applicable (‖pred − truth‖ / ‖truth‖)
+rather than absolute error, since relative error is scale-invariant and more
+meaningful for comparing accuracy across problems.
 
 Some example scripts write plots and therefore require `matplotlib` in addition
 to the runtime dependencies.

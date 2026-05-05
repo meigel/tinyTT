@@ -116,8 +116,13 @@ def reshape(tens, shape, eps=1e-16, rmax=sys.maxsize):
 def meshgrid(vectors):
     if len(vectors) == 0:
         return []
-    dtype = vectors[0].dtype
-    device = vectors[0].device if tn.is_tensor(vectors[0]) else None
+    # Coerce numpy dtypes to tinygrad dtypes
+    first = vectors[0]
+    if hasattr(first, 'dtype'):
+        dtype = first.dtype if tn.is_tensor(first) else tn._infer_dtype(first.dtype)
+    else:
+        dtype = tn.float64
+    device = first.device if tn.is_tensor(first) else None
     Xs = []
     for i in range(len(vectors)):
         lst = [tn.ones((1, v.shape[0], 1), dtype=dtype, device=device) for v in vectors]
@@ -174,9 +179,12 @@ def diag(input):
     if not isinstance(input, tinytt._tt_base.TT):
         raise InvalidArguments("Input must be a tinytt.TT instance.")
     if input.is_ttm:
-        return tinytt._tt_base.TT(
-            [c.diagonal(dim1=1, dim2=2).permute([0, 2, 1]) for c in input.cores]
-        )
+        # Extract diagonal of dims 1 and 2 (M and N) from 4D TTM cores
+        def _diag_core(c):
+            k = min(c.shape[1], c.shape[2])
+            pieces = [c[:, i, i, :].reshape(c.shape[0], 1, c.shape[3]) for i in range(k)]
+            return tn.cat(pieces, dim=1)
+        return tinytt._tt_base.TT([_diag_core(c) for c in input.cores])
     return tinytt._tt_base.TT(
         [
             tn.einsum(

@@ -1,3 +1,9 @@
+"""
+Basic TT construction, arithmetic, and matvec.
+
+All errors are reported as relative error: ‖pred − truth‖ / ‖truth‖.
+"""
+
 import numpy as np
 import tinytt as tt
 
@@ -5,7 +11,9 @@ import tinytt as tt
 full = np.arange(8, dtype=np.float64).reshape(2, 2, 2)
 xt = tt.TT(full, eps=1e-12)
 print("TT ranks:", xt.R)
-print("Full reconstruction error:", np.linalg.norm(xt.full().numpy() - full))
+recon = xt.full().numpy()
+rel_err = np.linalg.norm(recon - full) / np.linalg.norm(full)
+print(f"Reconstruction rel_err: {rel_err:.3e}")
 
 # Basic operations
 ones = tt.ones([2, 2, 2])
@@ -17,4 +25,5 @@ A_full = np.eye(8, dtype=np.float64)
 A_full = A_full.reshape(2, 2, 2, 2, 2, 2)
 A = tt.TT(A_full, shape=[(2, 2), (2, 2), (2, 2)], eps=1e-12)
 y = A @ xt
-print("Matvec error:", np.linalg.norm(y.full().numpy() - xt.full().numpy()))
+rel_err_mv = np.linalg.norm(y.full().numpy() - xt.full().numpy()) / np.linalg.norm(xt.full().numpy())
+print(f"Matvec rel_err: {rel_err_mv:.3e}")

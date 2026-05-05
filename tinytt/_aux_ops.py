@@ -28,7 +28,12 @@ def apply_mask(cores, R, indices):
 
     result = tn.ones((M, 1), dtype=dt, device=cores[0].device)
     for i in range(d):
-        result = tn.einsum('ij,jik->ik',result,cores[i][:,indices[:,i],:])
+        # Convert index column to Python list (tinygrad needs list for integer indexing)
+        if tn.is_tensor(indices):
+            idx_col = [int(indices[j, i].numpy().item()) for j in range(len(indices))]
+        else:
+            idx_col = [int(indices[j, i]) for j in range(len(indices))]
+        result = tn.einsum('ij,jik->ik', result, cores[i][:, idx_col, :])
 
     return tn.squeeze(result)
 
