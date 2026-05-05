@@ -13,8 +13,9 @@ stable public interface.
 ## Requirements
 
 - Python 3.11 or later
-- `tinygrad` (version 0.10.x recommended)
-- `clang` for tinygrad CPU kernel compilation (or use GPU backend)
+- `tinygrad` (pinned submodule recommended; version `>=0.10` works for CPU)
+- `clang` for tinygrad CPU kernel compilation (or use GPU backend with
+  `TINYTT_DEVICE=NV`; the `tinygrad` submodule is strongly recommended for GPU)
 
 ## Available Components
 

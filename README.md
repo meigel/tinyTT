@@ -19,13 +19,25 @@ print(x.full().numpy())     # materialise as numpy array
 ## Requirements
 
 - Python 3.11 or later
-- `tinygrad` (installed via `pip install tinygrad` or `requirements.txt`)
+- `tinygrad` (installed via `pip install tinygrad` or the pinned submodule)
+
+To use GPU acceleration, install the `tinygrad` submodule from source rather than
+the PyPI wheel, which may contain pre-existing backend bugs:
+
+```bash
+git submodule update --init tinygrad
+pip install ./tinygrad
+```
 
 ## Highlights
 
 - TT tensors and TT-matrices on a `tinygrad` backend.
-- CPU is the default execution path; optional `tinygrad` devices such as CUDA,
-  Metal, or OpenCL can be selected with `TINYTT_DEVICE`.
+- CPU is the default execution path; optional `tinygrad` devices such as `NV`
+  (NVIDIA CUDA), `METAL`, or `CL` (OpenCL) can be selected with `TINYTT_DEVICE`.
+- **GPU**: 7/7 GPU tests pass with the submodule tinygrad. First-run JIT
+  compilation adds ~0.4s per kernel pattern (cached via `TINYTT_TINYJIT=1`).
+  Known limitations: TT-cross interpolation and AMEn solver may hang on GPU.
+- **CPU**: All 234 tests pass on the default CPU backend.
 - **Core solvers**: ALS, AMEn, DMRG, TDVP for time evolution.
 - **QTT**: Quantized Tensor Train (QTT) format for high-dimensional problems.
 - **CTT**: Conditional Triangular Tensor transport maps for uncertainty quantification.
@@ -138,9 +150,14 @@ pytest -q tests
 GPU tests are opt-in and require `TINYTT_DEVICE`:
 
 ```bash
-TINYTT_DEVICE=CUDA pytest -q tests/test_gpu_ops.py
-TINYTT_DEVICE=CUDA pytest -q tests/test_gpu_smoke.py
+TINYTT_DEVICE=NV pytest -q tests/test_gpu_ops.py
+TINYTT_DEVICE=NV pytest -q tests/test_gpu_smoke.py
 ```
+
+All 7 GPU tests pass when tinygrad is built from the submodule (see Setup).
+Tests run slower on first invocation due to CUDA JIT kernel compilation
+(~0.4s per operation pattern). The `test_interpolate.py` and AMEn solver tests
+may hang on GPU — these are known tinygrad backend limitations.
 
 The `tests/test_uq_adf_skfem.py` case is intentionally slow and skips itself if
 it exceeds the time budget. The faster UQ-ADF smoke test is:
@@ -154,9 +171,12 @@ compilation. If not available, some tests will skip or fail.
 
 ## Environment Flags
 
-- `TINYTT_DEVICE=CUDA|METAL|CL|...`: default `tinygrad` device for new tensors.
-- `TINYTT_TINYJIT=1`: enable `TinyJit` for selected kernels.
-- `TINYTT_SVD_BACKEND=numpy|tinygrad`: choose the SVD backend.
+- `TINYTT_DEVICE=NV|METAL|CL|...`: default `tinygrad` device for new tensors
+  (use `NV` for NVIDIA GPUs, `METAL` for Apple, `CL` for OpenCL).
+- `TINYTT_TINYJIT=1`: enable `TinyJit` kernel caching (reduces GPU JIT overhead
+  after the first compilation of each kernel pattern).
+- `TINYTT_SVD_BACKEND=numpy|tinygrad`: choose the SVD backend. Falls back to
+  NumPy automatically on GPU when tinygrad's SVD is unavailable.
 - `TINYTT_FORCE_FP32=1`: force `float32` on devices without usable `float64`.
 
 ## Troubleshooting
@@ -171,8 +191,17 @@ Install it via your system package manager (e.g., `apt install clang` on Debian/
 or set a different device (e.g., `TINYTT_DEVICE=CUDA`) if a GPU is available.
 
 ### tinygrad Version
-Recommended tinygrad version: `>=0.10`. Tested with 0.12.0. If you encounter
-import errors with newer versions, pin to an older release.
+The repository includes a pinned `tinygrad` submodule under `tinygrad/`.
+This is the recommended version for GPU support, as PyPI wheels may omit NVRTC
+bindings or contain SVD backend bugs. To use it:
+
+```bash
+git submodule update --init tinygrad
+pip install ./tinygrad
+```
+
+The pip package `tinygrad>=0.10` also works for CPU-only usage. Tested with
+submodule at commit `76ff378` (post-0.12.0).
 
 ## Features
 
@@ -239,14 +268,17 @@ Polynomial basis functions for functional TT models:
 
 ## NumPy Fallbacks
 
-Several routines still rely on NumPy for stability or because `tinygrad` does
-not provide a matching primitive. These paths run on CPU and can dominate
-runtime on accelerator backends:
+Several routines rely on NumPy for stability or because `tinygrad` does
+not provide a matching primitive. On GPU these paths copy data to CPU, compute,
+and copy results back:
 
-- SVD in `tinytt/_decomposition.py` defaults to NumPy.
-- `tinytt/interpolate.py` uses NumPy for `maxvol` and dense solves.
+- **SVD**: `tinytt/_decomposition.py` falls back to NumPy automatically when
+  tinygrad's GPU SVD is unavailable or fails. This enables all SVD-dependent
+  operations (rounding, solvers) on GPU, albeit with CPU transfer overhead.
+- `tinytt/interpolate.py` uses NumPy for `maxvol` and dense solves
+  (may hang on GPU; CPU recommended).
 - `tinytt/uq_adf.py` uses NumPy dense linear algebra and special-function helpers.
 - Some solver helpers use NumPy solves on small dense systems.
 
-This makes tinyTT best described as CPU-first today, with partial accelerator
-support where the backend path stays inside `tinygrad`.
+This makes tinyTT CPU-first today, with functional GPU support for most core
+operations.
