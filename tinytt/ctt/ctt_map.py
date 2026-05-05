@@ -603,7 +603,14 @@ class ComposedCTTMAP:
     
     def compute_gradients(self, a, mu, target):
         """
-        Compute gradients for all layer weights using backprop.
+        [DEPRECATED] Compute gradients for all layer weights.
+        
+        This method has a double-backprop bug: after self.backward() already
+        propagates gradients through all layers, the forward loop applies
+        the backward formula a second time, producing incorrect results.
+        
+        Use train_composed_ctt() from training.py instead, which has
+        correct per-layer gradient computation.
         
         Args:
             a: input (batch, d)
@@ -613,6 +620,14 @@ class ComposedCTTMAP:
         Returns:
             dict of gradients per layer
         """
+        import warnings
+        warnings.warn(
+            "compute_gradients has incorrect double-backprop logic. "
+            "Use train_composed_ctt() from training.py instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        
         # Forward pass with cache
         output = self.forward(a, mu, store_cache=True)
         

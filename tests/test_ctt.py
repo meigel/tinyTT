@@ -327,8 +327,8 @@ class TestComposedCTTMAP:
             x_pred = model.forward(a, mu, store_cache=True)
             loss = np.mean((x_pred - target) ** 2)
             
-            residual = (x_pred - target) / n
-            dx = residual.copy()
+            # d(loss)/d(x_pred) for MSE loss
+            dx = 2.0 * (x_pred - target) / n
             
             # Backward
             for i, layer in enumerate(reversed(model.layers)):
@@ -339,7 +339,7 @@ class TestComposedCTTMAP:
                     if mu_i.shape[0] == 1 and x.shape[0] > 1:
                         mu_i = np.tile(mu_i, (x.shape[0], 1))
                     z = np.concatenate([x, mu_i], axis=1)
-                    grad_W = dx.T @ z / n
+                    grad_W = layer.h * (dx.T @ z)
                     d_vel_d_x = layer.W[:, :layer.d].T
                     dx = dx + layer.h * (dx @ d_vel_d_x)
                     layer.W -= lr * grad_W

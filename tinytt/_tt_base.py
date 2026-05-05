@@ -420,7 +420,40 @@ class TT:
         core = None
         cores_new = []
         if self.__is_ttm:
-            pass
+            for s in original_shape:
+                if not isinstance(s, tuple) or len(s) != 2:
+                    raise InvalidArguments(
+                        "For TTM QTT, original_shape must be a list of (M, N) tuples."
+                    )
+            k = 0
+            for c in self.cores:
+                if core is None:
+                    core = c
+                    so_far_m = core.shape[1]
+                    so_far_n = core.shape[2]
+                else:
+                    # Merge two adjacent TTM cores: [r_i, M, N, r_mid] @ [r_mid, m, n, r_o]
+                    # Result: [r_i, M, N, m, n, r_o]   (6D intermediate)
+                    core = tn.einsum("rijl,lkno->rijkno", core, c)
+                    so_far_m *= c.shape[1]
+                    so_far_n *= c.shape[2]
+
+                target_m, target_n = original_shape[k]
+                if so_far_m == target_m and so_far_n == target_n:
+                    # If we merged multiple cores, group M dims and N dims via permute+reshape
+                    if len(core.shape) == 6:
+                        # [r, M, N, m, n, r'] -> [r, M, m, N, n, r']
+                        core = tn.permute(core, [0, 1, 3, 2, 4, 5])
+                        new_m = core.shape[1] * core.shape[2]
+                        new_n = core.shape[3] * core.shape[4]
+                        core = tn.reshape(
+                            core, [core.shape[0], new_m, new_n, core.shape[-1]]
+                        )
+                    cores_new.append(core)
+                    core = None
+                    k += 1
+            if k != len(original_shape):
+                raise ShapeMismatch("Mode sizes do not match.")
         else:
             k = 0
             for c in self.cores:

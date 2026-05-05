@@ -143,11 +143,8 @@ def train_composed_ctt(model, a_train, mu_train, x_target, n_epochs=500, lr=0.01
         losses.append(loss)
         
         # Compute gradients via backprop
-        n = a_train.shape[0]
-        residual = (x_pred - x_target) / n
-        
-        # Backpropagate
-        dx = residual.copy()
+        # d(loss)/d(x_pred) for loss = mean((x_pred - target)^2)
+        dx = 2.0 * (x_pred - x_target) / a_train.shape[0]
         grad_list = []
         
         for i, layer in enumerate(reversed(model.layers)):
@@ -175,11 +172,11 @@ def train_composed_ctt(model, a_train, mu_train, x_target, n_epochs=500, lr=0.01
                 dh_raw = dh * (1 - h ** 2)  # derivative of tanh
                 dz = dh_raw @ layer.W1  # (batch, input)
                 
-                # Gradients
-                grad_W2 = dx.T @ h / n  # (d, hidden)
-                grad_b2 = dx.mean(axis=0)  # (d,)
-                grad_W1 = dz.T @ z / n  # (hidden, input)
-                grad_b1 = dz.mean(axis=0)  # (hidden,)
+                # Gradients (with proper h scaling)
+                grad_W2 = layer.h * (dx.T @ h)  # (d, hidden)
+                grad_b2 = layer.h * dx.sum(axis=0)  # (d,)
+                grad_W1 = layer.h * (dz.T @ z)  # (hidden, input)
+                grad_b1 = layer.h * dz.sum(axis=0)  # (hidden,)
                 
                 grad_list.append((grad_W1, grad_W2, grad_b1, grad_b2))
                 
@@ -188,7 +185,7 @@ def train_composed_ctt(model, a_train, mu_train, x_target, n_epochs=500, lr=0.01
                 
             elif layer.W is not None:
                 # Linear velocity backprop
-                grad_W = dx.T @ z / n
+                grad_W = layer.h * (dx.T @ z)
                 grad_list.append(grad_W)
                 
                 # Backprop through velocity: dx = dx + h * dx @ W[:, :d].T
