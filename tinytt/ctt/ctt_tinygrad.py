@@ -97,10 +97,15 @@ class TriangularResidualLayerTG:
 
 class TriangularResidualLayerTT:
     """
-    Triangular residual layer with TT-based velocity field.
+    Triangular residual layer with low-rank factorised velocity field.
     
-    Uses low-rank TT structure for the velocity matrix. Instead of a full
-    dense matrix W, we represent it as a TT with specified ranks.
+    Uses a rank-r factorisation W = W1 @ W2 (with W1 shape (d, r) and
+    W2 shape (r, d+p)) for the velocity matrix instead of a full dense matrix.
+    
+    NOTE: Despite the name, this is a rank-r factorisation, NOT a full
+    Tensor Train decomposition. For a true TT-matrix velocity field, use
+    TriangularResidualLayerTTNative which stores proper TT cores and
+    applies them via dense_matvec.
     """
     
     def __init__(self, h, d, p, tt_rank=4, init_scale=0.05):

@@ -12,7 +12,7 @@ import tinytt as tt
 
 class TTMap:
     """
-    Simple TT-based transport map with parameter conditioning.
+    Simple affine transport map using dense matrices (placeholder).
     
     Represents a map T(a, μ) → x where:
     - a: latent variable (e.g., from reference distribution)
@@ -21,6 +21,10 @@ class TTMap:
     
     The map has triangular structure: (x, μ) → (T(x, μ), μ)
     i.e., parameter μ is not transformed, only the state x.
+    
+    NOTE: Despite the name, this does NOT use Tensor Train decomposition.
+    The forward pass is a dense affine transform x = a + W@μ + b.
+    The forward() docstring explicitly calls this a "placeholder for full TT evaluation".
     """
     
     def __init__(self, d, p, ranks=None, feature_fn=None):
@@ -309,15 +313,17 @@ class TriangularResidualLayer:
     
 class TTVelocityField:
     """
-    Tensor Train velocity field for CTT.
+    Velocity field backed by a dense matrix (wrapped as single-core TT-matrix).
     
     Represents Ψ(x, μ) where:
     - x: state variable (d-dimensional)
     - μ: parameter (p-dimensional) 
     - output: velocity (d-dimensional)
     
-    Uses TT matrix to represent the linear map from [x; μ] -> v
-    with optional nonlinear feature expansion.
+    NOTE: Despite the name, this is NOT a proper multi-core TT velocity field.
+    The weight matrix is a single-core TT-matrix (equivalent to a dense matrix),
+    and _tt_matvec() materialises it to dense before multiplying. True TT-matrix
+    matvec would use dense_matvec() with multiple cores.
     """
     
     def __init__(self, d, p, ranks=None, n_features=None, eps=1e-8):
@@ -489,9 +495,15 @@ class TTVelocityField:
 
 class TriangularResidualLayerTT:
     """
-    Triangular residual layer using TT velocity field.
+    Triangular residual layer wrapping a TTVelocityField.
     
-    This is the full CTT implementation with proper TT representation.
+    This combines the identity + h·Ψ update with a TTVelocityField
+    for the velocity Ψ(x, μ).
+    
+    NOTE: See TTVelocityField docstring — the velocity field uses a
+    single-core TT-matrix (materialised to dense), not a proper multi-core TT.
+    For a true TT-matrix velocity field, see
+    ctt_tinygrad.TriangularResidualLayerTTNative.
     """
     
     def __init__(self, h, d, p, ranks=None):
