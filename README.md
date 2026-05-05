@@ -36,7 +36,7 @@ pip install ./tinygrad
   (NVIDIA CUDA), `METAL`, or `CL` (OpenCL) can be selected with `TINYTT_DEVICE`.
 - **GPU**: 7/7 GPU tests pass with the submodule tinygrad. First-run JIT
   compilation adds ~0.4s per kernel pattern (cached via `TINYTT_TINYJIT=1`).
-  Known limitations: TT-cross interpolation and AMEn solver may hang on GPU.
+  Known limitation: TT-cross interpolation hangs on GPU (use CPU backend).
 - **CPU**: All 234 tests pass on the default CPU backend.
 - **Core solvers**: ALS, AMEn, DMRG, TDVP for time evolution.
 - **QTT**: Quantized Tensor Train (QTT) format for high-dimensional problems.
@@ -156,8 +156,9 @@ TINYTT_DEVICE=NV pytest -q tests/test_gpu_smoke.py
 
 All 7 GPU tests pass when tinygrad is built from the submodule (see Setup).
 Tests run slower on first invocation due to CUDA JIT kernel compilation
-(~0.4s per operation pattern). The `test_interpolate.py` and AMEn solver tests
-may hang on GPU — these are known tinygrad backend limitations.
+(~0.4s per operation pattern). The `test_interpolate.py` (TT-cross) hangs
+on GPU — this is a known tinygrad backend limitation; use the CPU backend
+for interpolation tasks.
 
 The `tests/test_uq_adf_skfem.py` case is intentionally slow and skips itself if
 it exceeds the time budget. The faster UQ-ADF smoke test is:
