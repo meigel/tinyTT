@@ -58,6 +58,9 @@ def _qr_move_lr(cores: list, pos: int, preserve_rank: bool = False) -> list:
     # Flatten left index: (r_left * n, r_right)
     mat = core.reshape(r_left * n, r_right)
     q, r = tn.linalg.qr(mat)
+    # tinygrad QR may return Q on CPU even for GPU input — fix device consistency
+    if q.device != mat.device: q = q.to(mat.device)
+    if r.device != mat.device: r = r.to(mat.device)
 
     k = min(r_left * n, r_right)
     
@@ -124,6 +127,9 @@ def _qr_move_rl(cores: list, pos: int, preserve_rank: bool = False) -> list:
     # Reshape to (r_left, n * r_right), transpose -> (n * r_right, r_left)
     mat = core.reshape(r_left, n * r_right).T           # (n * r_right, r_left)
     q, r = tn.linalg.qr(mat)
+    # tinygrad QR may return Q on CPU even for GPU input — fix device consistency
+    if q.device != mat.device: q = q.to(mat.device)
+    if r.device != mat.device: r = r.to(mat.device)
 
     k = min(r_left, n * r_right)
     
