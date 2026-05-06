@@ -21,7 +21,7 @@ import tinytt._backend as tn
 # single-step QR gauge moves
 # ---------------------------------------------------------------------------
 
-def _qr_move_lr(cores: list, pos: int) -> list:
+def _qr_move_lr(cores: list, pos: int, preserve_rank: bool = False) -> list:
     """
     Left-to-right QR gauge step: orthogonalise core *pos* and absorb the
     upper-triangular factor into core *pos+1*.
@@ -37,6 +37,9 @@ def _qr_move_lr(cores: list, pos: int) -> list:
     pos : int
         Position of the core to orthogonalise.  Must satisfy 0 <= pos < d-1
         (the last core cannot be left-orthogonalised with this sweep).
+    preserve_rank : bool
+        If True, force the output core to keep its original rank even when
+        r_left * n < r_right by adding a small random perturbation.
 
     Returns
     -------
@@ -57,12 +60,25 @@ def _qr_move_lr(cores: list, pos: int) -> list:
     q, r = tn.linalg.qr(mat)
 
     k = min(r_left * n, r_right)
-    cores[pos] = q[:, :k].reshape(r_left, n, k)
-
-    # Absorb R into the next core
-    r_trim = r[:k, :]                                   # (k, r_right)
-    nxt = cores[pos + 1]                                 # (r_right, n_next, r_nextnext)
-    cores[pos + 1] = tn.einsum('ab,bcd->acd', r_trim, nxt)
+    
+    if preserve_rank and k < r_right:
+        # Rank would shrink; preserve it by padding with random noise
+        pad = 1e-10 * tn.randn(r_left * n, r_right - k, dtype=core.dtype, device=core.device)
+        q_padded = tn.cat([q[:, :k], pad], dim=1)
+        # Re-orthogonalise the padded matrix
+        q_padded, _ = tn.linalg.qr(q_padded)
+        cores[pos] = q_padded[:, :r_right].reshape(r_left, n, r_right)
+        # Absorb R (padded with zeros) into the next core
+        r_pad = tn.zeros(r_right, r_right, dtype=core.dtype, device=core.device)
+        r_pad[:k, :] = r[:k, :]
+        nxt = cores[pos + 1]
+        cores[pos + 1] = tn.einsum('ab,bcd->acd', r_pad, nxt)
+    else:
+        cores[pos] = q[:, :k].reshape(r_left, n, k)
+        # Absorb R into the next core
+        r_trim = r[:k, :]                                   # (k, r_right)
+        nxt = cores[pos + 1]                                 # (r_right, n_next, r_nextnext)
+        cores[pos + 1] = tn.einsum('ab,bcd->acd', r_trim, nxt)
 
     return cores
 
@@ -183,13 +199,22 @@ def horizontal_projection(cores: list, grad_cores: list) -> list:
     Project Euclidean gradients to the horizontal space of the TT quotient
     manifold.
 
-    The projection first brings the current cores into right-orthogonal form,
-    then for each core removes the gauge component:
+    Uses the original (non-orthogonal) cores and solves the gauge projection
+    via explicit linear systems, avoiding the rank-change issues that occur
+    when cores are first right-orthogonalised.
 
-        h_k = g_k - A_k · sym(A_k^† g_k)
+    For each core A_k of shape (r_left, n, r_right), the projection removes
+    two gauge components:
 
-    where sym(X) = ½(X + X^T) ensures the correction lies in the skew-symmetric
-    gauge direction.
+        RIGHT:  A_k → A_k R         (column space of A_k unfolded)
+        LEFT:   A_k → R^{-1} A_k    (row space of A_k unfolded)
+
+    The projected gradient is computed by alternating projections:
+
+        h = g - A_col · (A_col^T A_col)^{-1} · A_col^T · g   [right]
+        h = h - (h · A_row^T) · (A_row · A_row^T)^{-1} · A_row [left]
+
+    with A_col = A.reshape(r_left*n, r_right) and A_row = A.reshape(r_left, n*r_right).
 
     Parameters
     ----------
@@ -209,66 +234,50 @@ def horizontal_projection(cores: list, grad_cores: list) -> list:
             f"Number of cores ({d}) and gradient cores ({len(grad_cores)}) must match."
         )
 
-    # Right-orthogonalise current cores
-    ro_cores = right_orthogonalize([c.clone() for c in cores], inplace=False)
-
     h_grad = []
     for k in range(d):
         g = grad_cores[k]
-        c = ro_cores[k]                     # right-orthogonal core
+        c = cores[k]                         # original (non-orthogonal) core
         r_left, n, r_right = c.shape
+        reg = 1e-12
+        dtype, dev = c.dtype, c.device
 
         if k == 0:
-            # First core: shape (1, n0, r1).  After the right-to-left sweep
-            # this core has absorbed all R factors and is *not* right-orthogonal.
-            # The gauge acts from the RIGHT (A0 → A0 R), so the correct
-            # orthogonal projection onto the horizontal space (nullspace of A0^T)
-            # uses the full pseudoinverse:
-            #   h0 = g0 - A0 · (A0^T A0)^{-1} · A0^T g0
-            c2d = c.reshape(-1, r_right)    # (n0, r1)
-            g2d = g.reshape(-1, r_right)    # (n0, r1)
-            AtA = c2d.T @ c2d                # (r1, r1)
-            Atg = c2d.T @ g2d                # (r1, r1)
-            reg = 1e-12 * tn.eye(r_right, dtype=c2d.dtype, device=c2d.device)
-            X = tn.linalg.solve(AtA + reg, Atg)
-            h = g2d - c2d @ X
+            # First core: shape (1, n0, r1).  Only right gauge (left is trivial).
+            c2d = c.reshape(-1, r_right)     # (n0, r1)
+            g2d = g.reshape(-1, r_right)     # (n0, r1)
+            AtA = c2d.T @ c2d + reg * tn.eye(r_right, dtype=dtype, device=dev)
+            h = g2d - c2d @ tn.linalg.solve(AtA, c2d.T @ g2d)
             h_grad.append(h.reshape(c.shape))
 
         elif k == d - 1:
-            # Last core: shape (r_{d-1}, n_{d-1}, 1).
-            # Right-orthogonal in row form: A_row @ A_row^T = I.
-            # The gauge acts from the LEFT on the last core: A → R^{-1} A.
-            # Vertical at the last core: {-X A | X ∈ gl(r_{d-1})}.
-            # Horizontal: h such that h @ A^T = 0 (orthogonal complement).
-            # With A_row = c.reshape(r_left, -1) and A_row @ A_row^T = I:
-            #   h = g - g @ A_row^T @ A_row
-            c2d = c.reshape(r_left, -1)     # (r_{d-1}, n_{d-1}), row-flattened
+            # Last core: shape (r_{d-1}, n_{d-1}, 1).  Only left gauge.
+            c2d = c.reshape(r_left, -1)      # (r_{d-1}, n_{d-1})
             g2d = g.reshape(r_left, -1)
-            h = g2d - (g2d @ c2d.T) @ c2d   # uses A_row @ A_row^T = I
+            AAt = c2d @ c2d.T + reg * tn.eye(r_left, dtype=dtype, device=dev)
+            h = g2d - (g2d @ c2d.T) @ tn.linalg.solve(AAt, c2d)
             h_grad.append(h.reshape(c.shape))
 
         else:
-            # Middle core: shape (rk, nk, r_{k+1}).  Right-orthogonal in row
-            # form (A_row @ A_row^T = I).  Two gauge actions:
-            #   RIGHT: A → A R   (acts on last index r_{k+1})
-            #   LEFT:  A → R^{-1} A  (acts on first index r_k)
-            # These do NOT commute because P_row mixes the first and mode
-            # indices.  We use an iterative alternating projection.
-            c2d_col = c.reshape(r_left * n, r_right)
-            c2d_row = c.reshape(r_left, n * r_right)
+            # Middle core: both left and right gauge, alternating projections.
+            c_col = c.reshape(r_left * n, r_right)   # (r_left*n, r_right)
+            c_row = c.reshape(r_left, n * r_right)   # (r_left, n*r_right)
             g2d = g.reshape(r_left * n, r_right)
-            reg = 1e-12 * tn.eye(r_right, dtype=c2d_col.dtype, device=c2d_col.device)
-            AtA = c2d_col.T @ c2d_col
-            AtA_reg = AtA + reg
+
+            # Right gauge (column space) solve matrix
+            AtA = c_col.T @ c_col + reg * tn.eye(r_right, dtype=dtype, device=dev)
+            # Left gauge (row space) solve matrix
+            AAt = c_row @ c_row.T + reg * tn.eye(r_left, dtype=dtype, device=dev)
+
             h = g2d
             for _ in range(20):  # alternating projections
-                # RIGHT gauge (column space)
-                Atg = c2d_col.T @ h
-                X = tn.linalg.solve(AtA_reg, Atg)
-                h = h - c2d_col @ X
-                # LEFT gauge (row space, A_row @ A_row^T = I)
+                # RIGHT gauge
+                X = tn.linalg.solve(AtA, c_col.T @ h)
+                h = h - c_col @ X
+                # LEFT gauge
                 h2d = h.reshape(r_left, n * r_right)
-                h2d = h2d - (h2d @ c2d_row.T) @ c2d_row
+                Y = tn.linalg.solve(AAt, h2d @ c_row.T)
+                h2d = h2d - Y @ c_row
                 h = h2d.reshape(r_left * n, r_right)
             h_grad.append(h.reshape(c.shape))
 
@@ -281,14 +290,16 @@ def horizontal_projection(cores: list, grad_cores: list) -> list:
 
 def qr_retraction(cores: list, direction: list, step_size: float) -> list:
     """
-    QR-based retraction on the fixed-rank TT manifold.
+    Rank-preserving QR retraction on the fixed-rank TT manifold.
 
     Computes
 
         cores_new ← cores - step_size · direction
 
-    then applies a left-to-right QR sweep to restore the gauge (left-canonical
-    form).
+    then applies a rank-preserving left-to-right QR sweep to restore the
+    gauge (left-canonical form).  If a core's effective rank would shrink
+    during QR, it is padded with a small random perturbation to preserve
+    the original rank.
 
     Parameters
     ----------
@@ -302,10 +313,13 @@ def qr_retraction(cores: list, direction: list, step_size: float) -> list:
     Returns
     -------
     list
-        New cores on the manifold (left-orthogonalised via QR sweep).
+        New cores on the manifold (left-orthogonalised via QR sweep,
+        with original ranks preserved).
     """
     new_cores = [c - step_size * z for c, z in zip(cores, direction)]
-    new_cores = left_orthogonalize(new_cores, inplace=True)
+    d = len(new_cores)
+    for pos in range(d - 1):
+        _qr_move_lr(new_cores, pos, preserve_rank=True)
     return new_cores
 
 
