@@ -71,8 +71,10 @@ def _qr_move_lr(cores: list, pos: int, preserve_rank: bool = False) -> list:
         q_full = tn.cat([q_k, q_null[:, :r_right - k]], dim=1)  # (r_left*n, r_right)
         cores[pos] = q_full.reshape(r_left, n, r_right)
         # Absorb R (padded to full rank) into the next core
-        r_pad = tn.zeros((r_right, r_right), dtype=core.dtype, device=core.device)
-        r_pad[:k, :] = r[:k, :]
+        import numpy as np
+        r_np = np.zeros((r_right, r_right), dtype=np.float64)
+        r_np[:k, :] = r[:k, :].numpy()
+        r_pad = tn.tensor(r_np, dtype=core.dtype, device=core.device)
         nxt = cores[pos + 1]
         cores[pos + 1] = tn.einsum('ab,bcd->acd', r_pad, nxt)
     else:
@@ -140,8 +142,11 @@ def _qr_move_rl(cores: list, pos: int, preserve_rank: bool = False) -> list:
         q_full = tn.cat([q_k, q_null[:, :r_left - k]], dim=1)  # (n*r_right, r_left)
         cores[pos] = q_full.T.reshape(r_left, n, r_right)
         # Absorb R (padded to full rank) into the previous core
-        r_pad = tn.zeros((r_left, r_left), dtype=core.dtype, device=core.device)
-        r_pad[:k, :] = r[:k, :]
+        # (create via numpy to avoid tinygrad setitem contiguity issues)
+        import numpy as np
+        r_np = np.zeros((r_left, r_left), dtype=np.float64)
+        r_np[:k, :] = r[:k, :].numpy()
+        r_pad = tn.tensor(r_np, dtype=core.dtype, device=core.device)
         prv = cores[pos - 1]
         cores[pos - 1] = tn.einsum('abc,cd->abd', prv, r_pad)
     else:
