@@ -4,13 +4,21 @@ Conditional Triangular Tensor Train (CTT) module.
 This module provides tools for building and training conditional triangular
 CTT transport maps as described in the CTT-Transport paper.
 
-Two implementations:
-1. ctt_map.py - Manual backprop (original)
-2. ctt_tinygrad.py - Tinygrad autograd (recommended)
+Recommended implementation:
+- ctt_tinygrad.py: tinygrad autograd, including native TT-matrix velocity fields.
+
+Legacy NumPy baselines:
+- ctt_map.py: small dense/manual-backprop helpers retained for compatibility.
 """
 
 from .ctt_map import TTMap, TriangularResidualLayer, ComposedCTTMAP, LinearTTMap
-from .training import characteristic_matching_loss, train_composed_ctt
+from .training import (
+    characteristic_matching_loss,
+    flow_matching_loss,
+    train_composed_ctt,
+    wasserstein_2_1d,
+    wasserstein_evaluation,
+)
 
 # Tinygrad autograd version (recommended)
 try:
@@ -35,7 +43,10 @@ __all__ = [
     'ComposedCTTMAP',
     'LinearTTMap',
     'characteristic_matching_loss',
+    'flow_matching_loss',
     'train_composed_ctt',
+    'wasserstein_2_1d',
+    'wasserstein_evaluation',
 ]
 
 if _TINYGRAD_AVAILABLE:

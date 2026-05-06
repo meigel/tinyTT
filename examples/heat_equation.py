@@ -85,6 +85,8 @@ def solve_heat_equation_qtt(
     n: int = 16,
     mode_size: int = 2,
     max_rank: int = 8,
+    nswp: int = 8,
+    eps: float = 1e-8,
     verbose: bool = True,
 ) -> tt.TT:
     """
@@ -94,6 +96,8 @@ def solve_heat_equation_qtt(
         n: Grid size (n x n), should be power of 2
         mode_size: QTT mode size (typically 2)
         max_rank: Maximum TT rank
+        nswp: Number of AMEn sweeps
+        eps: TT solve tolerance
         verbose: Print progress
     """
     if verbose:
@@ -148,38 +152,28 @@ def solve_heat_equation_qtt(
     b_tt = tt.TT(tn.tensor(b, dtype=tn.float64))
     b_qtt = b_tt.to_qtt(mode_size=mode_size)
     
-    # For small n, solve directly using dense Laplacian
-    if n <= 16:
-        # Build dense Laplacian directly
-        L_1d_dense = np.zeros((n, n))
-        for i in range(n):
-            L_1d_dense[i, i] = -2.0
-            if i > 0:
-                L_1d_dense[i, i-1] = 1.0
-            if i < n-1:
-                L_1d_dense[i, i+1] = 1.0
-        L_1d_dense = L_1d_dense / (h * h)
-        
-        # Kronecker for 2D
-        I = np.eye(n)
-        L_dense = np.kron(L_1d_dense, I) + np.kron(I, L_1d_dense)
-        
-        # Solve
-        b_vec = b.reshape(-1)
-        u_dense = np.linalg.solve(L_dense + 1e-10*np.eye(n*n), b_vec)
-        u_dense = u_dense.reshape([n, n])
-        
-        # Convert to QTT and back
-        u_tt = tt.TT(tn.tensor(u_dense, dtype=tn.float64), eps=1e-10, rmax=max_rank)
-    else:
-        # For larger n, would need iterative solver in QTT
-        # For now, just round the RHS to get approximate solution
-        if verbose:
-            print("Using rank-rounding approximation (would need QTT solver for large n)")
-        u_tt = b_qtt.round(eps=1e-6, rmax=max_rank)
+    if verbose:
+        print("Solving L_qtt u = b_qtt with AMEn")
+
+    u_tt = tt.solvers.amen_solve(
+        L_qtt,
+        b_qtt,
+        x0=b_qtt.round(eps=eps, rmax=max_rank),
+        nswp=nswp,
+        eps=eps,
+        rmax=max_rank,
+        max_full=500,
+        local_iterations=20,
+        resets=1,
+        use_cpp=False,
+        verbose=False,
+    ).round(eps=eps, rmax=max_rank)
+
+    rel_residual = ((L_qtt @ u_tt - b_qtt).norm() / b_qtt.norm()).numpy().item()
     
     if verbose:
         print(f"Solution ranks: {u_tt.R}")
+        print(f"Relative residual: {rel_residual:.2e}")
     
     return u_tt
 
@@ -195,13 +189,13 @@ if __name__ == "__main__":
     u1_full = u1.full().numpy()
     print(f"Solution range: [{u1_full.min():.4f}, {u1_full.max():.4f}]")
     
-    print("\n--- Method 2: Pure QTT (16x16) ---")
-    u2 = solve_heat_equation_qtt(n=16, mode_size=2, max_rank=8)
+    print("\n--- Method 2: Pure QTT (4x4) ---")
+    u2 = solve_heat_equation_qtt(n=4, mode_size=2, max_rank=8, nswp=4)
     u2_full = u2.full().numpy()
     print(f"Solution range: [{u2_full.min():.4f}, {u2_full.max():.4f}]")
     
-    print("\n--- Method 3: QTT with 32x32 ---")
-    u3 = solve_heat_equation_qtt(n=32, mode_size=2, max_rank=16)
+    print("\n--- Method 3: QTT with 4x4 stricter rank cap ---")
+    u3 = solve_heat_equation_qtt(n=4, mode_size=2, max_rank=4, nswp=4)
     u3_full = u3.full().numpy()
     print(f"Solution range: [{u3_full.min():.4f}, {u3_full.max():.4f}]")
     

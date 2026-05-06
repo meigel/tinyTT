@@ -119,8 +119,10 @@ Representative examples:
 - `examples/tt_fast_products.py`, `examples/tt_dmrg.py`: fast contractions and DMRG.
 - `examples/tt_solvers.py`, `examples/tt_autograd.py`: solvers and differentiation.
 - `examples/mpo_ising_tdvp.py`: minimal MPO + TDVP sweep.
-- `examples/ctt_param_ode.py`, `examples/ctt_multilayer_example.py`: CTT demos.
-- `examples/heat_equation.py`: QTT heat equation solver.
+- `examples/ctt_param_ode.py`: polynomial TT-matrix transport map for a
+  parametric ODE flow.
+- `examples/ctt_multilayer_example.py`: composed CTT residual layers.
+- `examples/heat_equation.py`: QTT heat equation solve with AMEn.
 - `examples/tt_riemannian_gd.py`: Riemannian gradient descent on the TT manifold.
 - `examples/tt_functional.py`: Scalar and vector-valued FunctionalTT regression
   with Legendre basis functions and gradient descent training.
@@ -220,20 +222,24 @@ Full-featured TT implementation with:
 - **DMRG**: Density Matrix Renormalization Group
 - **AMEn**: Alternating Minimal Energy methods
 - **TDVP**: Time-Dependent Variational Principle for time evolution
+- **BUG**: Basis-Update and Galerkin TT/MPO time evolution with QR basis
+  expansion and Galerkin local sweeps
 
 ### QTT (Quantized Tensor Train)
 
 For high-dimensional problems (e.g., PDEs):
 - Automatic conversion to QTT format
 - Efficient representation of operators in QTT
-- See `examples/heat_equation.py` for 2D heat equation example
+- AMEn solves directly against QTT operators in `examples/heat_equation.py`
 
 ### CTT (Conditional Transport Maps)
 
 Experimental module for building conditional transport maps:
-- Triangular residual layers
-- Composed CTT maps
-- Training utilities
+- Native TT-matrix residual layers through `TriangularResidualLayerTTNative`
+- `tinygrad` autograd training for composed maps
+- Legacy NumPy dense baselines retained for compatibility
+- Straight-line conditional flow matching utilities
+- Exact empirical 1D Wasserstein-2 evaluation
 - See `examples/ctt_param_ode.py` and `examples/ctt_multilayer_example.py`
 
 ### Riemannian Optimisation

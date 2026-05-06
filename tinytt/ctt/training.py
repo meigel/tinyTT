@@ -36,60 +36,73 @@ def characteristic_matching_loss(model, a, mu, target_x, dt=0.01):
     return loss
 
 
-def flow_matching_loss(velocity_net, a, mu, target_field, n_samples=10):
+def flow_matching_loss(velocity_net, a0, a1, mu, n_samples=10, rng=None):
     """
-    Flow matching loss.
+    Straight-line conditional flow matching loss.
     
-    Loss = E[|v_theta(t, z_t, mu) - u_t(z_t|a0, a1, mu)|^2]
+    Loss = E[|v_theta(t, z_t, mu) - (a1 - a0)|^2]
     
     where:
     - v_theta is the learned velocity field
-    - u_t is the target velocity (e.g., from optimal transport)
-    - z_t is sampled from the interpolation path
+    - z_t = (1 - t) * a0 + t * a1 is the interpolation path
     
     Args:
         velocity_net: callable that computes velocity v(t, x, mu)
-        a: initial latent (source), shape (batch, d)
+        a0: source samples, shape (batch, d)
+        a1: target samples paired with a0, shape (batch, d)
         mu: parameters, shape (batch, p) or (1, p)
-        target_field: callable u(t, x, mu) giving target velocity
         n_samples: number of time points to sample
+        rng: optional NumPy random generator
         
     Returns:
         loss: scalar loss value
     """
-    batch_size = a.shape[0]
+    a0 = np.asarray(a0)
+    a1 = np.asarray(a1)
+    mu = np.asarray(mu)
+
+    if a0.shape != a1.shape:
+        raise ValueError("a0 and a1 must have the same shape.")
+
+    if rng is None:
+        rng = np.random.default_rng()
     
     # Sample time points
-    t_samples = np.random.uniform(0, 1, (n_samples, 1, 1))
-    
-    # For prototype: simple squared error
-    # Full implementation would sample interpolation paths
+    t_samples = rng.uniform(0.0, 1.0, (n_samples, 1, 1))
+    target_velocity = a1 - a0
     
     loss = 0.0
     
     for t in t_samples:
-        # Get current state (simplified: just use a)
-        z_t = a
+        z_t = (1.0 - t) * a0 + t * a1
         
         # Predicted velocity
         v_pred = velocity_net(t, z_t, mu)
-        
-        # Target velocity
-        v_target = target_field(t, z_t, mu)
-        
-        # Squared error
-        loss += np.mean((v_pred - v_target) ** 2)
+        loss += np.mean((v_pred - target_velocity) ** 2)
     
     loss /= len(t_samples)
     
     return loss
 
 
+def wasserstein_2_1d(x, y):
+    """
+    Exact empirical 2-Wasserstein distance for one-dimensional samples.
+    """
+    x = np.asarray(x, dtype=float).reshape(-1)
+    y = np.asarray(y, dtype=float).reshape(-1)
+    if x.shape[0] != y.shape[0]:
+        raise ValueError("x and y must contain the same number of samples.")
+    return float(np.sqrt(np.mean((np.sort(x) - np.sort(y)) ** 2)))
+
+
 def wasserstein_evaluation(model, a_test, mu_test, target_dist_sampler, n_samples=100):
     """
-    Evaluate transport map using Wasserstein distance.
+    Evaluate a one-dimensional transport map using empirical W2 distance.
     
-    For 1D: W2 = sqrt(E[(T(a) - a')^2])
+    For 1D, W2 is computed exactly from sorted empirical samples. Higher
+    dimensions require an optimal-transport solver and are intentionally not
+    approximated by RMSE here.
     
     Args:
         model: TTMap model
@@ -99,18 +112,22 @@ def wasserstein_evaluation(model, a_test, mu_test, target_dist_sampler, n_sample
         n_samples: number of samples for W2 estimation
         
     Returns:
-        w2: approximate W2 distance
+        w2: empirical W2 distance for 1D samples
     """
-    # Generate samples
     x_pred = model.forward(a_test, mu_test)
     x_target = target_dist_sampler(a_test.shape[0])
-    
-    # For 1D case, compute W2
-    # For higher dimensions, this is approximate
-    diff = x_pred - x_target
-    w2 = np.sqrt(np.mean(diff ** 2))
-    
-    return w2
+
+    x_pred = np.asarray(x_pred)
+    x_target = np.asarray(x_target)
+    pred_dim = 1 if x_pred.ndim == 1 else x_pred.shape[1]
+    target_dim = 1 if x_target.ndim == 1 else x_target.shape[1]
+    if pred_dim != 1 or target_dim != 1:
+        raise NotImplementedError(
+            "wasserstein_evaluation computes exact empirical W2 only for 1D samples. "
+            "Use a dedicated optimal-transport backend for multi-dimensional W2."
+        )
+
+    return wasserstein_2_1d(x_pred, x_target)
 
 
 def train_composed_ctt(model, a_train, mu_train, x_target, n_epochs=500, lr=0.01, 

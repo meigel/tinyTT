@@ -1,11 +1,12 @@
 # Conditional Triangular Tensor Trains
 
 `tinytt.ctt` contains experimental code for parameter-conditioned transport maps
-with triangular residual structure. The implementation currently mixes two
+with triangular residual structure. The implementation currently exposes two
 styles:
 
-- NumPy prototypes with manual backpropagation.
-- `tinygrad`-based models that use automatic differentiation.
+- Legacy NumPy baselines with manual backpropagation.
+- Recommended `tinygrad`-based models that use automatic differentiation,
+  including native TT-matrix velocity fields.
 
 The API is usable, but it should be treated as experimental rather than a
 stable public interface.
@@ -19,9 +20,9 @@ stable public interface.
 
 ## Available Components
 
-Manual / NumPy-oriented classes from `tinytt.ctt.ctt_map`:
+Legacy NumPy-oriented classes from `tinytt.ctt.ctt_map`:
 
-- `TTMap`: simple prototype transport map.
+- `TTMap`: simple dense affine transport baseline.
 - `LinearTTMap`: dense linear conditional map.
 - `TriangularResidualLayer`: residual layer with linear or MLP velocity.
 - `ComposedCTTMAP`: composition of residual layers.
@@ -35,6 +36,16 @@ Manual / NumPy-oriented classes from `tinytt.ctt.ctt_map`:
 - `ComposedCTTMAPTG`: composition wrapper for autograd-based layers.
 - `train_ctt_tinygrad`: training loop for `tinygrad`-based models.
 - `NeuralODECTT`, `train_neural_ode`: continuous-time transport-map variant.
+
+Training and evaluation utilities:
+
+- `characteristic_matching_loss`: supervised map loss.
+- `flow_matching_loss`: straight-line conditional flow matching with
+  `z_t = (1 - t) a0 + t a1`.
+- `wasserstein_2_1d`: exact empirical 2-Wasserstein distance for 1D samples.
+- `wasserstein_evaluation`: one-dimensional transport-map W2 evaluation. It
+  intentionally raises for multi-dimensional samples instead of reporting RMSE
+  as Wasserstein distance.
 
 ## Installation
 
@@ -113,8 +124,10 @@ python3 examples/ctt_param_ode.py
 python3 examples/ctt_multilayer_example.py
 ```
 
-These scripts are the current source of truth for end-to-end CTT usage in this
-repository.
+`examples/ctt_param_ode.py` fits a polynomial feature map, stores the learned
+operator as a TT-matrix, and evaluates it through tinyTT's TT matvec
+contraction. `examples/ctt_multilayer_example.py` demonstrates composed
+residual layers.
 
 ## Notes
 

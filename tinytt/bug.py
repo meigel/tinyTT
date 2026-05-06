@@ -1,15 +1,10 @@
 """
-BUG (Basis-Update and Galerkin) method for TT time evolution.
+BUG (Basis-Update and Galerkin) helpers for TT/MPO time evolution.
 
-This implements the BUG algorithm structure:
-1. Right-to-left sweep (key BUG characteristic, opposite of TDVP)
-2. Local Krylov evolution
-3. SVD truncation
-
-Note: Full BUG with QR-based basis update is not implemented due to
-tinygrad's einsum requiring exact dimension matching. The QR expansion
-changes bond dimensions during sweep, causing environment building to fail.
-The current implementation captures the main BUG characteristic (sweep direction).
+The public :func:`bug` routine performs a rank-adaptive BUG-style step for
+linear MPO dynamics: local basis updates expand TT bonds from projected local
+evolution residuals, QR retractions keep the new bases well conditioned, and a
+Galerkin sweep evolves the tensor in the expanded basis before truncation.
 """
 
 from __future__ import annotations
@@ -17,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 import tinytt._backend as tn
 from tinytt._tt_base import TT
-from tinytt._decomposition import SVD, rank_chop
+from tinytt._decomposition import QR
 
 
 def _update_left_env(L, A, W):
@@ -33,6 +28,12 @@ def _update_right_env(R, A, W):
 def _project_site(L, R, W, ket):
     """Apply effective Hamiltonian to local tensor."""
     return tn.einsum('laL,apqA,rAR,lpr->LqR', L, W, R, ket)
+
+
+def _scalar(val):
+    if tn.is_tensor(val):
+        return float(val.numpy().item())
+    return float(val)
 
 
 def _build_left_envs(cores, mpo):
@@ -96,6 +97,74 @@ def _evolve_local(theta, apply_fn, dt, max_dense=256, krylov_dim=20, krylov_tol=
     return tn.tensor(vec_new, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
 
 
+def _zeros(shape, like):
+    return tn.zeros(shape, dtype=like.dtype, device=like.device)
+
+
+def _orthogonalize_left_bond(cores, i):
+    """Left-orthogonalize core i and absorb the R factor into core i + 1."""
+    core = cores[i]
+    r_left, n_i, r_right = core.shape
+    mat = tn.reshape(core, [r_left * n_i, r_right])
+    q, rfac = QR(mat)
+    new_rank = q.shape[1]
+    cores[i] = tn.reshape(q, [r_left, n_i, new_rank])
+    cores[i + 1] = tn.einsum("ab,bnr->anr", rfac, cores[i + 1])
+
+
+def _orthogonalize_right_bond(cores, i):
+    """Right-orthogonalize core i and absorb the factor into core i - 1."""
+    core = cores[i]
+    r_left, n_i, r_right = core.shape
+    mat = tn.reshape(tn.permute(core, [1, 2, 0]), [n_i * r_right, r_left])
+    q, rfac = QR(mat)
+    new_rank = q.shape[1]
+    cores[i] = tn.permute(tn.reshape(q, [n_i, r_right, new_rank]), [2, 0, 1])
+    cores[i - 1] = tn.einsum("lnr,ar->lna", cores[i - 1], rfac)
+
+
+def _expand_right_bond(cores, i, residual):
+    """Expand bond i|i+1 with a local residual and QR-retract the new basis."""
+    r_left, n_i, r_right = cores[i].shape
+    max_extra = max(0, min(int(residual.shape[2]), int(cores[i + 1].shape[0])))
+    if max_extra == 0:
+        return False
+
+    delta = residual[:, :, :max_extra]
+    scale = max(_scalar(tn.linalg.norm(delta)), 1.0)
+    delta = delta / scale
+    cores[i] = tn.cat([cores[i], delta], dim=2)
+
+    next_core = cores[i + 1]
+    pad = _zeros((max_extra, next_core.shape[1], next_core.shape[2]), next_core)
+    cores[i + 1] = tn.cat([next_core, pad], dim=0)
+    _orthogonalize_left_bond(cores, i)
+    return cores[i].shape[2] > r_right
+
+
+def _expand_left_bond(cores, i, residual):
+    """Expand bond i-1|i with a local residual and QR-retract the new basis."""
+    r_left, n_i, r_right = cores[i].shape
+    max_extra = max(0, min(int(residual.shape[0]), int(cores[i - 1].shape[2])))
+    if max_extra == 0:
+        return False
+
+    delta = residual[:max_extra, :, :]
+    scale = max(_scalar(tn.linalg.norm(delta)), 1.0)
+    delta = delta / scale
+    cores[i] = tn.cat([cores[i], delta], dim=0)
+
+    prev_core = cores[i - 1]
+    pad = _zeros((prev_core.shape[0], prev_core.shape[1], max_extra), prev_core)
+    cores[i - 1] = tn.cat([prev_core, pad], dim=2)
+    _orthogonalize_right_bond(cores, i)
+    return cores[i].shape[0] > r_left
+
+
+def _copy_back(dst, src):
+    dst.cores = [c.clone() for c in src.cores]
+
+
 def _krylov_exp(matvec, vec, dt, krylov_dim, tol, complex_phase):
     """Krylov subspace exponentiation."""
     n = vec.shape[0]
@@ -143,13 +212,11 @@ def _krylov_exp(matvec, vec, dt, krylov_dim, tol, complex_phase):
     return out.real if not complex_phase else out
 
 
-def bug(state, mpo, dt, threshold=1e-10, max_bond_dim=1024, numiter_lanczos=25):
-    """BUG time evolution.
+def bug_like_sweep(state, mpo, dt, threshold=1e-10, max_bond_dim=1024, numiter_lanczos=25):
+    """Right-to-left local-evolution sweep.
     
-    Implements BUG algorithm:
-    1. Right-to-left sweep (key BUG characteristic, opposite of TDVP)
-    2. Local Krylov evolution
-    3. SVD truncation at end
+    This is not the full BUG algorithm. It performs local Krylov evolution in a
+    right-to-left sweep and then truncates by SVD.
     
     Args:
         state: Initial TT state (modified in place).
@@ -162,9 +229,6 @@ def bug(state, mpo, dt, threshold=1e-10, max_bond_dim=1024, numiter_lanczos=25):
     num_sites = len(mpo.cores)
     if num_sites != len(state.cores):
         raise ValueError("State and Hamiltonian must have same number of sites")
-    
-    dtype = state.cores[0].dtype
-    device = state.cores[0].device
     
     cores = [c.clone() for c in state.cores]
     
@@ -187,4 +251,84 @@ def bug(state, mpo, dt, threshold=1e-10, max_bond_dim=1024, numiter_lanczos=25):
     
     state = TT(cores)
     state = state.round(eps=threshold, rmax=max_bond_dim)
-    state.cores = [c.clone() for c in state.cores]
+    return state
+
+
+def bug(state, mpo, dt, threshold=1e-10, max_bond_dim=1024, numiter_lanczos=25):
+    """Evolve a TT state with a rank-adaptive BUG step.
+
+    The implementation is for linear MPO dynamics in imaginary time. It uses
+    local residuals from projected site evolutions to update neighbouring TT
+    bases, QR-retracts the expanded bases, performs a Galerkin local evolution
+    sweep in the updated bases, and truncates to ``max_bond_dim``.
+
+    The input ``state`` is updated in place for compatibility and the evolved
+    TT is also returned.
+    """
+    num_sites = len(mpo.cores)
+    if num_sites != len(state.cores):
+        raise ValueError("State and Hamiltonian must have same number of sites")
+    if state.is_ttm or not mpo.is_ttm:
+        raise ValueError("state must be a TT vector and mpo must be a TT-matrix")
+
+    if isinstance(max_bond_dim, int):
+        rmax = [1] + [max_bond_dim] * (num_sites - 1) + [1]
+    else:
+        rmax = max_bond_dim
+
+    cores = [c.clone() for c in state.cores]
+
+    # Basis update: expand bonds from residual directions generated by local
+    # projected evolution, then QR-retract the expanded bases.
+    for direction in ("lr", "rl"):
+        indices = range(num_sites - 1) if direction == "lr" else range(num_sites - 1, 0, -1)
+        for i in indices:
+            left_envs = _build_left_envs(cores, mpo)
+            right_envs = _build_right_envs(cores, mpo)
+            theta = cores[i]
+
+            def apply_heff(x, site=i, L=left_envs, R=right_envs):
+                return _project_site(L[site], R[site + 1], mpo.cores[site], x)
+
+            theta_new = _evolve_local(
+                theta,
+                apply_heff,
+                dt,
+                max_dense=256,
+                krylov_dim=numiter_lanczos,
+            )
+            residual = theta_new - theta
+            residual_norm = _scalar(tn.linalg.norm(residual))
+            theta_norm = max(_scalar(tn.linalg.norm(theta)), 1.0)
+            if residual_norm <= threshold * theta_norm:
+                continue
+
+            if direction == "lr":
+                if cores[i].shape[2] < rmax[i + 1]:
+                    _expand_right_bond(cores, i, residual)
+            else:
+                if cores[i].shape[0] < rmax[i]:
+                    _expand_left_bond(cores, i, residual)
+
+    # Galerkin evolution in the expanded bases.
+    left_envs = _build_left_envs(cores, mpo)
+    right_envs = _build_right_envs(cores, mpo)
+    for i in range(num_sites):
+        theta = cores[i]
+
+        def apply_heff(x, site=i):
+            return _project_site(left_envs[site], right_envs[site + 1], mpo.cores[site], x)
+
+        cores[i] = _evolve_local(
+            theta,
+            apply_heff,
+            dt,
+            max_dense=256,
+            krylov_dim=numiter_lanczos,
+        )
+        left_envs = _build_left_envs(cores, mpo)
+        right_envs = _build_right_envs(cores, mpo)
+
+    evolved = TT(cores).round(eps=threshold, rmax=rmax)
+    _copy_back(state, evolved)
+    return evolved

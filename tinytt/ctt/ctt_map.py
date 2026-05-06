@@ -1,9 +1,8 @@
 """
-Basic Conditional Triangular TT Map prototype.
+Legacy NumPy helpers for conditional triangular maps.
 
-This module provides a simple single-layer TT map with parameter conditioning,
-representing a transport map T(a, μ) where a is the latent variable and μ
-is a high-dimensional parameter.
+These classes are retained as small dense baselines. For TT-matrix velocity
+fields and autograd training, prefer ``tinytt.ctt.ctt_tinygrad``.
 """
 
 import numpy as np
@@ -12,7 +11,7 @@ import tinytt as tt
 
 class TTMap:
     """
-    Simple affine transport map using dense matrices (placeholder).
+    Simple affine transport map using dense matrices.
     
     Represents a map T(a, μ) → x where:
     - a: latent variable (e.g., from reference distribution)
@@ -22,9 +21,8 @@ class TTMap:
     The map has triangular structure: (x, μ) → (T(x, μ), μ)
     i.e., parameter μ is not transformed, only the state x.
     
-    NOTE: Despite the name, this does NOT use Tensor Train decomposition.
-    The forward pass is a dense affine transform x = a + W@μ + b.
-    The forward() docstring explicitly calls this a "placeholder for full TT evaluation".
+    This legacy baseline does not use Tensor Train decomposition. The forward
+    pass is a dense affine transform x = a + W@μ + b.
     """
     
     def __init__(self, d, p, ranks=None, feature_fn=None):
@@ -70,8 +68,8 @@ class TTMap:
         """
         Create simple TT cores for a linear map.
         
-        This is a prototype: each output dimension gets a simple TT
-        approximating a linear map from features to x.
+        Each output dimension gets a small TT approximating a linear map from
+        features to x.
         """
         cores = []
         
@@ -97,9 +95,6 @@ class TTMap:
         Returns:
             x: transported state, same shape as latent
         """
-        # Simple prototype: x = a + f(mu) where f is learned
-        # In full version, this would use TT matrix-vector multiplication
-        
         if isinstance(a, np.ndarray):
             # Handle batch dimension
             if a.ndim == 1:
@@ -109,15 +104,12 @@ class TTMap:
             else:
                 single = False
                 
-            # Simple affine transform: x = a + W @ mu + b
-            # This is a placeholder for full TT evaluation
             batch_size = a.shape[0]
             
             # Expand mu to match batch
             if mu.shape[0] == 1 and batch_size > 1:
                 mu = np.tile(mu, (batch_size, 1))
             
-            # Simple linear map (placeholder for TT)
             x = a + 0.5 * (mu @ self.W_dense.T) + self.b_bias
             
             if single:
@@ -313,17 +305,15 @@ class TriangularResidualLayer:
     
 class TTVelocityField:
     """
-    Velocity field backed by a dense matrix (wrapped as single-core TT-matrix).
+    Legacy velocity field backed by a single-core TT-matrix.
     
     Represents Ψ(x, μ) where:
     - x: state variable (d-dimensional)
     - μ: parameter (p-dimensional) 
     - output: velocity (d-dimensional)
     
-    NOTE: Despite the name, this is NOT a proper multi-core TT velocity field.
-    The weight matrix is a single-core TT-matrix (equivalent to a dense matrix),
-    and _tt_matvec() materialises it to dense before multiplying. True TT-matrix
-    matvec would use dense_matvec() with multiple cores.
+    For a proper multi-core TT velocity field, use
+    ``ctt_tinygrad.TriangularResidualLayerTTNative``.
     """
     
     def __init__(self, d, p, ranks=None, n_features=None, eps=1e-8):
@@ -346,9 +336,6 @@ class TTVelocityField:
         
         # Output dimension
         self.output_dim = d
-        
-        # For prototype: use dense matrix with TT structure
-        # Full TT would be: input_dim -> output_dim matrix in TT format
         
         if n_features is None:
             # Linear velocity: Ψ(x, μ) = W @ [x; μ]
@@ -378,7 +365,6 @@ class TTVelocityField:
         d, p = self.d, self.p
         total_in = d + p
         
-        # For prototype, create a dense matrix and wrap in TT
         W_dense = np.random.randn(d, total_in) * 0.01
         
         # Convert to TT using tinytt
@@ -435,7 +421,6 @@ class TTVelocityField:
     def _apply_features(self, z):
         """Apply nonlinear feature map."""
         # Simple polynomial features: [z, z^2, sin(z), ...]
-        # For prototype: just use z itself + squared
         return np.concatenate([z, z ** 2], axis=1)
     
     def _tt_matvec(self, z):
@@ -443,8 +428,6 @@ class TTVelocityField:
         # z has shape (batch, input_dim)
         # We need to compute v = z @ W.T where W is TT-matrix
         
-        # For prototype, just convert to dense and compute
-        # Full implementation would use TT matvec
         W = self.tt_matrix.full()
         if hasattr(W, 'numpy'):
             W = W.numpy()
@@ -710,7 +693,7 @@ class LinearTTMap(TTMap):
         # Create TT matrix for A(μ) - maps a to x
         # Shape: (d, d) for each μ, but we parameterize by μ
         
-        # For prototype: use dense matrices
+        # Legacy dense baseline parameters.
         self.A_dense = np.random.randn(d, d) * 0.1
         self.B_dense = np.random.randn(d, p) * 0.1  # parameter coupling
         self.b_bias = np.random.randn(d) * 0.1

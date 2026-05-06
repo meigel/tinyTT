@@ -4,8 +4,14 @@ Tests for CTT (Conditional Triangular Tensor Train) module.
 
 import numpy as np
 import pytest
-from tinytt.ctt import TTMap, LinearTTMap, TriangularResidualLayer, characteristic_matching_loss
+from tinytt.ctt import (
+    TTMap,
+    LinearTTMap,
+    TriangularResidualLayer,
+    characteristic_matching_loss,
+)
 from tinytt.ctt.ctt_map import ComposedCTTMAP
+from tinytt.ctt.training import flow_matching_loss, wasserstein_2_1d, wasserstein_evaluation
 
 try:
     from tinygrad import Tensor
@@ -13,6 +19,7 @@ try:
         ComposedCTTMAPTG,
         TriangularResidualLayerTG,
         TriangularResidualLayerTT,
+        TriangularResidualLayerTTNative,
         train_ctt_tinygrad,
     )
     HAS_TINYGRAD_CTT = True
@@ -220,6 +227,53 @@ class TestCharacteristicMatchingLoss:
         assert loss < 1e-10
 
 
+class TestFlowMatchingLoss:
+    """Tests for CTT training/evaluation metrics."""
+
+    def test_straight_line_flow_zero_for_exact_velocity(self):
+        rng = np.random.default_rng(0)
+        a0 = rng.normal(size=(8, 2))
+        a1 = a0 + rng.normal(size=(8, 2)) * 0.2
+        mu = rng.normal(size=(8, 2))
+
+        def exact_velocity(t, z_t, mu_t):
+            del t, z_t, mu_t
+            return a1 - a0
+
+        loss = flow_matching_loss(exact_velocity, a0, a1, mu, n_samples=4, rng=rng)
+        assert loss < 1e-14
+
+    def test_straight_line_flow_penalizes_wrong_velocity(self):
+        rng = np.random.default_rng(1)
+        a0 = rng.normal(size=(8, 2))
+        a1 = a0 + 1.0
+        mu = rng.normal(size=(8, 2))
+
+        def zero_velocity(t, z_t, mu_t):
+            del t, mu_t
+            return np.zeros_like(z_t)
+
+        loss = flow_matching_loss(zero_velocity, a0, a1, mu, n_samples=4, rng=rng)
+        assert loss > 0.5
+
+    def test_wasserstein_2_1d_sorts_empirical_samples(self):
+        x = np.array([3.0, 1.0, 2.0])
+        y = np.array([2.0, 4.0, 1.0])
+        expected = np.sqrt(((1.0 - 1.0) ** 2 + (2.0 - 2.0) ** 2 + (3.0 - 4.0) ** 2) / 3.0)
+        assert np.isclose(wasserstein_2_1d(x, y), expected)
+
+    def test_wasserstein_evaluation_rejects_multidimensional_rmse(self):
+        class IdentityModel:
+            def forward(self, a, mu):
+                del mu
+                return a
+
+        a = np.zeros((4, 2))
+        mu = np.zeros((4, 1))
+        with pytest.raises(NotImplementedError):
+            wasserstein_evaluation(IdentityModel(), a, mu, lambda n: np.zeros((n, 2)))
+
+
 class TestIntegration:
     """Integration tests combining components."""
     
@@ -395,6 +449,29 @@ class TestTTVelocityField:
         J = vf.get_jacobian_x(x, mu)
         
         assert J.shape == (2, 2)
+
+
+@pytest.mark.skipif(not HAS_TINYGRAD_CTT, reason="tinygrad CTT not available")
+class TestNativeTTVelocityField:
+    def test_native_tt_layer_uses_multiple_tt_matrix_cores(self):
+        layer = TriangularResidualLayerTTNative(
+            h=0.1,
+            d=4,
+            p=4,
+            tt_rank=2,
+            mode_out=[2, 2],
+            mode_in=[2, 4],
+        )
+
+        assert len(layer.cores) == 2
+        assert all(len(core.shape) == 4 for core in layer.cores)
+
+        x = Tensor.randn(3, 4)
+        mu = Tensor.randn(3, 4)
+        y, mu_out = layer.forward(x, mu)
+
+        assert y.shape == (3, 4)
+        assert mu_out.shape == (3, 4)
 
 
 @pytest.mark.skipif(not HAS_TINYGRAD_CTT, reason="tinygrad CTT not available")
