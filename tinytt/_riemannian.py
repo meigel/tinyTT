@@ -62,13 +62,15 @@ def _qr_move_lr(cores: list, pos: int, preserve_rank: bool = False) -> list:
     k = min(r_left * n, r_right)
     
     if preserve_rank and k < r_right:
-        # Rank would shrink; preserve it by padding with random noise
-        pad = 1e-10 * tn.randn((r_left * n, r_right - k), dtype=core.dtype, device=core.device)
-        q_padded = tn.cat([q[:, :k], pad], dim=1)
-        # Re-orthogonalise the padded matrix
-        q_padded, _ = tn.linalg.qr(q_padded)
-        cores[pos] = q_padded[:, :r_right].reshape(r_left, n, r_right)
-        # Absorb R (padded with zeros) into the next core
+        # Rank would shrink; preserve it by extending Q with orthogonal
+        # random directions from the nullspace.
+        q_k = q[:, :k]                                      # (r_left*n, k)
+        pad = 1e-8 * tn.randn((r_left * n, r_right - k), dtype=core.dtype, device=core.device)
+        pad = pad - q_k @ (q_k.T @ pad)
+        q_null, _ = tn.linalg.qr(pad)
+        q_full = tn.cat([q_k, q_null[:, :r_right - k]], dim=1)  # (r_left*n, r_right)
+        cores[pos] = q_full.reshape(r_left, n, r_right)
+        # Absorb R (padded to full rank) into the next core
         r_pad = tn.zeros((r_right, r_right), dtype=core.dtype, device=core.device)
         r_pad[:k, :] = r[:k, :]
         nxt = cores[pos + 1]
@@ -124,12 +126,20 @@ def _qr_move_rl(cores: list, pos: int, preserve_rank: bool = False) -> list:
     k = min(r_left, n * r_right)
     
     if preserve_rank and k < r_left:
-        # Rank would shrink; preserve it by padding with random noise
-        pad = 1e-10 * tn.randn((n * r_right, r_left - k), dtype=core.dtype, device=core.device)
-        q_padded = tn.cat([q[:, :k], pad], dim=1)
-        q_padded, _ = tn.linalg.qr(q_padded)
-        cores[pos] = q_padded[:, :r_left].T.reshape(r_left, n, r_right)
-        # Absorb R (padded) into the previous core
+        # Rank would shrink; preserve it.
+        # We cannot simply pad Q and re-QR because QR truncates again.
+        # Instead, extend q with random orthogonal directions by computing
+        # a nullspace basis via QR of the padded matrix's complement.
+        q_k = q[:, :k]                                      # (n*r_right, k)
+        # Random matrix to fill the remaining rank
+        pad = 1e-8 * tn.randn((n * r_right, r_left - k), dtype=core.dtype, device=core.device)
+        # Subtract projection onto q_k's span
+        pad = pad - q_k @ (q_k.T @ pad)
+        # QR of the residual gives the nullspace basis
+        q_null, _ = tn.linalg.qr(pad)
+        q_full = tn.cat([q_k, q_null[:, :r_left - k]], dim=1)  # (n*r_right, r_left)
+        cores[pos] = q_full.T.reshape(r_left, n, r_right)
+        # Absorb R (padded to full rank) into the previous core
         r_pad = tn.zeros((r_left, r_left), dtype=core.dtype, device=core.device)
         r_pad[:k, :] = r[:k, :]
         prv = cores[pos - 1]
