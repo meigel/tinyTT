@@ -44,8 +44,13 @@ from ._riemannian import (
 )
 from ._iterative_solvers import cg
 from ._linesearch import armijo_ls
-from ._functional import monomial_features, legendre_features, hermite_features
+from ._functional import (
+    monomial_features, legendre_features, hermite_features,
+    LegendreFeatures, HermiteFeatures, MonomialFeatures,
+)
 from .functional_tt import FunctionalTT, random_ftt
+from . import regression
+from .regression import als_regression
 
 import tinytt._riemannian as riemannian
 import tinytt._linesearch as linesearch
@@ -94,11 +99,16 @@ __all__ = [
     'monomial_features',
     'legendre_features',
     'hermite_features',
+    'LegendreFeatures',
+    'HermiteFeatures',
+    'MonomialFeatures',
     'FunctionalTT',
     'random_ftt',
     'riemannian',
     'linesearch',
     'functional',
+    'regression',
+    'als_regression',
 ]
 
 # keep alias for typo
