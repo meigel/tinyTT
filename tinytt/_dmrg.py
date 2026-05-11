@@ -10,7 +10,9 @@ from tinytt._decomposition import rank_chop, QR, SVD
 from tinytt._extras import random
 
 
-def dmrg_matvec(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4, verb=False, use_cpp=True):
+def dmrg_matvec(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4, verb=False, use_cpp=False):
+    # `use_cpp` is accepted for backwards compatibility but ignored: this build
+    # ships a pure-Python implementation only.
     return dmrg_matvec_python(A, x, y0, nswp, eps, rmax, kickrank, verb)
 
 
@@ -137,7 +139,9 @@ def dmrg_matvec_python(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4
     return TT(y_cores)
 
 
-def dmrg_hadamard(x, y, z0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4, verb=False, use_cpp=True):
+def dmrg_hadamard(x, y, z0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4, verb=False, use_cpp=False):
+    # `use_cpp` is accepted for backwards compatibility but ignored: this build
+    # ships a pure-Python implementation only.
     return dmrg_hadamard_python(x, y, z0, nswp, eps, rmax, kickrank, verb)
 
 

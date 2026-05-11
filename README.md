@@ -5,12 +5,15 @@ Tensor-Train (TT) tensors, operators, and solvers built on top of `tinygrad`.
 ## Highlights
 
 - TT tensors and TT-matrices on a `tinygrad` backend.
-- CPU is the default execution path; optional `tinygrad` devices such as CUDA,
-  Metal, or OpenCL can be selected with `TINYTT_DEVICE`.
+- Runs on every `tinygrad` device — CPU, CUDA, Metal, OpenCL — selected with
+  `TINYTT_DEVICE`. A handful of routines fall back to NumPy on CPU (see
+  *Backend & NumPy Fallbacks* below); cores stay on the configured device
+  outside those calls.
 - **Core solvers**: ALS, AMEn, DMRG, TDVP for time evolution.
 - **Streaming TT**: Randomized one-pass approximation (STTA) for large or streaming data.
 - **QTT**: Quantized Tensor Train (QTT) format for high-dimensional problems.
 - **CTT**: Conditional Triangular Tensor transport maps for uncertainty quantification.
+- **Riemannian TT**: orthogonalisation, tangent-space projection, and retraction on the fixed-rank TT manifold (TT-native, no full-tensor materialisation).
 - Interpolation, autograd helpers, utility functions, and a small functional-TT layer for basis-based models.
 
 ## Repository Layout
@@ -107,7 +110,7 @@ Experimental functional subset (supported boundary):
 - In the current implementation, vector-valued differential operators work when exactly one TT boundary rank is nontrivial; the case where both boundary ranks carry output channels is still unsupported.
 - In `als_regression`, `ranks` means only the internal TT ranks; the output dimension comes from `Y`.
 - `als_continuity_fit` adds a small PDE-oriented path for stationary continuity fits of the form `<F_grad(x), V(x)> + div(V)(x) ~= y(x)`.
-- This subset is intentionally explicit and CPU-first. It is a compact replacement for a few `vectorTT` workflows, not a port of the original monolithic architecture.
+- This subset is intentionally explicit and minimal. It is a compact replacement for a few `vectorTT` workflows, not a port of the original monolithic architecture.
 
 Representative examples:
 
@@ -123,8 +126,10 @@ Representative examples:
 - `examples/tt_solvers.py`, `examples/tt_autograd.py`: solvers and differentiation.
 - `examples/mpo_ising_tdvp.py`: minimal MPO + TDVP sweep.
 - `examples/stta_qtt_example.py`: one-pass QTT construction for functions.
-- `examples/ctt_param_ode.py`, `examples/ctt_multilayer_example.py`: CTT demos.
+- `examples/ctt_param_ode.py`, `examples/ctt_multilayer_example.py`: CTT demos with hand-rolled backprop (legacy).
+- `examples/ctt_tinygrad_example.py`: recommended CTT path — `ComposedCTTMAPTG` + `train_ctt_tinygrad` (tinygrad autograd).
 - `examples/heat_equation.py`: QTT heat equation solver.
+- `examples/riemannian_basics.py`: orthogonalisation, tangent projection, and Riemannian gradient descent on the fixed-rank TT manifold.
 
 Run examples either after `pip install -e .` or from a checkout with `PYTHONPATH=.`.
 For example: `PYTHONPATH=. python3 examples/functional_tt.py`.
@@ -203,16 +208,40 @@ Experimental module for building conditional transport maps:
 - Training utilities
 - See `examples/ctt_param_ode.py` and `examples/ctt_multilayer_example.py`
 
-## NumPy Fallbacks
+### Riemannian TT (`tinytt.riemannian`)
 
-Several routines still rely on NumPy for stability or because `tinygrad` does
-not provide a matching primitive. These paths run on CPU and can dominate
-runtime on accelerator backends:
+Operations on the fixed-rank TT manifold, all implemented core-by-core
+without expanding to dense:
+
+- `left_orthogonalize(x)` / `right_orthogonalize(x)` / `mixed_canonical(x, k)`:
+  gauge transforms placing the orthogonality centre at a chosen site.
+- `tangent_project(x, Z)`: orthogonal projection of `Z` (TT or dense) onto
+  the tangent space at `x`.
+- `riemannian_grad(x, grad)`: alias of `tangent_project`.
+- `tt_add(a, b)` / `tt_scale(t, s)`: exact TT addition and scalar scaling
+  without materialising the dense tensor.
+- `retract(x, dx, step=1.0, rmax=None)`: TT-native step `x + step * dx`
+  followed by SVD truncation back to a target rank.
+- `tangent_norm(dx)`: Frobenius norm of a tangent (or any) TT.
+
+See `examples/riemannian_basics.py` for a Riemannian gradient-descent demo.
+
+## Backend & NumPy Fallbacks
+
+Most operations dispatch through `tinytt._backend` and run on whichever
+`tinygrad` device you configured (CPU, CUDA, Metal, OpenCL). The exceptions
+below currently fall back to NumPy on CPU; cores are moved back to the
+original device on return, but these calls can dominate the runtime on
+accelerator backends:
 
 - SVD in `tinytt/_decomposition.py` defaults to NumPy.
 - `tinytt/interpolate.py` uses NumPy for `maxvol` and dense solves.
 - `tinytt/uq_adf.py` uses NumPy dense linear algebra and special-function helpers.
 - Some solver helpers use NumPy solves on small dense systems.
+- `tinytt/riemannian.py` does its core-by-core contractions in NumPy (the cores themselves stay TT-shaped; nothing is unfolded to the full tensor).
+- `TT` arithmetic operators (`+`, `-`, `*`, scalar `*`, `/`) are TT-native: addition uses block-stacking, Hadamard product uses the Khatri-Rao formula on each core, and scalar scaling rescales the first core. The result is exact but unrounded — call `.round(eps)` to control rank growth. Elementwise division by another TT (no exact low-rank form) is the only remaining dense fallback.
 
-This makes tinyTT best described as CPU-first today, with partial accelerator
-support where the backend path stays inside `tinygrad`.
+This makes tinyTT primarily backend-driven: the configured `tinygrad` device
+sees most of the work, with NumPy used as a stability/coverage shim for the
+items above.
+

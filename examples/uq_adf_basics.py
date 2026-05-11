@@ -1,5 +1,12 @@
+"""
+Minimal UQ-ADF (Uncertainty Quantification via Alternating Direction Fitting).
+
+Recovers the constant function f(y) = 2.5 from random {y, f(y)} samples on
+[-1, 1]^2 in a Legendre TT basis, then evaluates the recovered TT at fresh
+sample points and reports the residual error.
+"""
+
 import numpy as np
-import numpy.polynomial.legendre as leg
 
 import tinytt._backend as tn
 from tinytt import uq_adf as uq
@@ -7,6 +14,7 @@ from tinytt import uq_adf as uq
 
 rng = np.random.default_rng(0)
 constant = 2.5
+# Build a measurement set: 20 samples of the constant function.
 measurements = uq.UQMeasurementSet()
 for _ in range(20):
     y = rng.uniform(-1.0, 1.0, size=2)
@@ -22,22 +30,12 @@ result = uq.uq_ra_adf(
     device=None,
     orthonormal=False,
 )
-cores = [c.numpy() for c in result.cores]
-
-
-def eval_tt(y):
-    value = np.asarray(cores[0][0, 0, :], dtype=float)
-    for dim, yi in enumerate(y, start=1):
-        core = cores[dim]
-        basis_vals = np.array([leg.legval(yi, [0] * k + [1]) for k in range(core.shape[1])], dtype=float)
-        tmp = np.tensordot(core, basis_vals, axes=([1], [0]))
-        value = value @ tmp
-    return float(np.squeeze(value))
-
+# `uq.evaluate` evaluates the fitted TT pointwise in the same basis used for
+# fitting; no need to hand-roll Legendre matvecs anymore.
 errors = []
 for _ in range(20):
     y = rng.uniform(-1.0, 1.0, size=2)
-    errors.append(abs(eval_tt(y) - constant))
+    errors.append(abs(uq.evaluate(result, y, uq.PolynomBasis.Legendre, orthonormal=False) - constant))
 
 print('mean evaluation error:', float(np.mean(errors)))
 print('max evaluation error:', float(np.max(errors)))

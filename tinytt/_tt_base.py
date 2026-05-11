@@ -207,43 +207,157 @@ class TT:
             output += 'R = ' + str(self.__R) + '\n'
         return output
 
-    def _binary_full(self, other, op, reverse=False):
-        if np.isscalar(other) or (tn.is_tensor(other) and tn.numel(other) == 1):
-            full = op(self.full(), other) if not reverse else op(other, self.full())
-            return TT(full, shape=self._shape_arg() if self.__is_ttm else None)
+    # ------------------------------------------------------------------
+    # TT-native arithmetic helpers (no full-tensor materialisation)
+    # ------------------------------------------------------------------
+
+    def _scalar_value(self, x):
+        if np.isscalar(x):
+            return float(x)
+        return float(tn.tensor(x).numpy().item())
+
+    def _scaled_first_core(self, scalar):
+        cores_new = [c.clone() for c in self.cores]
+        if cores_new:
+            cores_new[0] = cores_new[0] * float(scalar)
+        return TT(cores_new)
+
+    def _constant_tt(self, scalar):
+        """A constant TT with the same shape (and is_ttm-ness) as self, value=scalar."""
+        ref = self.cores[0]
+        cores_new = []
+        d = len(self.__N)
+        if self.__is_ttm:
+            for i in range(d):
+                cores_new.append(tn.ones([1, self.__M[i], self.__N[i], 1], dtype=ref.dtype, device=ref.device))
+        else:
+            for i in range(d):
+                cores_new.append(tn.ones([1, self.__N[i], 1], dtype=ref.dtype, device=ref.device))
+        if cores_new:
+            cores_new[0] = cores_new[0] * float(scalar)
+        return TT(cores_new)
+
+    def _tt_native_add(self, other):
+        """Exact TT addition by block-stacking cores (rank a+b at internal sites)."""
+        d = len(self.__N)
+        new_cores = []
+        for k in range(d):
+            ac = self.cores[k]
+            bc = other.cores[k]
+            ref = ac
+            if self.__is_ttm:
+                ra_l, m, n, ra_r = ac.shape
+                rb_l, _, _, rb_r = bc.shape
+                if k == 0:
+                    block = tn.cat([ac, bc], dim=-1)
+                elif k == d - 1:
+                    block = tn.cat([ac, bc], dim=0)
+                else:
+                    top = tn.cat([ac, tn.zeros([ra_l, m, n, rb_r], dtype=ref.dtype, device=ref.device)], dim=-1)
+                    bot = tn.cat([tn.zeros([rb_l, m, n, ra_r], dtype=ref.dtype, device=ref.device), bc], dim=-1)
+                    block = tn.cat([top, bot], dim=0)
+            else:
+                ra_l, n, ra_r = ac.shape
+                rb_l, _, rb_r = bc.shape
+                if k == 0:
+                    block = tn.cat([ac, bc], dim=-1)
+                elif k == d - 1:
+                    block = tn.cat([ac, bc], dim=0)
+                else:
+                    top = tn.cat([ac, tn.zeros([ra_l, n, rb_r], dtype=ref.dtype, device=ref.device)], dim=-1)
+                    bot = tn.cat([tn.zeros([rb_l, n, ra_r], dtype=ref.dtype, device=ref.device), bc], dim=-1)
+                    block = tn.cat([top, bot], dim=0)
+            new_cores.append(block)
+        return TT(new_cores)
+
+    def _tt_native_hadamard(self, other):
+        """Exact TT Hadamard product via Khatri-Rao on each core (rank a*b)."""
+        d = len(self.__N)
+        new_cores = []
+        for k in range(d):
+            ac = self.cores[k]
+            bc = other.cores[k]
+            if self.__is_ttm:
+                ra_l, m, n, ra_r = ac.shape
+                rb_l, _, _, rb_r = bc.shape
+                merged = tn.einsum('amnc,bmnd->abmncd', ac, bc)
+                new_cores.append(tn.reshape(merged, [ra_l * rb_l, m, n, ra_r * rb_r]))
+            else:
+                ra_l, n, ra_r = ac.shape
+                rb_l, _, rb_r = bc.shape
+                merged = tn.einsum('anc,bnd->abncd', ac, bc)
+                new_cores.append(tn.reshape(merged, [ra_l * rb_l, n, ra_r * rb_r]))
+        return TT(new_cores)
+
+    def _check_compatible(self, other):
+        if self.__is_ttm != other.is_ttm:
+            raise IncompatibleTypes('Incompatible data types (make sure both are either TT-matrices or TT-tensors).')
+        if self.__is_ttm and (self.__M != other.M or self.__N != other.N):
+            raise ShapeMismatch('Shapes are incompatible.')
+        if not self.__is_ttm and self.__N != other.N:
+            raise ShapeMismatch('Shapes are incompatible.')
+
+    def _is_scalar_like(self, x):
+        return np.isscalar(x) or (tn.is_tensor(x) and tn.numel(x) == 1)
+
+    def __add__(self, other):
+        if self._is_scalar_like(other):
+            s = self._scalar_value(other)
+            if s == 0.0:
+                return TT([c.clone() for c in self.cores])
+            return self._tt_native_add(self._constant_tt(s))
         if isinstance(other, TT):
-            if self.__is_ttm != other.is_ttm:
-                raise IncompatibleTypes('Incompatible data types (make sure both are either TT-matrices or TT-tensors).')
-            if self.__is_ttm and (self.__M != other.M or self.__N != other.N):
-                raise ShapeMismatch('Shapes are incompatible.')
-            full = op(self.full(), other.full())
+            self._check_compatible(other)
+            return self._tt_native_add(other)
+        raise InvalidArguments('Invalid arguments.')
+
+    def __radd__(self, other):
+        return self.__add__(other)
+
+    def __sub__(self, other):
+        if self._is_scalar_like(other):
+            return self.__add__(-self._scalar_value(other))
+        if isinstance(other, TT):
+            self._check_compatible(other)
+            return self._tt_native_add(other._scaled_first_core(-1.0))
+        raise InvalidArguments('Invalid arguments.')
+
+    def __rsub__(self, other):
+        if self._is_scalar_like(other):
+            return self._scaled_first_core(-1.0).__add__(self._scalar_value(other))
+        raise InvalidArguments('Invalid arguments.')
+
+    def __mul__(self, other):
+        if self._is_scalar_like(other):
+            return self._scaled_first_core(self._scalar_value(other))
+        if isinstance(other, TT):
+            self._check_compatible(other)
+            return self._tt_native_hadamard(other)
+        raise InvalidArguments('Invalid arguments.')
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+    def __truediv__(self, other):
+        if self._is_scalar_like(other):
+            s = self._scalar_value(other)
+            if s == 0.0:
+                raise InvalidArguments('Division by zero.')
+            return self._scaled_first_core(1.0 / s)
+        if isinstance(other, TT):
+            # Elementwise division has no exact low-rank form; fall back to dense.
+            self._check_compatible(other)
+            full = self.full() / other.full()
             shape = self._shape_arg() if self.__is_ttm else None
             return TT(full, shape=shape)
         raise InvalidArguments('Invalid arguments.')
 
-    def __add__(self, other):
-        return self._binary_full(other, lambda a, b: a + b)
-
-    def __radd__(self, other):
-        return self._binary_full(other, lambda a, b: a + b, reverse=True)
-
-    def __sub__(self, other):
-        return self._binary_full(other, lambda a, b: a - b)
-
-    def __rsub__(self, other):
-        return self._binary_full(other, lambda a, b: a - b, reverse=True)
-
-    def __mul__(self, other):
-        return self._binary_full(other, lambda a, b: a * b)
-
-    def __rmul__(self, other):
-        return self._binary_full(other, lambda a, b: a * b, reverse=True)
-
-    def __truediv__(self, other):
-        return self._binary_full(other, lambda a, b: a / b)
-
     def __rtruediv__(self, other):
-        return self._binary_full(other, lambda a, b: a / b, reverse=True)
+        if self._is_scalar_like(other):
+            full = self._scalar_value(other) / self.full()
+            shape = self._shape_arg() if self.__is_ttm else None
+            return TT(full, shape=shape)
+        raise InvalidArguments('Invalid arguments.')
 
     def __neg__(self):
         cores_new = [c.clone() for c in self.cores]
@@ -280,7 +394,7 @@ class TT:
                 return TT(full, shape=other.N)
         raise InvalidArguments('Wrong arguments.')
 
-    def fast_matvec(self, other, eps=1e-12, initial=None, nswp=20, verb=False, use_cpp=True):
+    def fast_matvec(self, other, eps=1e-12, initial=None, nswp=20, verb=False, use_cpp=False):
         if not isinstance(other, TT):
             raise InvalidArguments('Second operand has to be TT object.')
         if not self.__is_ttm or other.is_ttm:

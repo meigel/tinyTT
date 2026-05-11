@@ -1,3 +1,11 @@
+"""
+DMRG-style sweeps for TT operations:
+  - dmrg_hadamard: Hadamard product as a fixed-rank optimisation problem
+  - TT.fast_matvec: TT-matrix * TT-vector via DMRG sweeps
+
+Both keep the result rank under control without forming the dense tensor.
+"""
+
 import numpy as np
 import tinytt as tt
 

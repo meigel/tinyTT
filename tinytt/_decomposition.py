@@ -59,6 +59,12 @@ def SVD(mat):
     """
     Computes the SVD of a matrix.
 
+    Backend selection:
+      * On accelerator devices (CUDA / Metal / OpenCL) the tinygrad SVD is
+        used so the data stays on device.
+      * On CPU the default is NumPy because tinygrad's CPU SVD is currently
+        much slower than LAPACK. Override with ``TINYTT_SVD_BACKEND=tinygrad``.
+
     Args:
         mat (tinygrad.Tensor): the matrix
 

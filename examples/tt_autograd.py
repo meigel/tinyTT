@@ -1,3 +1,10 @@
+"""
+Differentiating through TT cores using tinygrad autograd.
+
+`tt.grad.watch(x)` marks every core of x as a leaf that requires gradients,
+and `tt.grad.grad(val, x)` returns one gradient tensor per core.
+"""
+
 import numpy as np
 import tinytt as tt
 
@@ -6,7 +13,7 @@ rng = np.random.RandomState(4)
 x_full = rng.rand(2, 3, 2).astype(np.float64)
 x = tt.TT(x_full, eps=1e-12)
 
-# Enable gradients for all TT cores.
+# Enable gradients on every core of x.
 tt.grad.watch(x)
 
 val = tt.dot(x, x)

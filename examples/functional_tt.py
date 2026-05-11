@@ -1,3 +1,14 @@
+"""
+Functional TT subset: scalar and vector-valued FunctionalTT models with
+analytical differential operators (grad, jacobian, divergence, laplace),
+followed by ALS regression and a stationary continuity-equation fit.
+
+Layout convention used here:
+  - One 1D basis object per input dimension.
+  - Scalar models have first TT rank = 1 (output_dim = 1).
+  - Vector models have first TT rank = output_dim (e.g. 2 for a 2D field).
+"""
+
 import numpy as np
 
 import tinytt as tt

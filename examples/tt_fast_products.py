@@ -1,3 +1,13 @@
+"""
+Rank-controlled TT products via core-by-core SVD compression:
+  - fast_hadammard:  elementwise (Hadamard) product of two TTs
+  - fast_mv:         TT-matrix * TT-vector
+  - fast_mm:         TT-matrix * TT-matrix
+
+These avoid materialising the dense product and instead truncate to a target
+SVD tolerance (eps).
+"""
+
 import numpy as np
 import tinytt as tt
 

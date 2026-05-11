@@ -39,6 +39,9 @@ from . import truncation
 from . import basis
 from . import functional
 from . import regression
+from . import riemannian
+from . import streaming
+from .streaming import StreamingTT, streaming_tt
 
 __all__ = [
     'TT',
@@ -75,6 +78,10 @@ __all__ = [
     'basis',
     'functional',
     'regression',
+    'riemannian',
+    'streaming',
+    'StreamingTT',
+    'streaming_tt',
 ]
 
 # keep alias for typo

@@ -592,6 +592,44 @@ def uq_adf(measurements, dimensions, basis, targeteps=1e-8, maxitr=1000, device=
     return tinytt.TT(cores)
 
 
+def evaluate(result, y, basis, orthonormal=False):
+    """Pointwise evaluation of a UQ-ADF TT result at coordinate vector y.
+
+    Parameters
+    ----------
+    result : tinytt.TT
+        The TT returned by ``uq_adf`` / ``uq_ra_adf``. The first core is the
+        constant offset; subsequent cores carry one polynomial basis per
+        stochastic dimension.
+    y : sequence of floats
+        Stochastic coordinates, length d (number of stochastic dimensions).
+    basis : PolynomBasis
+        The basis the model was fit in (``PolynomBasis.Legendre`` or
+        ``PolynomBasis.Hermite``).
+    orthonormal : bool
+        Must match the value used during fitting.
+    """
+    cores = [c.numpy() for c in result.cores]
+    if len(y) != len(cores) - 1:
+        raise ValueError(
+            f"y has length {len(y)} but the model expects {len(cores) - 1} stochastic dims."
+        )
+    value = np.asarray(cores[0][0, 0, :], dtype=float)
+    for dim, yi in enumerate(y, start=1):
+        core = cores[dim]
+        degree = core.shape[1]
+        # _basis_matrix expects a 1-d tensor of x values.
+        basis_row = _basis_matrix(
+            tn.tensor(np.asarray([float(yi)], dtype=np.float64), dtype=tn.float64),
+            degree,
+            basis,
+            orthonormal,
+        ).numpy()[0]                          # shape (degree,)
+        tmp = np.tensordot(core, basis_row, axes=([1], [0]))
+        value = value @ tmp
+    return float(np.squeeze(value))
+
+
 def uq_ra_adf(measurements, basis, dimensions, targeteps=1e-8, maxitr=1000, device=None,
               dtype=tn.float64, init_rank=1, init_noise=1e-3, adapt_rank=False,
               rank_increase=2, rank_every=10, rank_noise=1e-3, rank_max=None,

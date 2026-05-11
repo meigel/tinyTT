@@ -1,3 +1,11 @@
+"""
+TT cross interpolation via `tt.interpolate.function_interpolate`.
+
+Two flavours:
+  1. Sample a black-box multivariate function on a TT meshgrid.
+  2. Interpolate a function of an existing TT (e.g. log of a tensor).
+"""
+
 import numpy as np
 
 import tinytt as tt

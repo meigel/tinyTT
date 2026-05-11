@@ -1,3 +1,13 @@
+"""
+Inspect tinyTT's backend defaults and place a TT explicitly on a device.
+
+Shows how `tinytt._backend` reports the default device, dtype, and fp64
+support, and how to construct a TT pinned to a specific device/dtype.
+
+Set `TINYTT_DEVICE=CUDA|METAL|CL|...` before importing tinytt to switch
+the default device for new tensors.
+"""
+
 import tinytt as tt
 import tinytt._backend as tn
 

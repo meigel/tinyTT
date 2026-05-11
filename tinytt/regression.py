@@ -47,9 +47,9 @@ def als_regression(X, Y, bases, ranks=None, sweeps=5, eps=1e-9, rmax=1024, verbo
     return FunctionalTT(cores, bases)
 
 
-def als_regression_multivariate(X, Y, bases, ranks=None, sweeps=5, eps=1e-9, rmax=1024, verbose=False):
-    """Explicit alias for vector-valued FunctionalTT ALS fitting."""
-    return als_regression(X, Y, bases, ranks=ranks, sweeps=sweeps, eps=eps, rmax=rmax, verbose=verbose)
+# Backwards-compatible alias: ``als_regression`` already infers vector vs.
+# scalar output from Y, so the two names refer to the same function.
+als_regression_multivariate = als_regression
 
 
 def als_continuity_fit(X, Y, F_grad, bases, ranks=None, sweeps=5, eps=1e-9, rmax=1024, verbose=False):

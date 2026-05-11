@@ -21,8 +21,9 @@ Use 4-space indentation and follow standard Python style (PEP 8). Prefer
 `snake_case` for functions/variables, `PascalCase` for classes, and
 `UPPER_SNAKE_CASE` for constants. Match existing patterns in the file you are
 editing and keep public APIs documented with concise docstrings. tinyTT is
-CPU-first and real dtype focused; use `tinytt._backend` (`import as tn`) rather
-than reaching into tinygrad directly.
+device-agnostic (everything runs on whatever `tinygrad` device the user
+selected) and real-dtype focused; use `tinytt._backend` (`import as tn`)
+rather than reaching into tinygrad directly.
 
 ## Testing Guidelines
 

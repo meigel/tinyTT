@@ -29,8 +29,15 @@ def _pad_like_torch(x, pad, value=0.0):
 
 
 def _invert(x):
-    inv_np = np.linalg.inv(x.numpy())
-    return tn.tensor(inv_np, dtype=x.dtype, device=x.device)
+    # Stay on the configured device: solve A * Y = I instead of round-tripping
+    # to NumPy via np.linalg.inv.
+    n = x.shape[0]
+    eye = tn.eye(n, dtype=x.dtype, device=x.device)
+    try:
+        return tn.linalg.solve(x, eye)
+    except Exception:
+        inv_np = np.linalg.inv(x.numpy())
+        return tn.tensor(inv_np, dtype=x.dtype, device=x.device)
 
 
 def _local_product(Phi_right, Phi_left, coreA, core, shape, bandA=-1):
@@ -510,10 +517,12 @@ def amen_solve(
     resets=2,
     verbose=False,
     preconditioner=None,
-    use_cpp=True,
+    use_cpp=False,
     band_diagonal=-1,
     use_single_precision=False,
 ):
+    # `use_cpp` is accepted for backwards compatibility but ignored: this build
+    # ships a pure-Python implementation only.
     if not (isinstance(A, TT) and isinstance(b, TT)):
         raise InvalidArguments('A and b must be TT instances.')
     if not (A.is_ttm and not b.is_ttm):

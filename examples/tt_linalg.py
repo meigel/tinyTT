@@ -1,3 +1,12 @@
+"""
+TT linear-algebra helpers: addition/subtraction/scaling, dot product,
+Kronecker product, reshape, permute, concatenate, pad, elementwise divide,
+and diag (vector <-> diagonal TT-matrix).
+
+Each operation goes through the dense path internally for clarity; for
+rank-respecting versions, see tt_fast_products.py and tt_dmrg.py.
+"""
+
 import numpy as np
 import tinytt as tt
 
