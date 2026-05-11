@@ -348,7 +348,7 @@ class TT:
         raise InvalidArguments("Wrong arguments.")
 
     def fast_matvec(
-        self, other, eps=1e-12, initial=None, nswp=20, verb=False, use_cpp=True
+        self, other, eps=1e-12, initial=None, nswp=20, verb=False, use_cpp=False
     ):
         if not isinstance(other, TT):
             raise InvalidArguments("Second operand has to be TT object.")
