@@ -130,3 +130,13 @@ dmypy.json
 # Pyre type checker
 .pyre/
 _build/
+
+# Local Claude Code state and notes
+.claude/
+.omx/
+
+# Generated example plots
+ctt_*.png
+
+# Build artefacts
+tinyTT.egg-info/
