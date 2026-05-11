@@ -1,11 +1,15 @@
 """
-Example: Parametric ODE flow with CTT maps.
+Example: Parametric ODE flow with a *single-layer* LinearTTMap.
 
-This example demonstrates:
-1. Creating a parametric ODE system (simple linear system)
-2. Generating training data from the true dynamics
-3. Training a CTT map to approximate the flow
-4. Evaluating using Wasserstein-like error
+This is intentionally a **misspecified** baseline: the true flow
+``x = (I + t * (A_0 + sum mu_j A_j)) a`` is bilinear in (mu, a), and a
+single LinearTTMap with the form ``x = a A^T + mu B^T + b`` cannot
+represent the bilinear cross term. The MSE will plateau at the best
+affine fit rather than reach 0.
+
+For an architecture that *can* express the flow, see
+``ctt_multilayer_example.py`` (composed residual CTT layers) or
+``ctt_tinygrad_example.py`` (the recommended autograd path).
 """
 
 import numpy as np
@@ -196,7 +200,9 @@ def demo():
     
     # Train
     print("\nTraining...")
-    losses = train_ctt_map(model, a_train, mu_train, x_train, n_epochs=500, lr=0.01)
+    # Conservative learning rate; a higher lr makes a misspecified model
+    # oscillate and visibly diverges in the loss plot.
+    losses = train_ctt_map(model, a_train, mu_train, x_train, n_epochs=500, lr=0.001)
     
     # Final evaluation
     print("\nEvaluating on test set...")

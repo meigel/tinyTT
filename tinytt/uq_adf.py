@@ -73,33 +73,27 @@ def _solve(a, b):
 
 
 def _hermite_matrix(x, degree):
-    x_np = x.numpy()
-    n_samples = x_np.shape[0]
-    out = np.zeros((n_samples, degree), dtype=float)
+    n_samples = x.shape[0]
     if degree == 0:
-        return tn.tensor(out, dtype=x.dtype, device=x.device)
-    out[:, 0] = 1.0
+        return tn.zeros((n_samples, 0), dtype=x.dtype, device=x.device)
     if degree == 1:
-        return tn.tensor(out, dtype=x.dtype, device=x.device)
-    out[:, 1] = x_np
+        return tn.ones((n_samples, 1), dtype=x.dtype, device=x.device)
+    cols = [tn.ones((n_samples,), dtype=x.dtype, device=x.device), x]
     for n in range(1, degree - 1):
-        out[:, n + 1] = x_np * out[:, n] - float(n) * out[:, n - 1]
-    return tn.tensor(out, dtype=x.dtype, device=x.device)
+        cols.append(x * cols[-1] - float(n) * cols[-2])
+    return tn.stack(cols, dim=1)
 
 
 def _legendre_matrix(x, degree):
-    x_np = x.numpy()
-    n_samples = x_np.shape[0]
-    out = np.zeros((n_samples, degree), dtype=float)
+    n_samples = x.shape[0]
     if degree == 0:
-        return tn.tensor(out, dtype=x.dtype, device=x.device)
-    out[:, 0] = 1.0
+        return tn.zeros((n_samples, 0), dtype=x.dtype, device=x.device)
     if degree == 1:
-        return tn.tensor(out, dtype=x.dtype, device=x.device)
-    out[:, 1] = x_np
+        return tn.ones((n_samples, 1), dtype=x.dtype, device=x.device)
+    cols = [tn.ones((n_samples,), dtype=x.dtype, device=x.device), x]
     for n in range(1, degree - 1):
-        out[:, n + 1] = ((2.0 * n + 1.0) * x_np * out[:, n] - n * out[:, n - 1]) / (n + 1.0)
-    return tn.tensor(out, dtype=x.dtype, device=x.device)
+        cols.append(((2.0 * n + 1.0) * x * cols[-1] - n * cols[-2]) / (n + 1.0))
+    return tn.stack(cols, dim=1)
 
 
 def _basis_matrix(x, degree, basis, orthonormal):
@@ -149,198 +143,217 @@ def _move_core_lr(cores, pos):
     return cores
 
 
-def _calc_right_stack(cores, positions):
-    d = len(cores)
-    if d <= 1:
-        return [None] * d
-    n_samples = positions[1].shape[0]
-    right_stack = [None] * d
+# ---------------------------------------------------------------------------
+# Batched helpers: every sample-axis loop has been replaced by a single
+# tn.einsum so the heavy work runs as one kernel per stage on accelerator
+# backends. The Python list-of-tensors interface is retained at the call
+# boundary by exposing batched stacks of shape (n_samples, ...).
+# ---------------------------------------------------------------------------
 
-    for core_pos in range(d - 1, 0, -1):
-        right_stack[core_pos] = [None] * n_samples
-        core = cores[core_pos]
-        core_sh = core.permute(1, 0, 2)
-        for j in range(n_samples):
-            p = positions[core_pos][j]
-            tmp = tn.tensordot(p, core_sh, axes=([0], [0]))
-            if core_pos < d - 1:
-                right_stack[core_pos][j] = tmp @ right_stack[core_pos + 1][j]
-            else:
-                right_stack[core_pos][j] = tmp.squeeze(-1)
+def _stack_solutions(solutions):
+    """Stack a list of per-sample solution vectors into one (n, mode_0) tensor."""
+    if len(solutions) == 0:
+        return None
+    return _stack(solutions, dim=0)
+
+
+def _calc_right_stack(cores, positions):
+    """Return right_stack[k] as a (n_samples, ranks[k]) tensor for k = 1..d-1.
+
+    Index k = 0 stays None (no sample-batched right environment to the left
+    of core 0).
+    """
+    d = len(cores)
+    right_stack = [None] * d
+    if d <= 1:
+        return right_stack
+
+    n_samples = positions[1].shape[0]
+
+    # Initialise from the rightmost core: meas_cmp has trailing dim 1.
+    core = cores[d - 1]
+    core_sh = core.permute(1, 0, 2)                                  # (mode, r_l, 1)
+    R = tn.einsum('jm,mlr->jlr', positions[d - 1], core_sh)[:, :, 0].realize()
+    right_stack[d - 1] = R
+
+    for k in range(d - 2, 0, -1):
+        core = cores[k]
+        core_sh = core.permute(1, 0, 2)                              # (mode, r_l, r_r)
+        tmp = tn.einsum('jm,mlr->jlr', positions[k], core_sh).realize()
+        right_stack[k] = tn.einsum('jlr,jr->jl', tmp, right_stack[k + 1]).realize()
 
     return right_stack
 
 
-def _calc_left_stack(core_pos, cores, positions, solutions, left_is_stack, left_ought_stack):
+def _calc_left_stack(core_pos, cores, positions, solutions_batched, left_is_stack, left_ought_stack):
+    """Update left_is_stack[core_pos] and left_ought_stack[core_pos] (batched).
+
+    Conventions:
+      left_ought_stack[k] : (n_samples, ranks[k+1])    for k = 0 .. d-2
+      left_is_stack[k]    : (n_samples, ranks[k+1], ranks[k+1])  for k = 1 .. d-2
+      left_is_stack[0]    : None
+    """
     d = len(cores)
-    if d <= 1:
+    if d <= 1 or solutions_batched is None:
         return
-    n_samples = len(solutions)
 
     if core_pos == 0:
         core0 = cores[0]
         mode = core0.shape[1]
         r1 = core0.shape[2]
         core0_2d = core0.reshape(mode, r1)
-        left_ought_stack[0] = [None] * n_samples
-        for j in range(n_samples):
-            left_ought_stack[0][j] = solutions[j] @ core0_2d
+        # left_ought[0][j, r] = sum_m solutions[j, m] * core0_2d[m, r]
+        left_ought_stack[0] = solutions_batched @ core0_2d           # (n, r1)
         return
 
     core = cores[core_pos]
-    core_sh = core.permute(1, 0, 2)
-    left_is_stack[core_pos] = [None] * n_samples
-    left_ought_stack[core_pos] = [None] * n_samples
+    core_sh = core.permute(1, 0, 2)                                   # (mode, r_l, r_r)
+    meas_cmp = tn.einsum('jm,mlr->jlr', positions[core_pos], core_sh).realize()
+    # Make a second copy so the scheduler doesn't reuse the same buffer twice
+    # in the upcoming Gram product.
+    meas_cmp_t = meas_cmp.clone()
 
-    for j in range(n_samples):
-        p = positions[core_pos][j]
-        meas_cmp = tn.tensordot(p, core_sh, axes=([0], [0]))
-        if core_pos > 1:
-            tmp = meas_cmp.transpose(0, 1) @ left_is_stack[core_pos - 1][j]
-            left_is_stack[core_pos][j] = tmp @ meas_cmp
-        else:
-            left_is_stack[core_pos][j] = meas_cmp.transpose(0, 1) @ meas_cmp
-        left_ought_stack[core_pos][j] = left_ought_stack[core_pos - 1][j] @ meas_cmp
+    if core_pos > 1:
+        # left_is_stack[k] = meas_cmp^T @ left_is[k-1] @ meas_cmp
+        tmp = tn.einsum('jla,jlm->jam', meas_cmp, left_is_stack[core_pos - 1])
+        left_is_stack[core_pos] = tn.einsum('jam,jmb->jab', tmp, meas_cmp_t)
+    else:
+        left_is_stack[core_pos] = tn.einsum('jla,jlb->jab', meas_cmp, meas_cmp_t)
+
+    # left_ought[k][j, r] = sum_l left_ought[k-1][j, l] * meas_cmp[j, l, r]
+    left_ought_stack[core_pos] = tn.einsum(
+        'jl,jlr->jr', left_ought_stack[core_pos - 1], meas_cmp
+    )
 
 
-def _calc_residual_norm(core0, right_stack, solutions):
-    n_samples = len(solutions)
+def _calc_residual_norm(core0, right_stack, solutions_batched):
+    """Frobenius norm of (model.predict(positions) - solutions), batched."""
+    if solutions_batched is None:
+        return tn.tensor(0.0, dtype=core0.dtype, device=core0.device)
     mode = core0.shape[1]
     r1 = core0.shape[2]
     core0_2d = core0.reshape(mode, r1)
-    norm = 0.0
-    for j in range(n_samples):
-        tmp = core0_2d @ right_stack[1][j]
-        tmp = tmp - solutions[j]
-        norm += (tmp * tmp).sum()
-    return tn.sqrt(norm)
+    pred = tn.einsum('mr,jr->jm', core0_2d, right_stack[1])           # (n, mode)
+    res = pred - solutions_batched
+    return tn.sqrt((res * res).sum())
 
 
-def _calc_delta(core_pos, cores, positions, solutions, right_stack, left_is_stack, left_ought_stack):
+def _calc_delta(core_pos, cores, positions, solutions_batched,
+                right_stack, left_is_stack, left_ought_stack):
+    """Per-core gradient delta, summed across samples (batched)."""
     d = len(cores)
-    n_samples = len(solutions)
     core = cores[core_pos]
     r_left, mode, r_right = core.shape
-    delta = tn.zeros(core.shape, dtype=core.dtype, device=core.device)
+    if solutions_batched is None or solutions_batched.shape[0] == 0:
+        return tn.zeros(core.shape, dtype=core.dtype, device=core.device)
 
     if core_pos == 0:
         core0_2d = core.reshape(mode, r_right)
-        for j in range(n_samples):
-            pred = core0_2d @ right_stack[1][j]
-            res = pred - solutions[j]
-            dyad = _outer(res, right_stack[1][j])
-            delta += dyad.reshape(1, mode, r_right)
-        return delta
+        pred = tn.einsum('mr,jr->jm', core0_2d, right_stack[1]).realize()
+        res = (pred - solutions_batched).realize()
+        dyad = tn.einsum('jm,jr->jmr', res, right_stack[1]).realize()
+        return dyad.sum(0).reshape(1, mode, r_right)
 
-    core_sh = core.permute(1, 0, 2)
-    for j in range(n_samples):
-        p = positions[core_pos][j]
-        if core_pos < d - 1:
-            dyadic_part = _outer(p, right_stack[core_pos + 1][j])
-        else:
-            dyadic_part = p.unsqueeze(1)
+    core_sh = core.permute(1, 0, 2)                                   # (mode, r_l, r_r)
+    meas_cmp = tn.einsum('jm,mlr->jlr', positions[core_pos], core_sh).realize()
 
-        is_part = tn.tensordot(p, core_sh, axes=([0], [0]))
-        if core_pos < d - 1:
-            is_part = is_part @ right_stack[core_pos + 1][j]
-        else:
-            is_part = is_part.squeeze(-1)
+    if core_pos < d - 1:
+        is_part = tn.einsum('jlr,jr->jl', meas_cmp, right_stack[core_pos + 1]).realize()
+        dyadic_part = tn.einsum('jm,jr->jmr', positions[core_pos], right_stack[core_pos + 1]).realize()
+    else:
+        is_part = meas_cmp[:, :, 0].realize()                         # (n, r_l)
+        dyadic_part = positions[core_pos].unsqueeze(2).realize()      # (n, mode, 1)
 
-        if core_pos > 1:
-            is_part = left_is_stack[core_pos - 1][j] @ is_part
+    if core_pos > 1:
+        is_part = tn.einsum('jlm,jm->jl', left_is_stack[core_pos - 1], is_part).realize()
 
-        diff = is_part - left_ought_stack[core_pos - 1][j]
-        dyad = diff[:, None, None] * dyadic_part[None, :, :]
-        delta += dyad
-
-    return delta
+    diff = (is_part - left_ought_stack[core_pos - 1]).realize()
+    return tn.einsum('jl,jmr->lmr', diff, dyadic_part).realize()
 
 
 def _calc_norm_a_projgrad(delta, core_pos, positions, right_stack, left_is_stack):
+    """sqrt(<delta, A delta>) where A is the local Gram (batched)."""
     d = len(right_stack)
-    n_samples = positions[1].shape[0] if d > 1 else 0
-    norm = 0.0
+    if d <= 1:
+        return tn.tensor(0.0, dtype=delta.dtype, device=delta.device)
 
     if core_pos == 0:
         mode = delta.shape[1]
         r1 = delta.shape[2]
         delta_2d = delta.reshape(mode, r1)
-        for j in range(n_samples):
-            tmp = delta_2d @ right_stack[1][j]
-            norm += (tmp * tmp).sum()
-        return tn.sqrt(norm)
+        tmp = tn.einsum('mr,jr->jm', delta_2d, right_stack[1]).realize()
+        tmp_b = tmp.clone()
+        return tn.sqrt((tmp * tmp_b).sum())
 
-    delta_sh = delta.permute(1, 0, 2)
-    for j in range(n_samples):
-        p = positions[core_pos][j]
-        tmp = tn.tensordot(p, delta_sh, axes=([0], [0]))
-        if core_pos < d - 1:
-            right_part = tmp @ right_stack[core_pos + 1][j]
-        else:
-            right_part = tmp.squeeze(-1)
+    delta_sh = delta.permute(1, 0, 2)                                 # (mode, r_l, r_r)
+    delta_meas = tn.einsum('jm,mlr->jlr', positions[core_pos], delta_sh)  # (n, r_l, r_r)
+    if core_pos < d - 1:
+        right_part = tn.einsum('jlr,jr->jl', delta_meas, right_stack[core_pos + 1]).realize()
+    else:
+        right_part = delta_meas[:, :, 0].realize()                    # (n, r_l)
 
-        if core_pos > 1:
-            tmp2 = left_is_stack[core_pos - 1][j] @ right_part
-            norm += (right_part * tmp2).sum()
-        else:
-            norm += (right_part * right_part).sum()
-
-    return tn.sqrt(norm)
+    right_part_b = right_part.clone()
+    if core_pos > 1:
+        # norm^2 = sum_j right_part[j]^T L[j] right_part[j]
+        tmp = tn.einsum('jl,jlm->jm', right_part, left_is_stack[core_pos - 1])
+        norm_sq = (tmp * right_part_b).sum()
+    else:
+        norm_sq = (right_part * right_part_b).sum()
+    return tn.sqrt(norm_sq)
 
 
-def _als_update_core0(core0, right_stack, solutions, reg):
-    n_samples = len(solutions)
-    if n_samples == 0:
+def _als_update_core0(core0, right_stack, solutions_batched, reg):
+    """Closed-form least-squares update of core 0 (batched)."""
+    if solutions_batched is None or solutions_batched.shape[0] == 0:
         return core0
     mode = core0.shape[1]
     r1 = core0.shape[2]
-    rmat = _stack(right_stack[1], dim=1)
-    smat = _stack(solutions, dim=1)
-    rrt = rmat @ rmat.transpose(0, 1)
+    rmat = right_stack[1].transpose(0, 1)                              # (r1, n)
+    smat = solutions_batched.transpose(0, 1)                           # (mode, n)
+    rrt = rmat @ rmat.transpose(0, 1)                                  # (r1, r1)
     if reg and reg > 0.0:
         rrt = rrt + reg * tn.eye(r1, dtype=core0.dtype, device=core0.device)
     core0_2d = _solve(rrt, (smat @ rmat.transpose(0, 1)).transpose(0, 1)).transpose(0, 1)
     return core0_2d.reshape(1, mode, r1)
 
 
-def _als_update_core(core_pos, cores, positions, right_stack, left_mats, solutions, reg, cg_maxit, cg_tol):
-    n_samples = len(solutions)
+def _als_update_core(core_pos, cores, positions, right_stack, left_mats_batch,
+                     solutions_batched, reg, cg_maxit, cg_tol):
+    """ALS+CG update for a non-leftmost core (batched).
+
+    left_mats_batch is shape (n_samples, mode_0, ranks[core_pos]).
+    """
     core = cores[core_pos]
     r_left, mode, r_right = core.shape
-    if n_samples == 0:
+    if solutions_batched is None or solutions_batched.shape[0] == 0:
         return core
 
-    b_list = []
-    l_list = []
-    lt_list = []
-    rhs = tn.zeros((r_left, mode * r_right), dtype=core.dtype, device=core.device)
+    n = solutions_batched.shape[0]
 
-    for j in range(n_samples):
-        p = positions[core_pos][j]
-        if core_pos < len(cores) - 1:
-            rvec = right_stack[core_pos + 1][j]
-        else:
-            rvec = tn.ones((1,), dtype=core.dtype, device=core.device)
-        b_j = _outer(p, rvec).reshape(-1)
-        l_j = left_mats[j]
-        lt_j = l_j.transpose(0, 1)
-        rhs += _outer(lt_j @ solutions[j], b_j)
-        b_list.append(b_j)
-        l_list.append(l_j)
-        lt_list.append(lt_j)
+    # b_batch[j, mode * r_right] = positions[k][j, m] * rvec[j, r]
+    if core_pos < len(cores) - 1:
+        rvec_batch = right_stack[core_pos + 1]                         # (n, r_right)
+    else:
+        rvec_batch = tn.ones((n, 1), dtype=core.dtype, device=core.device)
+    b_batch = tn.einsum('jm,jr->jmr', positions[core_pos], rvec_batch).reshape(n, mode * r_right)
+
+    lt_batch = left_mats_batch.transpose(1, 2)                         # (n, r_left, mode_0)
+
+    # rhs[r_left, b] = sum_j (lt_batch[j] @ solutions[j])[r_left] * b_batch[j, b]
+    lt_sol = tn.einsum('jrm,jm->jr', lt_batch, solutions_batched)      # (n, r_left)
+    rhs = tn.einsum('jr,jb->rb', lt_sol, b_batch)                      # (r_left, mode*r_right)
 
     def matvec(gvec):
         g2d = gvec.reshape(r_left, mode * r_right)
-        out = tn.zeros(g2d.shape, dtype=g2d.dtype, device=g2d.device)
-        for j in range(n_samples):
-            v = g2d @ b_list[j]
-            w = l_list[j] @ v
-            out += _outer(lt_list[j] @ w, b_list[j])
+        v = b_batch @ g2d.transpose(0, 1)                              # (n, r_left)
+        w = tn.einsum('jml,jl->jm', left_mats_batch, v)                # (n, mode_0)
+        lt_w = tn.einsum('jrm,jm->jr', lt_batch, w)                    # (n, r_left)
+        out = tn.einsum('jr,jb->rb', lt_w, b_batch)                    # (r_left, mode*r_right)
         if reg and reg > 0.0:
             out = out + reg * g2d
         return out.reshape(-1)
 
-    x = core.reshape(r_left, mode * r_right).reshape(-1)
+    x = core.reshape(-1)
     bvec = rhs.reshape(-1)
     r = bvec - matvec(x)
     p = r.clone()
@@ -365,13 +378,11 @@ def _als_update_core(core_pos, cores, positions, right_stack, left_mats, solutio
     return x.reshape(r_left, mode, r_right)
 
 
-def _update_left_mats(left_mats, core, positions, core_pos):
-    core_sh = core.permute(1, 0, 2)
-    for j in range(len(left_mats)):
-        p = positions[core_pos][j]
-        tmp = tn.tensordot(p, core_sh, axes=([0], [0]))
-        left_mats[j] = left_mats[j] @ tmp
-    return left_mats
+def _update_left_mats(left_mats_batch, core, positions, core_pos):
+    """Right-multiply each per-sample left mat by the contracted core (batched)."""
+    core_sh = core.permute(1, 0, 2)                                    # (mode, r_l, r_r)
+    tmp = tn.einsum('jm,mlr->jlr', positions[core_pos], core_sh)       # (n, r_l, r_r)
+    return tn.einsum('jml,jlr->jmr', left_mats_batch, tmp)             # (n, mode_0, r_r)
 
 
 def _prepare_measurements(measurements, device, dtype):
@@ -492,6 +503,7 @@ def uq_adf(measurements, dimensions, basis, targeteps=1e-8, maxitr=1000, device=
         raise ValueError("Unknown update_rule '{}'".format(update_rule))
     random_vectors, solutions = _prepare_measurements(measurements, device, dtype)
     positions = _build_positions(random_vectors, dimensions, basis, orthonormal)
+    solutions_batched = _stack_solutions(solutions)                    # (n, mode_0)
 
     if measurements.initialRandomVectors:
         cores = _initial_guess_with_linear_terms(measurements, dimensions, dtype, device)
@@ -499,7 +511,10 @@ def uq_adf(measurements, dimensions, basis, targeteps=1e-8, maxitr=1000, device=
         cores = _initial_guess_from_mean(solutions, dimensions, dtype, device)
     cores = _add_rank_noise(cores, dimensions, init_rank, init_noise, dtype, device)
 
-    solutions_norm = tn.sqrt(_stack([(s * s).sum() for s in solutions], dim=0).sum())
+    if solutions_batched is not None:
+        solutions_norm = tn.sqrt((solutions_batched * solutions_batched).sum())
+    else:
+        solutions_norm = tn.tensor(0.0, dtype=dtype, device=device)
     rank_window = max(1, int(rank_window))
     residuals = [1000.0] * rank_window
     last_rank_update = 0
@@ -514,12 +529,12 @@ def uq_adf(measurements, dimensions, basis, targeteps=1e-8, maxitr=1000, device=
         right_stack = _calc_right_stack(cores, positions)
         left_is_stack = [None] * len(cores) if update_rule == "gradient" else None
         left_ought_stack = [None] * len(cores) if update_rule == "gradient" else None
-        left_mats = None
+        left_mats_batch = None
         rank_updated = False
 
         for core_pos in range(len(cores)):
             if core_pos == 0:
-                residual = _calc_residual_norm(cores[0], right_stack, solutions)
+                residual = _calc_residual_norm(cores[0], right_stack, solutions_batched)
                 rel_res = residual / solutions_norm
                 if callback is not None:
                     callback(iteration, float(rel_res.numpy()), cores, ranks)
@@ -546,37 +561,41 @@ def uq_adf(measurements, dimensions, basis, targeteps=1e-8, maxitr=1000, device=
 
             if update_rule == "als":
                 if core_pos == 0:
-                    cores[0] = _als_update_core0(cores[0], right_stack, solutions, als_reg)
+                    cores[0] = _als_update_core0(cores[0], right_stack, solutions_batched, als_reg)
                     core0_2d = cores[0].reshape(cores[0].shape[1], cores[0].shape[2])
-                    left_mats = [core0_2d] * n_samples
+                    # Replicate the same matrix across the sample batch.
+                    left_mats_batch = core0_2d.unsqueeze(0).expand(
+                        (n_samples, core0_2d.shape[0], core0_2d.shape[1])
+                    ).contiguous()
                 else:
                     cores[core_pos] = _als_update_core(
                         core_pos,
                         cores,
                         positions,
                         right_stack,
-                        left_mats,
-                        solutions,
+                        left_mats_batch,
+                        solutions_batched,
                         als_reg,
                         als_cg_maxit,
                         als_cg_tol,
                     )
                 if core_pos > 0 and core_pos + 1 < len(cores):
-                    left_mats = _update_left_mats(left_mats, cores[core_pos], positions, core_pos)
+                    left_mats_batch = _update_left_mats(left_mats_batch, cores[core_pos], positions, core_pos)
                 continue
 
-            delta = _calc_delta(core_pos, cores, positions, solutions, right_stack, left_is_stack, left_ought_stack)
-            norm_a_proj = _calc_norm_a_projgrad(delta, core_pos, positions, right_stack, left_is_stack)
-            py_r = (delta * delta).sum()
+            delta = _calc_delta(core_pos, cores, positions, solutions_batched, right_stack, left_is_stack, left_ought_stack).realize()
+            norm_a_proj = _calc_norm_a_projgrad(delta, core_pos, positions, right_stack, left_is_stack).realize()
+            delta_b = delta.clone()
+            py_r = (delta * delta_b).sum()
 
-            denom = norm_a_proj * norm_a_proj
+            denom = norm_a_proj * norm_a_proj.clone()
             if float(denom.numpy()) > 0.0:
                 step = py_r / denom
                 cores[core_pos] = cores[core_pos] - step * delta
 
             if core_pos + 1 < len(cores):
                 cores = _move_core_lr(cores, core_pos)
-                _calc_left_stack(core_pos, cores, positions, solutions, left_is_stack, left_ought_stack)
+                _calc_left_stack(core_pos, cores, positions, solutions_batched, left_is_stack, left_ought_stack)
 
         if rank_updated:
             continue

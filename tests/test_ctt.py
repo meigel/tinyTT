@@ -118,6 +118,37 @@ class TestLinearTTMap:
         
         assert new_error < old_error
 
+    def test_full_training_loop_does_not_diverge(self):
+        """End-to-end training: final loss must be lower than initial loss
+        and stay finite. This is the regression that the example png hit."""
+        rng = np.random.RandomState(0)
+        n = 80
+        d = p = 2
+        a = rng.randn(n, d)
+        mu = rng.uniform(-1.0, 1.0, (n, p))
+        # Linear-in-(a, mu) target that the model *can* represent exactly.
+        A_true = np.array([[0.5, -0.2], [0.1, 0.3]])
+        B_true = np.array([[-0.1, 0.4], [0.2, 0.05]])
+        b_true = np.array([0.05, -0.02])
+        target = a @ A_true.T + mu @ B_true.T + b_true
+
+        model = LinearTTMap(d=d, p=p)
+        initial_loss = float(np.mean((model.forward(a, mu) - target) ** 2))
+
+        lr = 0.05
+        for _ in range(300):
+            pred = model.forward(a, mu)
+            res = pred - target
+            model.A_dense -= lr * (res.T @ a) / n
+            model.B_dense -= lr * (res.T @ mu) / n
+            model.b_bias -= lr * res.mean(axis=0)
+
+        final_loss = float(np.mean((model.forward(a, mu) - target) ** 2))
+        assert np.isfinite(final_loss)
+        assert final_loss < 0.01 * initial_loss, (
+            f"training diverged or stalled: initial={initial_loss:.4g}, final={final_loss:.4g}"
+        )
+
 
 class TestTriangularResidualLayer:
     """Tests for TriangularResidualLayer class."""
