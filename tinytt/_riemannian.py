@@ -230,6 +230,42 @@ def right_orthogonalize(cores: list, inplace: bool = False) -> list:
     return cores
 
 
+def mixed_canonical(cores: list, k: int, inplace: bool = False) -> list:
+    """
+    Bring the TT into mixed-canonical form with the orthogonality centre
+    at site ``k``: cores[0..k-1] are left-orthogonal, cores[k+1..d-1] are
+    right-orthogonal, and core k carries the norm.
+
+    Useful for DMRG/AMEn-style algorithms that operate on one site at a
+    time and need orthonormal left/right environments around the active
+    core.
+
+    Parameters
+    ----------
+    cores : list of tensors
+        TT cores, each shape (rk, nk, r_{k+1}).
+    k : int
+        Position of the orthogonality centre, ``0 <= k < d``.
+    inplace : bool
+        If True, modify the input list in place; otherwise clone first.
+
+    Returns
+    -------
+    list
+        The cores in mixed-canonical form.
+    """
+    d = len(cores)
+    if not 0 <= k < d:
+        raise ValueError(f"k must be in [0, {d - 1}], got {k}.")
+    if not inplace:
+        cores = [c.clone() for c in cores]
+    for pos in range(k):
+        _qr_move_lr(cores, pos, preserve_rank=True)
+    for pos in range(d - 1, k, -1):
+        _qr_move_rl(cores, pos, preserve_rank=True)
+    return cores
+
+
 # ---------------------------------------------------------------------------
 # horizontal space projection
 # ---------------------------------------------------------------------------

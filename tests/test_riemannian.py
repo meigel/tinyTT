@@ -15,6 +15,7 @@ from tinytt._riemannian import (
     _qr_move_rl,
     left_orthogonalize,
     right_orthogonalize,
+    mixed_canonical,
     horizontal_projection,
     qr_retraction,
     check_left_orthogonal,
@@ -211,6 +212,44 @@ class TestRightOrthogonalize:
         ro = right_orthogonalize(cores, inplace=True)
         assert ro is cores, "Should return the same list when inplace=True"
         assert not check_right_orthogonal(cores_copy[2]), "Original not modified when inplace=False"
+
+
+# ======================================================================
+# Mixed canonical
+# ======================================================================
+
+class TestMixedCanonical:
+    @NEEDS_CLANG
+    def test_centre_at_every_site_preserves_tensor(self):
+        cores = _make_tt_cores(d=4, n=3, r=3, seed=50)
+        full_before = _tt_full(cores)
+        for k in range(len(cores)):
+            mc = mixed_canonical(cores, k)
+            full_after = _tt_full(mc)
+            np.testing.assert_allclose(full_before, full_after, atol=1e-10)
+
+    @NEEDS_CLANG
+    def test_left_block_left_orthogonal(self):
+        cores = _make_tt_cores(d=4, n=3, r=3, seed=51)
+        k = 2
+        mc = mixed_canonical(cores, k)
+        for j in range(k):
+            assert check_left_orthogonal(mc[j]), f"Core {j} should be left-orthogonal"
+
+    @NEEDS_CLANG
+    def test_right_block_right_orthogonal(self):
+        cores = _make_tt_cores(d=4, n=3, r=3, seed=52)
+        k = 1
+        mc = mixed_canonical(cores, k)
+        for j in range(k + 1, len(mc)):
+            assert check_right_orthogonal(mc[j]), f"Core {j} should be right-orthogonal"
+
+    def test_rejects_out_of_range_k(self):
+        cores = _make_tt_cores(d=3, n=3, r=2, seed=53)
+        with pytest.raises(ValueError):
+            mixed_canonical(cores, k=-1)
+        with pytest.raises(ValueError):
+            mixed_canonical(cores, k=3)
 
 
 # ======================================================================
