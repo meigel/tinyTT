@@ -250,7 +250,10 @@ class TT:
     def numpy(self):
         return self.full().numpy()
 
-    def norm(self):
+    def norm(self, native: bool = False):
+        if native:
+            import tinytt._extras as _extras
+            return tn.sqrt(_extras.inner(self, self))
         return tn.linalg.norm(self.full())
 
     def __repr__(self):

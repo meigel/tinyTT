@@ -131,6 +131,52 @@ def meshgrid(vectors):
     return Xs
 
 
+def inner(a, b):
+    """
+    TT-native inner product via sequential core contraction.
+    
+    Computes ⟨a, b⟩ = Σ_{i1,...,id} a(i1,...id) · b(i1,...,id)
+    without reconstructing the full N-dimensional tensor.
+    
+    Parameters
+    ----------
+    a, b : TT
+        TT tensors with the same shape.
+    
+    Returns
+    -------
+    Tensor
+        Scalar tensor containing the inner product.
+    """
+    if not isinstance(a, tinytt._tt_base.TT) or not isinstance(b, tinytt._tt_base.TT):
+        raise InvalidArguments("Both operands should be TT instances.")
+    if a.is_ttm or b.is_ttm:
+        raise NotImplementedError(
+            "inner is only implemented for TT tensors (not TTM)."
+        )
+    if a.N != b.N:
+        raise ShapeMismatch("Operands are not the same size.")
+    
+    d = len(a.cores)
+    if d == 0:
+        return tn.tensor(0.0, dtype=tn.float64)
+    
+    # Contract core 0: (n0, r1) × (n0, s1) → (r1, s1)
+    M = tn.einsum('iα,iβ->αβ', a.cores[0][0], b.cores[0][0])
+    
+    # Middle cores: (ri, si) × (ri, ni, r_{i+1}) × (si, ni, s_{i+1}) → (r_{i+1}, s_{i+1})
+    for i in range(1, d - 1):
+        M = tn.einsum('αβ,αiν,βiμ->νμ', M, a.cores[i], b.cores[i])
+    
+    # Last core: contract remaining physical and rank indices
+    if d > 1:
+        result = tn.einsum('αβ,αi,βi->', M, a.cores[-1][:, :, 0], b.cores[-1][:, :, 0])
+    else:
+        result = tn.einsum('i,i->', a.cores[0][0, :, 0], b.cores[0][0, :, 0])
+    
+    return result
+
+
 def dot(a, b, axis=None):
     if not isinstance(a, tinytt._tt_base.TT) or not isinstance(b, tinytt._tt_base.TT):
         raise InvalidArguments("Both operands should be TT instances.")
@@ -142,7 +188,7 @@ def dot(a, b, axis=None):
         raise NotImplementedError("Dot is only implemented for TT tensors.")
     if a.N != b.N:
         raise ShapeMismatch("Operands are not the same size.")
-    return (a.full() * b.full()).sum()
+    return inner(a, b)
 
 
 def elementwise_divide(a, b):
