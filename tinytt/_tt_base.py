@@ -275,13 +275,14 @@ class TT:
 
     def _scalar_value(self, x):
         if isinstance(x, (int, float, complex)):
-            return complex(x) if isinstance(x, complex) else float(x)
-        return float(tn.tensor(x).numpy().item())
+            return x
+        return tn.tensor(x).numpy().item()
 
     def _scaled_first_core(self, scalar):
         cores_new = [c.clone() for c in self.cores]
         if cores_new:
-            cores_new[0] = cores_new[0] * float(scalar)
+            s = tn.tensor(scalar, dtype=cores_new[0].dtype, device=cores_new[0].device)
+            cores_new[0] = cores_new[0] * s
         return TT(cores_new)
 
     def _constant_tt(self, scalar):
@@ -302,7 +303,8 @@ class TT:
                     tn.ones([1, self.__N[i], 1], dtype=ref.dtype, device=ref.device)
                 )
         if cores_new:
-            cores_new[0] = cores_new[0] * float(scalar)
+            s = tn.tensor(scalar, dtype=cores_new[0].dtype, device=cores_new[0].device)
+            cores_new[0] = cores_new[0] * s
         return TT(cores_new)
 
     def _tt_native_add(self, other):

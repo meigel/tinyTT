@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import numpy as np
 import tinytt._backend as tn
-from tinytt._decomposition import round_tt, lr_orthogonal
+from tinytt._decomposition import round_tt
 
 
 # ---------------------------------------------------------------------------

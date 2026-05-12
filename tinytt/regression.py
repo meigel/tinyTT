@@ -72,7 +72,7 @@ class ContinuityFitResult:
         Returns
         -------
         ndarray
-            ``(m, d)`` — fitted vector field values.
+            ``(m, d)`` when ``d > 1``; ``(m,)`` when ``d == 1``.
         """
         if hasattr(x, 'numpy'):
             x = x.numpy()
@@ -498,7 +498,7 @@ def als_continuity_fit(X, Y, F_grad, bases, ranks=None, sweeps=5, eps=1e-9, verb
         Coefficient field, shape ``(B, d)``.
     bases : list of callables
         Length ``d``.  Each ``bases[k]`` is a basis callable with
-        ``__call__(x)``, ``grad(x)``, and ``laplace(x)`` methods.
+        ``__call__(x)`` and ``grad(x)`` methods.
     ranks : list of int, optional
         Internal TT ranks (length ``d - 1``).  Defaults to ``[1, ..., 1]``.
     sweeps : int

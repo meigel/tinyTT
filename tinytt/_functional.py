@@ -394,7 +394,8 @@ class HermiteFeatures:
         nb = self.n_features
         dP = np.zeros_like(vals_np)
         for n in range(1, nb):
-            dP[:, n] = float(n) * vals_np[:, n - 1]
+            coeff = float(n) * float(self._scale[n] / self._scale[n - 1])
+            dP[:, n] = coeff * vals_np[:, n - 1]
         return tn.tensor(dP, dtype=self._dtype, device=self._device)
 
     def laplace(self, x):
@@ -416,7 +417,8 @@ class HermiteFeatures:
         nb = self.n_features
         ddP = np.zeros_like(vals_np)
         for n in range(2, nb):
-            ddP[:, n] = float(n * (n - 1)) * vals_np[:, n - 2]
+            coeff = float(n * (n - 1)) * float(self._scale[n] / self._scale[n - 2])
+            ddP[:, n] = coeff * vals_np[:, n - 2]
         return tn.tensor(ddP, dtype=self._dtype, device=self._device)
 
 

@@ -519,6 +519,8 @@ def uq_adf(measurements, dimensions, basis, targeteps=1e-8, maxitr=1000, device=
     residuals = [1000.0] * rank_window
     last_rank_update = 0
     n_samples = len(solutions)
+    if n_samples == 0:
+        raise ValueError("measurements must contain at least one sample.")
 
     iteration = 0
     while maxitr == 0 or iteration < maxitr:
@@ -633,7 +635,7 @@ def evaluate(result, y, basis, orthonormal=False):
         raise ValueError(
             f"y has length {len(y)} but the model expects {len(cores) - 1} stochastic dims."
         )
-    value = np.asarray(cores[0][0, 0, :], dtype=float)
+    value = np.asarray(cores[0][0, :, :], dtype=float)
     for dim, yi in enumerate(y, start=1):
         core = cores[dim]
         degree = core.shape[1]
@@ -646,7 +648,10 @@ def evaluate(result, y, basis, orthonormal=False):
         ).numpy()[0]                          # shape (degree,)
         tmp = np.tensordot(core, basis_row, axes=([1], [0]))
         value = value @ tmp
-    return float(np.squeeze(value))
+    value = np.squeeze(value)
+    if np.size(value) == 1:
+        return float(value)
+    return np.asarray(value, dtype=float)
 
 
 def uq_ra_adf(measurements, basis, dimensions, targeteps=1e-8, maxitr=1000, device=None,
