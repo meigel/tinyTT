@@ -225,17 +225,14 @@ def _build_right_frame_tg(cores, k):
 
 
 def two_site_dmrg_sweep(energy, metric, cores, round_eps=1e-12, rmax=128,
-                         lambda_abs=1e-12, lambda_rel=1e-8, kappa_max=1e8,
                          dense_debug=True):
-    """One two-site DMRG sweep.
+    """One two-site DMRG sweep with mixed-canonical gauge fixing.
 
-    For EuclideanMetric (identity A): converges in 1 pass by projecting
-    the RHS onto the two-site subspace (direct ALS).
-
-    For EnergyMetric (general A): builds the two-site Gramian, solves
-    the local system, Armijo line search, then SVD-splits.
-
-    Works with tinygrad tensors for both paths.
+    Uses ``mixed_canonical`` to place the orthogonality centre between
+    the two active sites, giving orthonormal left/right frames. With
+    orthonormal frames the Gramian for identity A is I (no solve
+    needed).  For EnergyMetric, the orthonormal frames improve Gramian
+    conditioning.
 
     Parameters
     ----------
@@ -246,14 +243,8 @@ def two_site_dmrg_sweep(energy, metric, cores, round_eps=1e-12, rmax=128,
         Rounding parameters after SVD split.
     dense_debug : bool
     """
-    from tinytt._riemannian import left_orthogonalize
-    from .local_frames import build_left_frame, build_right_frame, build_tangent_basis, build_two_site_tensor
-
+    from .local_frames import build_left_frame, build_right_frame, build_two_site_tensor
     d = len(cores)
-    # Left-orthogonalize for balanced frames
-    cores = left_orthogonalize(cores, inplace=False)
-
-    # ── Identity fast path ──────────────────────────────────────────
     is_identity = isinstance(metric, EuclideanMetric)
 
     for k in range(d - 1):
@@ -261,120 +252,114 @@ def two_site_dmrg_sweep(energy, metric, cores, round_eps=1e-12, rmax=128,
         nkp1 = cores[k + 1].shape[1]
         rkp2 = cores[k + 1].shape[2]
 
-        # Build frames
-        left_np = build_left_frame(cores, k)           # (N_left, r_k) numpy
-        right_np = build_right_frame(cores, k + 1)     # (r_{k+2}, N_right) numpy
-        N_left = left_np.shape[0]
-        N_right = right_np.shape[1]
+        # Mixed canonical with centre at k+1:
+        #   cores[0..k] left-orthogonal → left frame at k is orthonormal
+        #   cores[k+2..d-1] right-orthogonal → right frame is orthonormal
+        from tinytt._riemannian import mixed_canonical
+        cores = mixed_canonical(cores, k + 1)
 
+        # Build orthonormal left/right frames
+        left = build_left_frame(cores, k)          # (N_left, r_k), L^T L = I
+        right = build_right_frame(cores, k + 1)    # (r_{k+2}, N_right), R R^T = I
+        N_left = left.shape[0]
+        N_right = right.shape[1]
+
+        W_current = build_two_site_tensor(cores, k) if not is_identity else None
+
+        # ── Compute projected direction ──────────────────────────
         if is_identity:
-            # Fast path: project RHS onto two-site space
+            # With orthonormal frames: G_2 = I, optimal W = L^T @ b @ R
             b_full = energy.b.full().numpy()
             b_2d = b_full.reshape(N_left, nk, nkp1, N_right)
-            W = np.einsum('lx,lmnz,yz->xmny', left_np, b_2d, right_np)
-
+            direction = np.einsum('lx,lmnz,yz->xmny', left, b_2d, right)
         else:
-            # General path: build Gramian, solve, Armijo
+            # Build two-site Gramian: G_2 = B^T A B  (size dim_2 × dim_2)
             Au = energy.A.apply(tt.TT(cores))
-            grad_full = (Au.full().numpy() - energy.b.full().numpy()).reshape(-1)
+            grad = (Au.full().numpy() - energy.b.full().numpy())
+            grad_2d = grad.reshape(N_left, nk, nkp1, N_right)
+
+            # Projected gradient (rhs): g_2 = L^T @ r @ R
+            g_2 = np.einsum('lx,lmjn,yn->xmjy', left, grad_2d, right)
             dim_2 = rk * nk * nkp1 * rkp2
 
-            # Build two-site tangent basis B: (N, dim_2)
-            left_tg = _build_left_frame_tg(cores, k)   # tinygrad
-            right_tg = _build_right_frame_tg(cores, k + 1)
-            B = build_tangent_basis(left_np, right_np, n_k=nk * nkp1)
-            # ^ This only handles one physical dimension. For two, we need
-            #   a different approach. Let's build it manually.
-
-            # Build B for two-site space via Kronecker product:
-            # B_{(l,i,j,r)} = L[:,l] ⊗ e_i ⊗ e_j ⊗ R[r,:]
-            dim_2 = rk * nk * nkp1 * rkp2
+            # Build two-site tangent basis B: (N, dim_2), orthonormal columns
             N = N_left * nk * nkp1 * N_right
             B = np.zeros((N, dim_2), dtype=np.float64)
             col = 0
             for l in range(rk):
-                lc = left_np[:, l]
+                lc = left[:, l]
                 for i in range(nk):
                     ei = np.eye(nk)[i]
-                    tmp1 = np.outer(lc, ei).ravel()    # (N_left*nk,)
+                    tmp1 = np.outer(lc, ei).ravel()
                     for j in range(nkp1):
                         ej = np.eye(nkp1)[j]
-                        tmp2 = np.outer(tmp1, ej).ravel()  # (N_left*nk*nkp1,)
+                        tmp2 = np.outer(tmp1, ej).ravel()
                         for r in range(rkp2):
-                            row = right_np[r, :]
+                            row = right[r, :]
                             B[:, col] = np.outer(tmp2, row).ravel()
                             col += 1
 
-            # Gramian and projected gradient
+            # Gramian and solve
             A_dense = metric.M.dense_matrix()
             G = B.T @ A_dense @ B
-            g_proj = B.T @ grad_full
+            reg = max(1e-12, np.linalg.norm(G) / 1e8)
+            delta = np.linalg.solve(G + reg * np.eye(dim_2), -g_2.ravel())
+            direction = delta.reshape(rk, nk, nkp1, rkp2)
 
-            # Solve with regularization
-            evals = np.linalg.eigvalsh(G)
-            e_max = max(evals[-1], 1e-30)
-            reg = max(lambda_abs, lambda_rel * e_max, e_max / kappa_max)
-            G_reg = G + reg * np.eye(dim_2, dtype=G.dtype)
+        # ── Armijo line search ───────────────────────────────────
+        E0 = energy(tt.TT(cores))
+        alpha = 1.0
+        W_final = None
+        alpha_final = None
 
-            delta_vec = np.linalg.solve(G_reg, -g_proj)
-            delta_W = delta_vec.reshape(rk, nk, nkp1, rkp2)
+        for _ in range(30):
+            if is_identity:
+                W_try = alpha * direction  # direct projection (identity)
+            else:
+                W_try = W_current + alpha * direction  # GD step (general)
 
-            # Armijo line search
-            W_current = build_two_site_tensor(cores, k)  # (rk, nk, nkp1, rkp2)
-            E0 = energy(tt.TT(cores))
-            slope = float(g_proj @ delta_vec)
-            alpha = 1.0
-            W_new = None
-            for _ in range(30):
-                W_try = W_current + alpha * delta_W
-                # Build temporary cores
-                u_t, s_t, vt_t = np.linalg.svd(
-                    W_try.reshape(rk * nk, nkp1 * rkp2), full_matrices=False)
-                r_t = min(rk * nk, nkp1 * rkp2, rmax)
-                u_t = u_t[:, :r_t]
-                s_t = s_t[:r_t]
-                vt_t = vt_t[:r_t, :]
-                try_cores = list(cores)
-                try_cores[k] = tn.tensor(u_t.reshape(rk, nk, r_t),
-                                          dtype=cores[k].dtype, device=cores[k].device)
-                try_cores[k+1] = tn.tensor(
-                    (np.diag(s_t) @ vt_t).reshape(r_t, nkp1, rkp2),
-                    dtype=cores[k+1].dtype, device=cores[k+1].device)
-                E1 = energy(tt.TT(try_cores))
-                if E1 <= E0 + 1e-4 * alpha * slope:
-                    W_new = W_try
-                    break
-                alpha *= 0.5
-                if alpha < 1e-14:
-                    break
+            # SVD split at intermediate rank (preserves information)
+            W_try_2d = W_try.reshape(rk * nk, nkp1 * rkp2)
+            if np.any(np.isnan(W_try_2d)) or np.any(np.isinf(W_try_2d)):
+                alpha *= 0.5; continue
+            try:
+                u_t, s_t, vt_t = np.linalg.svd(W_try_2d, full_matrices=False)
+            except np.linalg.LinAlgError:
+                alpha *= 0.5; continue
+            r_max_full = min(rk * nk, nkp1 * rkp2, 1024)
+            u_t = u_t[:, :r_max_full]
+            s_t = s_t[:r_max_full]
+            vt_t = vt_t[:r_max_full, :]
 
-            if W_new is None:
-                continue  # skip this bond
+            try_cores = list(cores)
+            try_cores[k] = tn.tensor(u_t.reshape(rk, nk, r_max_full),
+                                      dtype=cores[k].dtype, device=cores[k].device)
+            try_cores[k+1] = tn.tensor(
+                (np.diag(s_t) @ vt_t).reshape(r_max_full, nkp1, rkp2),
+                dtype=cores[k+1].dtype, device=cores[k+1].device)
+            E1 = energy(tt.TT(try_cores))
 
-            # Final SVD split of accepted W
-            W_mat = W_new.reshape(rk * nk, nkp1 * rkp2)
-            u, s, vt = np.linalg.svd(W_mat, full_matrices=False)
-            r_eff = min(rkp1, rk * nk, nkp1 * rkp2, rmax)
-            if round_eps > 0:
-                s_cum = np.sqrt(np.maximum(
-                    1 - np.cumsum(s**2) / np.sum(s**2), 0))
-                r_trunc = int(np.sum(s_cum < round_eps)) if len(s_cum) > 0 and s_cum[0] > round_eps else 0
-                r_eff = max(1, min(r_eff, r_trunc + 1))
-            r_eff = max(1, min(r_eff, rk * nk, nkp1 * rkp2, rmax))
+            if E1 < E0:
+                W_final = W_try
+                alpha_final = alpha
+                break
+            alpha *= 0.5
+            if alpha < 1e-14:
+                break
 
-            u = u[:, :r_eff]
-            s = s[:r_eff]
-            vt = vt[:r_eff, :]
-            new_left = u.reshape(rk, nk, r_eff)
-            new_right = (np.diag(s) @ vt).reshape(r_eff, nkp1, rkp2)
-            cores[k] = tn.tensor(new_left, dtype=cores[k].dtype, device=cores[k].device)
-            cores[k + 1] = tn.tensor(new_right, dtype=cores[k+1].dtype, device=cores[k+1].device)
+        if W_final is None:
+            continue  # skip this bond — no improvement found
+
+        # ── Final SVD split with rank truncation ──────────────────
+        W_mat = W_final.reshape(rk * nk, nkp1 * rkp2)
+        # Guard against NaN/Inf (bad Armijo steps)
+        if np.any(np.isnan(W_mat)) or np.any(np.isinf(W_mat)):
             continue
 
-        # ── Identity path continues here (is_identity=True) ─────────
-        # Unfold W for SVD split
-        W_mat = W.reshape(rk * nk, nkp1 * rkp2)
-        u, s, vt = np.linalg.svd(W_mat, full_matrices=False)
+        try:
+            u, s, vt = np.linalg.svd(W_mat, full_matrices=False)
+        except np.linalg.LinAlgError:
+            continue  # SVD failed, skip this bond
 
         r_eff = min(rkp1, rk * nk, nkp1 * rkp2, rmax)
         if round_eps > 0:
@@ -387,10 +372,10 @@ def two_site_dmrg_sweep(energy, metric, cores, round_eps=1e-12, rmax=128,
         u = u[:, :r_eff]
         s = s[:r_eff]
         vt = vt[:r_eff, :]
-        new_left = u.reshape(rk, nk, r_eff)
-        new_right = (np.diag(s) @ vt).reshape(r_eff, nkp1, rkp2)
-        cores[k] = tn.tensor(new_left, dtype=cores[k].dtype, device=cores[k].device)
-        cores[k + 1] = tn.tensor(new_right, dtype=cores[k+1].dtype, device=cores[k+1].device)
+        cores[k] = tn.tensor(u.reshape(rk, nk, r_eff),
+                              dtype=cores[k].dtype, device=cores[k].device)
+        cores[k+1] = tn.tensor((np.diag(s) @ vt).reshape(r_eff, nkp1, rkp2),
+                                dtype=cores[k+1].dtype, device=cores[k+1].device)
 
     return cores
 
@@ -452,12 +437,11 @@ def fixed_rank_ngf_sweep(
     """
     d = len(cores)
 
-    # ═─ Fast path: two-site DMRG sweep (identity only) ──────────╗
+    # ═─ Two-site DMRG sweep (identity / EuclideanMetric only) ──╗
     if isinstance(metric, EuclideanMetric):
         cores = two_site_dmrg_sweep(
             energy, metric, cores,
             round_eps=1e-12, rmax=128,
-            lambda_abs=lambda_abs, lambda_rel=lambda_rel, kappa_max=kappa_max,
             dense_debug=dense_debug,
         )
         if verbose:

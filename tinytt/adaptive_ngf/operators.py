@@ -124,7 +124,7 @@ def dot_tt(x: tt.TT, y: tt.TT) -> float:
 def dot(x: tt.TT, y: tt.TT, dense_debug: bool = False) -> float:
     if dense_debug:
         return float(np.vdot(x.numpy().reshape(-1), y.numpy().reshape(-1)).real)
-    return float(tt.inner(x, y).numpy().item())
+    return dot_tt(x, y)
 
 
 def axpy_tt(alpha: float, x: tt.TT, beta: float, y: tt.TT, eps: float = 1e-12) -> tt.TT:

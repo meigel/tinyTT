@@ -38,9 +38,12 @@ from . import bug
 # ── new in this extension ──────────────────────────────────────────────
 from ._riemannian import (
     qr_retraction,
+    svd_retraction,
     horizontal_projection,
+    tangent_project,
     left_orthogonalize,
     right_orthogonalize,
+    mixed_canonical,
     check_left_orthogonal,
     check_right_orthogonal,
 )
