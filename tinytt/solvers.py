@@ -562,10 +562,12 @@ def amen_solve(
     resets=2,
     verbose=False,
     preconditioner=None,
-    use_cpp=True,
+    use_cpp=False,
     band_diagonal=-1,
     use_single_precision=False,
 ):
+    # `use_cpp` is accepted for backwards compatibility but ignored:
+    # cpp_enabled() always returns False in this build.
     if not (isinstance(A, TT) and isinstance(b, TT)):
         raise InvalidArguments("A and b must be TT instances.")
     if not (A.is_ttm and not b.is_ttm):

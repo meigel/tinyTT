@@ -15,8 +15,11 @@ from tinytt._riemannian import (
     _qr_move_rl,
     left_orthogonalize,
     right_orthogonalize,
+    mixed_canonical,
     horizontal_projection,
     qr_retraction,
+    tangent_project,
+    svd_retraction,
     check_left_orthogonal,
     check_right_orthogonal,
 )
@@ -214,6 +217,44 @@ class TestRightOrthogonalize:
 
 
 # ======================================================================
+# Mixed canonical
+# ======================================================================
+
+class TestMixedCanonical:
+    @NEEDS_CLANG
+    def test_centre_at_every_site_preserves_tensor(self):
+        cores = _make_tt_cores(d=4, n=3, r=3, seed=50)
+        full_before = _tt_full(cores)
+        for k in range(len(cores)):
+            mc = mixed_canonical(cores, k)
+            full_after = _tt_full(mc)
+            np.testing.assert_allclose(full_before, full_after, atol=1e-10)
+
+    @NEEDS_CLANG
+    def test_left_block_left_orthogonal(self):
+        cores = _make_tt_cores(d=4, n=3, r=3, seed=51)
+        k = 2
+        mc = mixed_canonical(cores, k)
+        for j in range(k):
+            assert check_left_orthogonal(mc[j]), f"Core {j} should be left-orthogonal"
+
+    @NEEDS_CLANG
+    def test_right_block_right_orthogonal(self):
+        cores = _make_tt_cores(d=4, n=3, r=3, seed=52)
+        k = 1
+        mc = mixed_canonical(cores, k)
+        for j in range(k + 1, len(mc)):
+            assert check_right_orthogonal(mc[j]), f"Core {j} should be right-orthogonal"
+
+    def test_rejects_out_of_range_k(self):
+        cores = _make_tt_cores(d=3, n=3, r=2, seed=53)
+        with pytest.raises(ValueError):
+            mixed_canonical(cores, k=-1)
+        with pytest.raises(ValueError):
+            mixed_canonical(cores, k=3)
+
+
+# ======================================================================
 # Horizontal projection
 # ======================================================================
 
@@ -360,3 +401,88 @@ class TestCheckOrthogonal:
         rng = np.random.default_rng(3)
         core = tn.tensor(rng.standard_normal((3, 4, 3)))
         assert not check_right_orthogonal(core, tol=1e-6)
+
+
+# ======================================================================
+# tangent_project + svd_retraction (Lubich/Vandereycken construction)
+# ======================================================================
+
+def _tt_dense_from_cores(cores):
+    """Reconstruct dense tensor from a list of 3-D cores."""
+    out = cores[0][0]
+    for c in cores[1:]:
+        out = tn.einsum('...i,ijk->...jk', out, c)
+    return out[..., 0].numpy()
+
+
+class TestTangentProject:
+    @NEEDS_CLANG
+    def test_residual_orthogonal_to_any_tangent(self):
+        """Defining property of the orthogonal projection:
+        <P(Z2), Z - P(Z)> = 0 for any Z2."""
+        rng = np.random.default_rng(0)
+        cores = _make_tt_cores(d=4, n=3, r=3, seed=70)
+        ns = [int(c.shape[1]) for c in cores]
+        Z = rng.standard_normal(ns)
+        proj = tangent_project(cores, Z)
+        proj_dense = _tt_dense_from_cores(proj)
+        residual = Z - proj_dense
+        Z2 = rng.standard_normal(ns)
+        proj2 = _tt_dense_from_cores(tangent_project(cores, Z2))
+        inner = float(np.tensordot(proj2, residual, axes=Z.ndim))
+        denom = float(np.linalg.norm(residual)) * float(np.linalg.norm(proj2))
+        assert abs(inner) <= 1e-8 * max(denom, 1.0), (
+            f"|<P(Z2), Z-P(Z)>| = {abs(inner):.2e}, denom={denom:.2e}"
+        )
+
+    @NEEDS_CLANG
+    def test_projection_idempotent_on_tangent(self):
+        """P(P(Z)) == P(Z) for any Z."""
+        rng = np.random.default_rng(1)
+        cores = _make_tt_cores(d=4, n=3, r=3, seed=71)
+        ns = [int(c.shape[1]) for c in cores]
+        Z = rng.standard_normal(ns)
+        proj1 = tangent_project(cores, Z)
+        proj2 = tangent_project(cores, proj1)
+        d1 = _tt_dense_from_cores(proj1)
+        d2 = _tt_dense_from_cores(proj2)
+        np.testing.assert_allclose(d2, d1, atol=1e-9)
+
+    @NEEDS_CLANG
+    def test_accepts_dense_tensor_input(self):
+        cores = _make_tt_cores(d=3, n=3, r=2, seed=72)
+        ns = [int(c.shape[1]) for c in cores]
+        Z = np.random.default_rng(2).standard_normal(ns)
+        # Both ndarray and tinygrad tensor inputs should work.
+        proj_np = _tt_dense_from_cores(tangent_project(cores, Z))
+        proj_tn = _tt_dense_from_cores(tangent_project(cores, tn.tensor(Z, dtype=tn.float64)))
+        np.testing.assert_allclose(proj_np, proj_tn, atol=1e-12)
+
+
+class TestSVDRetraction:
+    @NEEDS_CLANG
+    def test_riemannian_gd_decreases_loss(self):
+        """One step should decrease f(x) = 0.5||x - target||^2 for any
+        gradient direction far from optimum (with a sensible step)."""
+        rng = np.random.default_rng(0)
+        cores = _make_tt_cores(d=4, n=3, r=2, seed=80)
+        ns = [int(c.shape[1]) for c in cores]
+        target = rng.standard_normal(ns)
+        cur = _tt_dense_from_cores(cores)
+        loss_before = 0.5 * float(np.linalg.norm(cur - target) ** 2)
+        grad = cur - target
+        eta = tangent_project(cores, grad)
+        new_cores = svd_retraction(cores, eta, step_size=0.5, rmax=max(c.shape[0] for c in cores) + 1)
+        loss_after = 0.5 * float(np.linalg.norm(_tt_dense_from_cores(new_cores) - target) ** 2)
+        assert loss_after < loss_before
+
+    @NEEDS_CLANG
+    def test_respects_rmax_bound(self):
+        cores = _make_tt_cores(d=4, n=4, r=3, seed=81)
+        ns = [int(c.shape[1]) for c in cores]
+        Z = np.random.default_rng(3).standard_normal(ns)
+        eta = tangent_project(cores, Z)
+        retracted = svd_retraction(cores, eta, step_size=-1.0, rmax=3)
+        for c in retracted:
+            assert c.shape[0] <= 3
+            assert c.shape[2] <= 3

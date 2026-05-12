@@ -13,6 +13,14 @@ from tinytt._functional import (
     monomial_features,
     legendre_features,
     hermite_features,
+    LegendreFeatures,
+    HermiteFeatures,
+    MonomialFeatures,
+    evaluate,
+    gradient,
+    jacobian,
+    divergence,
+    laplace,
 )
 
 
@@ -167,3 +175,152 @@ class TestConsistency:
             assert len(phi) == 2
             for p in phi:
                 assert _np(p).shape == (10, degree), f"{fn.__name__} wrong shape"
+
+
+# ======================================================================
+# Basis class laplace (second derivative) tests
+# ======================================================================
+
+class TestBasisLaplace:
+    def test_legendre_laplace_values(self):
+        b = LegendreFeatures(degree=4, orthonormal=False)
+        x_np = np.array([[0.0], [0.5]])
+        phi = _np(b.laplace(tn.tensor(x_np[:, 0])))
+        # P0''=0, P1''=0, P2''=3, P3''=15x, P4''=(105x^2-15)/2
+        np.testing.assert_allclose(phi[0], [0.0, 0.0, 3.0, 0.0, -7.5], atol=1e-10)
+        np.testing.assert_allclose(phi[1], [0.0, 0.0, 3.0, 7.5, 5.625], atol=1e-10)
+
+    def test_hermite_laplace_values(self):
+        b = HermiteFeatures(degree=4, orthonormal=False)
+        x_np = np.array([[2.0]])
+        vals = _np(b.laplace(tn.tensor(x_np[0])))
+        # He0''=0, He1''=0, He2''=2, He3''=6x, He4''=12x^2-12
+        # At x=2: 0, 0, 2, 12, 36
+        np.testing.assert_allclose(vals[0], [0.0, 0.0, 2.0, 12.0, 36.0], atol=1e-10)
+
+    def test_monomial_laplace_values(self):
+        b = MonomialFeatures(degree=4)
+        x_np = np.array([[3.0]])
+        vals = _np(b.laplace(tn.tensor(x_np[0])))
+        # j=0:0, j=1:0, j=2:2, j=3:6x, j=4:12x^2
+        # At x=3: 0, 0, 2, 18, 108
+        np.testing.assert_allclose(vals[0], [0.0, 0.0, 2.0, 18.0, 108.0], atol=1e-10)
+
+    def test_laplace_shape_matches_call(self):
+        X = np.random.default_rng(42).uniform(-1, 1, (10, 1))
+        for B in [LegendreFeatures(degree=3), HermiteFeatures(degree=3), MonomialFeatures(degree=3)]:
+            x_t = tn.tensor(X[:, 0])
+            phi = _np(B(x_t))
+            d2 = _np(B.laplace(x_t))
+            assert phi.shape == d2.shape, f"{B.__class__.__name__} shape mismatch"
+
+
+# ======================================================================
+# Free functions: evaluate / gradient / jacobian / divergence / laplace
+# ======================================================================
+
+class TestEvaluate:
+    def test_scalar_1d(self):
+        rng = np.random.RandomState(0)
+        bases = [LegendreFeatures(degree=3)]
+        core = tn.tensor(rng.randn(1, 4, 1).astype(np.float64))
+        x = tn.tensor(np.linspace(-0.9, 0.9, 7)[:, None], dtype=tn.float64)
+        y = evaluate([core], bases, x)
+        assert y.shape == (7,)
+
+    def test_vector_2d(self):
+        rng = np.random.RandomState(1)
+        bases = [LegendreFeatures(degree=2), LegendreFeatures(degree=2)]
+        c0 = tn.tensor(rng.randn(2, 3, 1).astype(np.float64))
+        c1 = tn.tensor(rng.randn(1, 3, 1).astype(np.float64))
+        x = tn.tensor(np.array([[-0.5, 0.3], [0.1, -0.2]]), dtype=tn.float64)
+        y = evaluate([c0, c1], bases, x)
+        assert y.shape == (2, 2)
+
+    def test_matches_numpy_reference(self):
+        rng = np.random.RandomState(2)
+        bases = [MonomialFeatures(degree=3)]
+        core = tn.tensor(rng.randn(1, 4, 1).astype(np.float64))
+        x_np = np.linspace(-0.9, 0.9, 7)
+        x = tn.tensor(x_np[:, None], dtype=tn.float64)
+        y = evaluate([core], bases, x)
+        # Numpy reference using monomial basis
+        phi_np = np.column_stack([x_np ** j for j in range(4)])
+        ref = phi_np @ core.numpy().reshape(-1)
+        np.testing.assert_allclose(y.numpy(), ref, atol=1e-12)
+
+
+class TestGradient:
+    def test_scalar_1d_shape(self):
+        rng = np.random.RandomState(0)
+        bases = [LegendreFeatures(degree=3)]
+        core = tn.tensor(rng.randn(1, 4, 1).astype(np.float64))
+        x = tn.tensor(np.linspace(-0.9, 0.9, 5)[:, None], dtype=tn.float64)
+        g = gradient([core], bases, x)
+        assert g.shape == (5, 1)
+
+    def test_raises_on_vector(self):
+        rng = np.random.RandomState(0)
+        bases = [LegendreFeatures(degree=2), LegendreFeatures(degree=2)]
+        c0 = tn.tensor(rng.randn(2, 3, 1).astype(np.float64))
+        c1 = tn.tensor(rng.randn(1, 3, 1).astype(np.float64))
+        x = tn.tensor(np.array([[-0.5, 0.3]]), dtype=tn.float64)
+        with pytest.raises(ValueError, match="scalar output"):
+            gradient([c0, c1], bases, x)
+
+
+class TestJacobian:
+    def test_scalar_2d_shape(self):
+        rng = np.random.RandomState(0)
+        bases = [LegendreFeatures(degree=2), LegendreFeatures(degree=2)]
+        c0 = tn.tensor(rng.randn(1, 3, 1).astype(np.float64))
+        c1 = tn.tensor(rng.randn(1, 3, 1).astype(np.float64))
+        x = tn.tensor(np.array([[-0.5, 0.3], [0.1, -0.2]]), dtype=tn.float64)
+        j = jacobian([c0, c1], bases, x)
+        assert j.shape == (2, 1, 2)
+
+    def test_vector_2d_shape(self):
+        rng = np.random.RandomState(0)
+        bases = [LegendreFeatures(degree=2), LegendreFeatures(degree=2)]
+        c0 = tn.tensor(rng.randn(2, 3, 1).astype(np.float64))
+        c1 = tn.tensor(rng.randn(1, 3, 1).astype(np.float64))
+        x = tn.tensor(np.array([[-0.5, 0.3]]), dtype=tn.float64)
+        j = jacobian([c0, c1], bases, x)
+        assert j.shape == (1, 2, 2)
+
+
+class TestDivergence:
+    def test_vector_2d_shape(self):
+        rng = np.random.RandomState(0)
+        bases = [LegendreFeatures(degree=2), LegendreFeatures(degree=2)]
+        c0 = tn.tensor(rng.randn(2, 3, 1).astype(np.float64))
+        c1 = tn.tensor(rng.randn(1, 3, 1).astype(np.float64))
+        x = tn.tensor(np.array([[-0.5, 0.3], [0.1, -0.2]]), dtype=tn.float64)
+        d = divergence([c0, c1], bases, x)
+        assert d.shape == (2,)
+
+    def test_raises_on_mismatch(self):
+        rng = np.random.RandomState(0)
+        bases = [LegendreFeatures(degree=2)]
+        c0 = tn.tensor(rng.randn(3, 3, 1).astype(np.float64))  # out_dim=3 != d=1
+        x = tn.tensor(np.array([[-0.5]]), dtype=tn.float64)
+        with pytest.raises(ValueError, match="out_dim"):
+            divergence([c0], bases, x)
+
+
+class TestLaplace:
+    def test_scalar_1d_shape(self):
+        rng = np.random.RandomState(0)
+        bases = [LegendreFeatures(degree=3)]
+        core = tn.tensor(rng.randn(1, 4, 1).astype(np.float64))
+        x = tn.tensor(np.linspace(-0.9, 0.9, 5)[:, None], dtype=tn.float64)
+        l = laplace([core], bases, x)
+        assert l.shape == (5,)
+
+    def test_raises_on_vector(self):
+        rng = np.random.RandomState(0)
+        bases = [LegendreFeatures(degree=2)]
+        c0 = tn.tensor(rng.randn(2, 3, 1).astype(np.float64))
+        x = tn.tensor(np.array([[-0.5]]), dtype=tn.float64)
+        with pytest.raises(ValueError, match="scalar output"):
+            laplace([c0], bases, x)

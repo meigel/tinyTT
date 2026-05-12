@@ -4,17 +4,31 @@ Riemannian (manifold) operations for the fixed-rank TT tensor manifold.
 Provides:
   - _qr_move_lr / _qr_move_rl : single-step QR gauge sweeps
   - left_orthogonalize / right_orthogonalize : full sweep to canonicalise cores
-  - horizontal_projection : project Euclidean gradient to the horizontal space
+  - mixed_canonical : place orthogonality centre at a chosen site
+  - horizontal_projection : project a per-core Euclidean gradient onto the
+    horizontal space of the TT quotient manifold (gauge-aware)
+  - tangent_project : project an ambient-space tensor (TT, tinygrad Tensor, or
+    ndarray) onto T_x M via the Lubich/Vandereycken construction
   - qr_retraction : retract a tangent vector back to the manifold via QR
+    (rank-preserving)
+  - svd_retraction : retract by TT addition + SVD rounding (rank-relaxing)
 
 All functions operate on lists of TT cores following tinyTT's convention:
   cores[k] shape (rk, nk, r_{k+1})  with r0 = rD = 1.
+
+Both projection paths produce the same tangent vector numerically; they
+differ in input form. horizontal_projection takes a list of per-core
+Euclidean gradients (e.g. from autograd); tangent_project takes an
+ambient-space tensor (e.g. a residual b - A·x). The retraction choice
+depends on whether you want strict-rank (qr_retraction) or rank-adaptive
+(svd_retraction) iterations.
 """
 
 from __future__ import annotations
 
 import numpy as np
 import tinytt._backend as tn
+from tinytt._decomposition import round_tt
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +244,42 @@ def right_orthogonalize(cores: list, inplace: bool = False) -> list:
     return cores
 
 
+def mixed_canonical(cores: list, k: int, inplace: bool = False) -> list:
+    """
+    Bring the TT into mixed-canonical form with the orthogonality centre
+    at site ``k``: cores[0..k-1] are left-orthogonal, cores[k+1..d-1] are
+    right-orthogonal, and core k carries the norm.
+
+    Useful for DMRG/AMEn-style algorithms that operate on one site at a
+    time and need orthonormal left/right environments around the active
+    core.
+
+    Parameters
+    ----------
+    cores : list of tensors
+        TT cores, each shape (rk, nk, r_{k+1}).
+    k : int
+        Position of the orthogonality centre, ``0 <= k < d``.
+    inplace : bool
+        If True, modify the input list in place; otherwise clone first.
+
+    Returns
+    -------
+    list
+        The cores in mixed-canonical form.
+    """
+    d = len(cores)
+    if not 0 <= k < d:
+        raise ValueError(f"k must be in [0, {d - 1}], got {k}.")
+    if not inplace:
+        cores = [c.clone() for c in cores]
+    for pos in range(k):
+        _qr_move_lr(cores, pos, preserve_rank=True)
+    for pos in range(d - 1, k, -1):
+        _qr_move_rl(cores, pos, preserve_rank=True)
+    return cores
+
+
 # ---------------------------------------------------------------------------
 # horizontal space projection
 # ---------------------------------------------------------------------------
@@ -412,3 +462,207 @@ def check_right_orthogonal(core: tn.Tensor, tol: float = 1e-10) -> bool:
     qqt = mat @ mat.T
     diff = tn.linalg.norm(qqt - ident)
     return float(diff.numpy().item()) < tol
+
+
+# ---------------------------------------------------------------------------
+# Lubich/Vandereycken tangent-space projection and SVD-retraction
+# ---------------------------------------------------------------------------
+
+def _coerce_to_cores(Z, ref_cores):
+    """Accept TT cores, tinygrad Tensor, or ndarray; return a list of cores
+    with the same mode sizes as ref_cores."""
+    n_modes = [int(c.shape[1]) for c in ref_cores]
+    if isinstance(Z, list):
+        if len(Z) != len(ref_cores):
+            raise ValueError(
+                f"Z has {len(Z)} cores but ref has {len(ref_cores)}."
+            )
+        for k, (zc, rc) in enumerate(zip(Z, ref_cores)):
+            if zc.shape[1] != rc.shape[1]:
+                raise ValueError(
+                    f"Z core {k} mode size {zc.shape[1]} != {rc.shape[1]}."
+                )
+        return Z
+    if isinstance(Z, np.ndarray):
+        Z = tn.tensor(Z, dtype=ref_cores[0].dtype, device=ref_cores[0].device)
+    if tn.is_tensor(Z):
+        # TT-SVD the dense tensor; use a very tight eps so the representation
+        # is essentially exact for downstream projection.
+        from tinytt._decomposition import to_tt
+        cores, _ = to_tt(Z.reshape(n_modes), n_modes, eps=1e-14, rmax=10**9, is_sparse=False)
+        return cores
+    raise TypeError(
+        "Z must be a list of TT cores, a tinygrad Tensor, or an ndarray."
+    )
+
+
+def _build_left_env_z(x_cores, z_cores, k, dtype, device):
+    """L[a, b] for sites 0..k-1 (rx_left, rz_left)."""
+    L = tn.ones((1, 1), dtype=dtype, device=device)
+    for i in range(k):
+        # L[a,b] -> Lp[c,d] = sum_{a,b,n} L[a,b] * x[a,n,c] * z[b,n,d]
+        L = tn.einsum('ab,anc,bnd->cd', L, x_cores[i], z_cores[i]).realize()
+    return L
+
+
+def _build_right_env_z(x_cores, z_cores, k, dtype, device):
+    """R[a, b] for sites k+1..d-1 (rx_right, rz_right)."""
+    d = len(x_cores)
+    R = tn.ones((1, 1), dtype=dtype, device=device)
+    for i in range(d - 1, k, -1):
+        R = tn.einsum('ab,cna,dnb->cd', R, x_cores[i], z_cores[i]).realize()
+    return R
+
+
+def _tt_block_stack_add(a_cores, b_cores, is_ttm=False):
+    """Exact TT addition by block-stacking cores."""
+    d = len(a_cores)
+    new_cores = []
+    for k in range(d):
+        ac, bc = a_cores[k], b_cores[k]
+        ref = ac
+        if is_ttm:
+            ra_l, m, n, ra_r = ac.shape
+            rb_l, _, _, rb_r = bc.shape
+            if k == 0:
+                block = tn.cat([ac, bc], dim=-1)
+            elif k == d - 1:
+                block = tn.cat([ac, bc], dim=0)
+            else:
+                top = tn.cat([ac, tn.zeros([ra_l, m, n, rb_r], dtype=ref.dtype, device=ref.device)], dim=-1)
+                bot = tn.cat([tn.zeros([rb_l, m, n, ra_r], dtype=ref.dtype, device=ref.device), bc], dim=-1)
+                block = tn.cat([top, bot], dim=0)
+        else:
+            ra_l, n, ra_r = ac.shape
+            rb_l, _, rb_r = bc.shape
+            if k == 0:
+                block = tn.cat([ac, bc], dim=-1)
+            elif k == d - 1:
+                block = tn.cat([ac, bc], dim=0)
+            else:
+                top = tn.cat([ac, tn.zeros([ra_l, n, rb_r], dtype=ref.dtype, device=ref.device)], dim=-1)
+                bot = tn.cat([tn.zeros([rb_l, n, ra_r], dtype=ref.dtype, device=ref.device), bc], dim=-1)
+                block = tn.cat([top, bot], dim=0)
+        new_cores.append(block)
+    return new_cores
+
+
+def tangent_project(cores: list, Z) -> list:
+    """
+    Project an ambient-space tensor ``Z`` onto the tangent space at TT
+    represented by ``cores`` (Lubich/Vandereycken construction).
+
+    For each site k = 0..d-1:
+      1. Bring cores into mixed-canonical form at k.
+      2. Contract Z with the (orthonormal) left and right interfaces of the
+         canonical form to get the per-site update δG_k.
+      3. For k < d-1 enforce the gauge condition δG_k.left ⊥ G_k.left via a
+         thin QR projection.
+    Sum the d single-site components into a single TT (rank up to d * r before
+    rounding) by block-stacking cores.
+
+    The result is a *list of cores* (same convention as the rest of this
+    module). For an SVD-truncated version, call ``svd_retraction`` or compose
+    with ``round_tt``.
+
+    Parameters
+    ----------
+    cores : list of tensors
+        Base point on the manifold (the TT at which the tangent space is
+        defined).
+    Z : list of TT cores | tinygrad Tensor | np.ndarray
+        Ambient-space tensor to project. Mode sizes must match ``cores``.
+
+    Returns
+    -------
+    list
+        Cores of the tangent vector represented as a TT.
+    """
+    d = len(cores)
+    z_cores = _coerce_to_cores(Z, cores)
+    ref = cores[0]
+    dtype, device = ref.dtype, ref.device
+
+    summands = []
+    for k in range(d):
+        xc = mixed_canonical(cores, k)
+        L = _build_left_env_z(xc, z_cores, k, dtype, device)         # (rx_L, rz_L)
+        R = _build_right_env_z(xc, z_cores, k, dtype, device)        # (rx_R, rz_R)
+        # δG_k[a, n, c] = sum_{b, b'} L[a, b] * Z_k[b, n, b'] * R[c, b']
+        delta = tn.einsum('ab,bnd,cd->anc', L, z_cores[k], R).realize()
+
+        # Gauge: for k < d-1 force δG_k's left unfolding to be orthogonal to
+        # G_k's column space. xc[k] in mixed-canonical form carries the norm
+        # of the tensor, so its columns are not orthonormal — take a thin QR.
+        if k < d - 1:
+            G_k = xc[k]
+            rL, n, rR = G_k.shape
+            G_left = tn.reshape(G_k, [rL * n, rR])
+            Q, _ = tn.linalg.qr(G_left)
+            delta_left = tn.reshape(delta, [rL * n, rR])
+            delta_left = (delta_left - Q @ (Q.transpose(0, 1) @ delta_left)).realize()
+            delta = tn.reshape(delta_left, [rL, n, rR])
+
+        summand = [c.clone() for c in xc]
+        summand[k] = delta
+        summands.append(summand)
+
+    total = summands[0]
+    for s in summands[1:]:
+        total = _tt_block_stack_add(total, s, is_ttm=False)
+    return total
+
+
+def svd_retraction(cores: list, direction: list, step_size: float,
+                   rmax: int | None = None, eps: float = 1e-12) -> list:
+    """
+    Rank-adaptive retraction: ``cores - step_size * direction`` followed by
+    TT-SVD rounding back to ``rmax``.
+
+    This is the standard retraction in TT-completion / Lubich/Vandereycken
+    settings where the rank is allowed to shrink. For strict-rank Riemannian
+    optimisation use :func:`qr_retraction` instead.
+
+    Parameters
+    ----------
+    cores : list of tensors
+        Current cores on the manifold.
+    direction : list of tensors
+        Tangent direction. If ``direction`` has a different (typically
+        larger) rank than ``cores`` — which is the case for a raw
+        ``tangent_project`` result — the addition is exact (block-stack)
+        and the rounding controls the output rank.
+    step_size : float
+        Step length.
+    rmax : int, optional
+        Maximum TT rank for the rounded result. If omitted, the maximum
+        rank of ``cores`` is used.
+    eps : float
+        SVD truncation tolerance.
+
+    Returns
+    -------
+    list
+        New cores with rank ≤ ``rmax``.
+    """
+    if rmax is None:
+        rmax = max(int(c.shape[0]) for c in cores) if len(cores) > 0 else 1
+        rmax = max(rmax, max(int(c.shape[2]) for c in cores) if len(cores) > 0 else 1)
+
+    # Scale direction by -step_size (rescale first core only) so we don't have
+    # to materialise a separately scaled copy.
+    if cores and len(direction) > 0:
+        d0 = direction[0] * (-float(step_size))
+        scaled_direction = [d0] + [c.clone() for c in direction[1:]]
+    else:
+        scaled_direction = list(direction)
+
+    summed = _tt_block_stack_add(cores, scaled_direction, is_ttm=False)
+
+    # round_tt sweeps internally; just pass the ranks explicitly.
+    R = [1] + [c.shape[2] for c in summed[:-1]] + [1]
+    Rmax = [1] + [int(rmax)] * (len(summed) - 1) + [1]
+    # round_tt calls lr_orthogonal internally; build a temporary core list it
+    # is allowed to mutate.
+    rounded, _ = round_tt([c.clone() for c in summed], R[:], eps, Rmax, is_ttm=False)
+    return rounded

@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import numpy as np
 import tinytt._backend as tn
+from tinytt._functional import evaluate as _evaluate
+from tinytt._functional import divergence as _divergence
 
 
 class ALSResult:
@@ -40,6 +42,62 @@ class ALSResult:
     def __init__(self, cores, loss_history=None):
         self.cores = [tn.tensor(c) for c in cores]
         self.loss_history = loss_history or []
+
+
+class ContinuityFitResult:
+    """Container returned by :func:`als_continuity_fit`.
+
+    Wraps fitted TT cores together with the basis objects so the result
+    can be evaluated and differentiated directly.
+
+    Attributes
+    ----------
+    cores : list of tensors
+        TT cores in the standard convention (``r[0] = out_dim = d``).
+    bases : list of callables
+        Same basis objects passed to :func:`als_continuity_fit`.
+    """
+    def __init__(self, cores, bases):
+        self.cores = cores  # kept as numpy arrays
+        self.bases = bases
+
+    def __call__(self, x):
+        """Evaluate the fitted vector field at ``x``.
+
+        Parameters
+        ----------
+        x : ndarray | Tensor
+            Shape ``(m, d)``.
+
+        Returns
+        -------
+        ndarray
+            ``(m, d)`` when ``d > 1``; ``(m,)`` when ``d == 1``.
+        """
+        if hasattr(x, 'numpy'):
+            x = x.numpy()
+        x_t = tn.tensor(np.asarray(x, dtype=np.float64))
+        cores_t = [tn.tensor(c) for c in self.cores]
+        return _evaluate(cores_t, self.bases, x_t).numpy()
+
+    def divergence(self, x):
+        """Divergence of the fitted vector field at ``x``.
+
+        Parameters
+        ----------
+        x : ndarray | Tensor
+            Shape ``(m, d)``.
+
+        Returns
+        -------
+        ndarray
+            ``(m,)`` — div(V) at each point.
+        """
+        if hasattr(x, 'numpy'):
+            x = x.numpy()
+        x_t = tn.tensor(np.asarray(x, dtype=np.float64))
+        cores_t = [tn.tensor(c) for c in self.cores]
+        return _divergence(cores_t, self.bases, x_t).numpy()
 
 
 def _to_numpy(x):
@@ -274,3 +332,232 @@ def _evaluate_tt(cores, phi_batch):
         Ak = _contract_core(cores[k], phi_batch[k])  # (B, r_k, r_{k+1})
         A = np.einsum('bij,bjk->bik', A, Ak)
     return A.squeeze(-1).squeeze(-1).reshape(B, -1)
+
+
+# ---------------------------------------------------------------------------
+# Continuity equation fitting:  <F_grad, V> + div(V) ≈ Y
+# ---------------------------------------------------------------------------
+
+class _ContinuityEnvBuilder:
+    """Numpy helpers for building left/right TT environments."""
+
+    @staticmethod
+    def left_env(cores, phi, k, batch, output_dim):
+        """Left environment up to core k-1.  Returns (batch, output_dim, r_k)."""
+        if k == 0:
+            eye = np.eye(output_dim).reshape(1, output_dim, output_dim)
+            return np.ones((batch, 1, 1)) * eye
+        env = np.einsum('bm,rmc->brc', phi[0], cores[0])
+        for i in range(1, k):
+            core_eval = np.einsum('bm,rmc->brc', phi[i], cores[i])
+            env = np.einsum('bij,bjk->bik', env, core_eval)
+        return env
+
+    @staticmethod
+    def right_env(cores, phi, k, batch):
+        """Right environment from core k+1 onward.  Returns (batch, r_{k+1})."""
+        d = len(cores)
+        env = None
+        for i in range(d - 1, k, -1):
+            core_eval = np.einsum('bm,rmc->brc', phi[i], cores[i])
+            env = core_eval if env is None else np.einsum('bij,bjk->bik', core_eval, env)
+        if env is None:
+            return np.ones((batch, 1))
+        return env[:, :, 0]
+
+    @staticmethod
+    def left_envs(cores, feature_maps):
+        """List of left environments, one before each core."""
+        envs = []
+        state = None
+        for fm, core in zip(feature_maps, cores):
+            envs.append(state)
+            core_eval = np.einsum('bm,rmc->brc', fm, core)
+            state = core_eval if state is None else np.einsum('bij,bjk->bik', state, core_eval)
+        return envs
+
+    @staticmethod
+    def right_envs(cores, feature_maps):
+        """List of right environments, one after each core."""
+        d = len(cores)
+        envs = [None] * d
+        state = None
+        for i in range(d - 1, -1, -1):
+            envs[i] = state
+            core_eval = np.einsum('bm,rmc->brc', feature_maps[i], cores[i])
+            state = core_eval if state is None else np.einsum('bij,bjk->bik', core_eval, state)
+        return envs
+
+
+def _reshape_local_op(left_channel, feature_map, right_channel):
+    """Reshape into local design matrix: (batch, r_l * n * r_r)."""
+    b = left_channel.shape[0]
+    rl = left_channel.shape[1]
+    nk = feature_map.shape[1]
+    rr = right_channel.shape[1]
+    return (left_channel.reshape(b, rl, 1, 1)
+            * feature_map.reshape(b, 1, nk, 1)
+            * right_channel.reshape(b, 1, 1, rr)).reshape(b, rl * nk * rr)
+
+
+def _als_continuity_step(cores, k, phi, grad_phi, F_grad, Y):
+    """ALS local solve for core k of the continuity fit."""
+    batch = Y.shape[0]
+    d = len(cores)
+    left_val = _ContinuityEnvBuilder.left_env(cores, phi, k, batch, d)
+    right_val = _ContinuityEnvBuilder.right_env(cores, phi, k, batch)
+    rl, nk, rr = cores[k].shape
+
+    # Build derivative feature maps (one per output dim mu)
+    deriv_fmaps = []
+    for mu in range(d):
+        deriv_fmaps.append([grad_phi[i] if i == mu else phi[i] for i in range(d)])
+
+    # Precompute left/right derivative environments at core k
+    left_deriv_at_k = []
+    for mu in range(k):
+        left_envs = _ContinuityEnvBuilder.left_envs(cores, deriv_fmaps[mu])
+        left_deriv_at_k.append(left_envs[k])
+    right_deriv_at_k = []
+    for mu in range(k + 1, d):
+        right_envs = _ContinuityEnvBuilder.right_envs(cores, deriv_fmaps[mu])
+        right_deriv_at_k.append(right_envs[k])
+
+    a_local = np.zeros((batch, rl * nk * rr))
+    for mu in range(d):
+        lch = left_val[:, mu, :]  # (batch, rl)
+
+        # <F_grad, V> part
+        val_row = _reshape_local_op(lch, phi[k], right_val)
+        a_local += F_grad[:, [mu]] * val_row
+
+        # div(V) part
+        if mu < k:
+            ld = left_deriv_at_k[mu][:, mu, :]
+            div_row = _reshape_local_op(ld, phi[k], right_val)
+        elif mu == k:
+            div_row = _reshape_local_op(lch, grad_phi[k], right_val)
+        else:
+            rd = right_deriv_at_k[mu - k - 1]
+            div_row = _reshape_local_op(lch, phi[k], rd)
+        a_local += div_row
+
+    ATA = a_local.T @ a_local
+    ATb = a_local.T @ Y
+    reg = 1e-12 * np.trace(ATA) * np.eye(ATA.shape[0])
+    x = np.linalg.solve(ATA + reg, ATb)
+    cores[k] = x.reshape(rl, nk, rr)
+
+
+def _continuity_prediction(cores, phi, grad_phi, F_grad):
+    """Compute <F_grad, V> + div(V)."""
+    d = len(cores)
+    batch = phi[0].shape[0]
+
+    # V(x)
+    A = np.einsum('bm,rmc->brc', phi[0], cores[0])
+    for k in range(1, d):
+        A = np.einsum('bij,bjk->bik', A, np.einsum('bm,rmc->brc', phi[k], cores[k]))
+    V = A[:, :, 0]  # (batch, d)
+
+    pred = (V * F_grad).sum(axis=1)
+    for mu in range(d):
+        fms = [grad_phi[i] if i == mu else phi[i] for i in range(d)]
+        A_div = np.einsum('bm,rmc->brc', fms[0], cores[0])
+        for k in range(1, d):
+            A_div = np.einsum('bij,bjk->bik', A_div, np.einsum('bm,rmc->brc', fms[k], cores[k]))
+        pred += A_div[:, mu, 0]
+    return pred
+
+
+def _continuity_residual(cores, phi, grad_phi, F_grad, Y):
+    """Relative residual of the continuity equation."""
+    pred = _continuity_prediction(cores, phi, grad_phi, F_grad)
+    num = np.linalg.norm(pred - Y)
+    den = np.linalg.norm(Y) + 1e-30
+    return num / den
+
+
+def als_continuity_fit(X, Y, F_grad, bases, ranks=None, sweeps=5, eps=1e-9, verbose=False):
+    """Fit a vector field ``V`` to sampled stationary continuity data.
+
+    The fitted model solves the least-squares problem
+
+        ⟨F_grad(x), V(x)⟩ + div(V)(x) ≈ Y(x)
+
+    where ``F_grad`` is a known coefficient (e.g. gradient of a potential) and
+    ``V`` is a vector-valued functional TT with ``out_dim = d``.
+
+    Parameters
+    ----------
+    X : ndarray | Tensor
+        Input samples, shape ``(B, d)``.
+    Y : ndarray | Tensor
+        Targets, shape ``(B,)``.
+    F_grad : ndarray | Tensor
+        Coefficient field, shape ``(B, d)``.
+    bases : list of callables
+        Length ``d``.  Each ``bases[k]`` is a basis callable with
+        ``__call__(x)`` and ``grad(x)`` methods.
+    ranks : list of int, optional
+        Internal TT ranks (length ``d - 1``).  Defaults to ``[1, ..., 1]``.
+    sweeps : int
+        Number of full ALS sweeps.
+    eps : float
+        Regularisation strength (ignored; kept for API compatibility).
+    verbose : bool
+        If True, print sweep progress.
+
+    Returns
+    -------
+    ContinuityFitResult
+        Wraps fitted cores (``result.cores``) and bases (``result.bases``);
+        call ``result(x)`` to evaluate and ``result.divergence(x)`` for the
+        divergence.
+    """
+    _ = eps
+    X = _to_numpy(X)
+    Y = _to_numpy(Y)
+    F_grad = _to_numpy(F_grad)
+    B, d = X.shape
+    Y = Y.ravel()
+
+    if ranks is None:
+        ranks_int = [1] * max(d - 1, 0)
+    else:
+        ranks_int = list(ranks)
+
+    R = [d] + ranks_int + [1]  # r[0] = d for vector field
+
+    # ---- initialise cores ----
+    rng = np.random.default_rng(0)
+    n_features = [_determine_degree(b) for b in bases]
+    cores = []
+    for k in range(d):
+        rl, rr = R[k], R[k + 1]
+        nk = n_features[k]
+        cores.append((0.05 * rng.standard_normal((rl, nk, rr))).astype(np.float64))
+
+    # ---- pre-evaluate bases ----
+    phi = []
+    grad_phi = []
+    for k in range(d):
+        pt = bases[k](X[:, k])
+        pn = pt.numpy() if hasattr(pt, 'numpy') else np.asarray(pt)
+        phi.append(np.asarray(pn, dtype=np.float64))
+        gt = bases[k].grad(X[:, k])
+        gn = gt.numpy() if hasattr(gt, 'numpy') else np.asarray(gt)
+        grad_phi.append(np.asarray(gn, dtype=np.float64))
+
+    # ---- ALS sweeps ----
+    for swp in range(sweeps):
+        if verbose:
+            res = _continuity_residual(cores, phi, grad_phi, F_grad, Y)
+            print(f"Sweep {swp + 1:3d}: rel_err = {res:.2e}")
+
+        for k in range(d):
+            _als_continuity_step(cores, k, phi, grad_phi, F_grad, Y)
+        for k in range(d - 1, -1, -1):
+            _als_continuity_step(cores, k, phi, grad_phi, F_grad, Y)
+
+    return ContinuityFitResult(cores, bases)

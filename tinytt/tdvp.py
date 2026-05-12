@@ -101,6 +101,15 @@ def _build_right_envs(psi, H):
     return R
 
 
+def _tt_vector_fro_norm(cores):
+    """Compute Frobenius norm of a TT-vector directly from its cores."""
+    ref = cores[0]
+    gram = tn.ones((1, 1), dtype=ref.dtype, device=ref.device)
+    for core in cores:
+        gram = tn.einsum("ac,anb,cnd->bd", gram, core, tn.conj(core))
+    return tn.sqrt(gram[0, 0])
+
+
 def _heff_one_site(theta, L, R, W):
     return tn.einsum('laL,apqA,rAR,lpr->LqR', L, W, R, theta)
 
@@ -253,9 +262,16 @@ def tdvp_imag_time(
     method="two-site",
     krylov_dim=20,
     krylov_tol=1e-10,
+    normalize=True,
 ):
     """
     Imaginary-time TDVP with one-site or two-site update sweeps.
+
+    With ``normalize=True`` (default) psi is rescaled to unit Frobenius norm
+    after every sweep, so subsequent ``<psi|H|psi>`` evaluations are Rayleigh
+    quotients and the energy decreases monotonically toward the ground state.
+    Set ``normalize=False`` to keep the raw imaginary-time evolution (e.g. if
+    you want to track ``||psi(t)||`` separately).
     """
     if not (isinstance(psi, TT) and isinstance(H, TT)):
         raise InvalidArguments('psi and H must be TT instances.')
@@ -361,6 +377,11 @@ def tdvp_imag_time(
                 psi.cores[i + 1] = B_new
 
                 R[i + 1] = _update_right_env(R[i + 2], psi.cores[i + 1], H.cores[i + 1])
+
+        if normalize:
+            n = float(_tt_vector_fro_norm(psi.cores).numpy().item())
+            if n > 0.0:
+                psi.cores[0] = psi.cores[0] / n
 
     return psi
 
