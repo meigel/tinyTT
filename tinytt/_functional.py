@@ -274,6 +274,50 @@ class LegendreFeatures:
         dP = dP * self._scale[None, :]
         return tn.tensor(dP, dtype=self._dtype, device=self._device)
 
+    def laplace(self, x):
+        """Second derivative ``d²/dx²`` of each basis function.
+
+        Uses the differentiated derivative recurrence:
+          P''_{n+1} = P''_{n-1} + (2n+1)·P'_n
+        with P''_0 = P''_1 = 0, P''_2 = 3.
+
+        Parameters
+        ----------
+        x : ndarray | Tensor
+            Scalar or shape ``(m,)``.
+
+        Returns
+        -------
+        Tensor of shape ``(m, n_features)``.
+        """
+        x_np = np.atleast_1d(_as_numpy(x))
+        m = x_np.shape[0]
+        nb = self.n_features
+
+        # Precompute values P_n and derivatives P'_n for the recurrence
+        P = np.zeros((m, nb), dtype=np.float64)
+        dP = np.zeros((m, nb), dtype=np.float64)
+        if nb >= 1:
+            P[:, 0] = 1.0
+        if nb >= 2:
+            P[:, 1] = x_np
+            dP[:, 1] = 1.0
+        for n in range(1, nb - 1):
+            P[:, n + 1] = (
+                (2.0 * n + 1.0) * x_np * P[:, n]
+                - n * P[:, n - 1]
+            ) / (n + 1.0)
+            dP[:, n + 1] = dP[:, n - 1] + (2.0 * n + 1.0) * P[:, n]
+
+        ddP = np.zeros((m, nb), dtype=np.float64)
+        if nb >= 3:
+            ddP[:, 2] = 3.0  # P''_2 = 3
+        for n in range(2, nb - 1):
+            ddP[:, n + 1] = ddP[:, n - 1] + (2.0 * n + 1.0) * dP[:, n]
+
+        ddP = ddP * self._scale[None, :]
+        return tn.tensor(ddP, dtype=self._dtype, device=self._device)
+
 
 class HermiteFeatures:
     """Probabilist Hermite polynomial basis for a single coordinate.
@@ -353,6 +397,28 @@ class HermiteFeatures:
             dP[:, n] = float(n) * vals_np[:, n - 1]
         return tn.tensor(dP, dtype=self._dtype, device=self._device)
 
+    def laplace(self, x):
+        """Second derivative ``d²/dx²`` of each basis function.
+
+        Uses He''_n(x) = n·(n-1)·He_{n-2}(x).
+
+        Parameters
+        ----------
+        x : ndarray | Tensor
+            Scalar or shape ``(m,)``.
+
+        Returns
+        -------
+        Tensor of shape ``(m, n_features)``.
+        """
+        vals = self.__call__(x)
+        vals_np = vals.numpy() if tn.is_tensor(vals) else np.asarray(vals)
+        nb = self.n_features
+        ddP = np.zeros_like(vals_np)
+        for n in range(2, nb):
+            ddP[:, n] = float(n * (n - 1)) * vals_np[:, n - 2]
+        return tn.tensor(ddP, dtype=self._dtype, device=self._device)
+
 
 class MonomialFeatures:
     """Monomial basis ``(1, x, x^2, ..., x^{degree})`` for a single
@@ -415,3 +481,236 @@ class MonomialFeatures:
         for j in range(2, nb):
             dP[:, j] = float(j) * x_np ** (j - 1)
         return tn.tensor(dP, dtype=self._dtype, device=self._device)
+
+    def laplace(self, x):
+        """Second derivative ``d²/dx²`` of each monomial.
+
+        d²/dx²(x^j) = j·(j-1)·x^{j-2} for j ≥ 2, 0 otherwise.
+
+        Parameters
+        ----------
+        x : ndarray | Tensor
+            Scalar or shape ``(m,)``.
+
+        Returns
+        -------
+        Tensor of shape ``(m, n_features)``.
+        """
+        x_np = np.atleast_1d(_as_numpy(x))
+        m = x_np.shape[0]
+        nb = self.n_features
+        ddP = np.zeros((m, nb), dtype=np.float64)
+        for j in range(2, nb):
+            ddP[:, j] = float(j * (j - 1)) * x_np ** (j - 2)
+        return tn.tensor(ddP, dtype=self._dtype, device=self._device)
+
+
+# ---------------------------------------------------------------------------
+# Free functions for Functional TT evaluation and differential operators
+# ---------------------------------------------------------------------------
+# These work with main's TT core convention:
+#   cores[0]  shape (out_dim, n_0,  r_1)
+#   cores[k]  shape (r_k,      n_k,  r_{k+1})  for 0 < k < d-1
+#   cores[-1] shape (r_{d-1},  n_{d-1}, 1)
+# and main's existing basis callables (LegendreFeatures, HermiteFeatures,
+# MonomialFeatures) which provide __call__(x), grad(x), and laplace(x).
+# ---------------------------------------------------------------------------
+
+
+def evaluate(cores, bases, x):
+    """Evaluate a functional TT at points ``x``.
+
+    Parameters
+    ----------
+    cores : list of tensors
+        TT cores following tinyTT's convention (see module docstring).
+    bases : list of callables
+        ``bases[k](x)`` returns ``(m, n_k)`` feature values.
+    x : tensor
+        Input points, shape ``(m, d)``.
+
+    Returns
+    -------
+    tensor
+        ``(m, out_dim)`` if ``out_dim > 1``, ``(m,)`` if ``out_dim == 1``.
+    """
+    d = len(cores)
+    out_dim = cores[0].shape[0]
+    if x.shape[1] != d:
+        raise ValueError(
+            f"evaluate: x has {x.shape[1]} columns but cores expect {d} "
+            f"dimensions (len(cores)={d})."
+        )
+    phi = [bases[k](x[:, k]) for k in range(d)]
+
+    state = tn.einsum('bm,rmp->brp', phi[0], cores[0])
+    for k in range(1, d):
+        core_eval = tn.einsum('bm,rmp->brp', phi[k], cores[k])
+        state = tn.einsum('bij,bjk->bik', state, core_eval)
+
+    result = state[:, :, 0]  # (m, out_dim)
+    if out_dim == 1:
+        result = result[:, 0]
+    return result
+
+
+def gradient(cores, bases, x):
+    """Gradient of a scalar-valued functional TT.
+
+    Parameters
+    ----------
+    cores : list of tensors
+        TT cores; ``cores[0].shape[0]`` must be 1 (scalar output).
+    bases : list of callables
+    x : tensor, shape ``(m, d)``
+
+    Returns
+    -------
+    tensor
+        ``(m, d)`` --- ``∂f/∂x_j`` for each input dimension.
+    """
+    d = len(cores)
+    out_dim = cores[0].shape[0]
+    if out_dim != 1:
+        raise ValueError(
+            f"gradient requires scalar output (out_dim=1), got out_dim={out_dim}. "
+            "Use jacobian() for vector-valued functions."
+        )
+    if x.shape[1] != d:
+        raise ValueError(
+            f"gradient: x has {x.shape[1]} columns but cores expect {d} dimensions."
+        )
+
+    cols = []
+    for axis in range(d):
+        phi = []
+        for k in range(d):
+            phi.append(bases[k].grad(x[:, k]) if k == axis else bases[k](x[:, k]))
+
+        state = tn.einsum('bm,rmp->brp', phi[0], cores[0])
+        for k in range(1, d):
+            core_eval = tn.einsum('bm,rmp->brp', phi[k], cores[k])
+            state = tn.einsum('bij,bjk->bik', state, core_eval)
+
+        cols.append(state[:, 0, 0])  # (m,)
+
+    return tn.stack(cols, dim=1)  # (m, d)
+
+
+def jacobian(cores, bases, x):
+    """Jacobian of a functional TT.
+
+    Parameters
+    ----------
+    cores : list of tensors
+        TT cores. ``out_dim = cores[0].shape[0]``.
+    bases : list of callables
+    x : tensor, shape ``(m, d)``
+
+    Returns
+    -------
+    tensor
+        ``(m, out_dim, d)`` --- ``∂f_i/∂x_j``.
+    """
+    d = len(cores)
+    out_dim = cores[0].shape[0]
+    if x.shape[1] != d:
+        raise ValueError(
+            f"jacobian: x has {x.shape[1]} columns but cores expect {d} dimensions."
+        )
+
+    cols = []
+    for axis in range(d):
+        phi = []
+        for k in range(d):
+            phi.append(bases[k].grad(x[:, k]) if k == axis else bases[k](x[:, k]))
+
+        state = tn.einsum('bm,rmp->brp', phi[0], cores[0])
+        for k in range(1, d):
+            core_eval = tn.einsum('bm,rmp->brp', phi[k], cores[k])
+            state = tn.einsum('bij,bjk->bik', state, core_eval)
+
+        cols.append(state[:, :, 0])  # (m, out_dim)
+
+    return tn.stack(cols, dim=2)  # (m, out_dim, d)
+
+
+def divergence(cores, bases, x):
+    """Divergence of a vector-valued functional TT.
+
+    ``div(f) = Σ_{i=1}^{d} ∂f_i/∂x_i``
+
+    Parameters
+    ----------
+    cores : list of tensors
+        TT cores. ``out_dim = cores[0].shape[0]`` should equal ``d``.
+    bases : list of callables
+    x : tensor, shape ``(m, d)``
+
+    Returns
+    -------
+    tensor
+        ``(m,)`` --- divergence at each point.
+    """
+    out_dim = cores[0].shape[0]
+    d = len(cores)
+    if out_dim != d:
+        raise ValueError(
+            f"divergence requires out_dim == d (got out_dim={out_dim}, d={d}). "
+            "The function must be a vector field from R^d to R^d."
+        )
+    if x.shape[1] != d:
+        raise ValueError(
+            f"divergence: x has {x.shape[1]} columns but cores expect {d} dimensions."
+        )
+
+    jac = jacobian(cores, bases, x)  # (m, d, d)
+    div = jac[:, 0, 0]
+    for mu in range(1, d):
+        div = div + jac[:, mu, mu]
+    return div
+
+
+def laplace(cores, bases, x):
+    """Laplace (sum of second derivatives) of a scalar-valued functional TT.
+
+    ``Δf = Σ_{i=1}^{d} ∂²f/∂x_i²``
+
+    Parameters
+    ----------
+    cores : list of tensors
+        TT cores; ``cores[0].shape[0]`` must be 1 (scalar output).
+    bases : list of callables
+        Each basis must provide ``laplace(x)`` returning second derivatives.
+    x : tensor, shape ``(m, d)``
+
+    Returns
+    -------
+    tensor
+        ``(m,)`` --- ``Δf`` at each point.
+    """
+    d = len(cores)
+    out_dim = cores[0].shape[0]
+    if out_dim != 1:
+        raise ValueError(
+            f"laplace requires scalar output (out_dim=1), got out_dim={out_dim}."
+        )
+    if x.shape[1] != d:
+        raise ValueError(
+            f"laplace: x has {x.shape[1]} columns but cores expect {d} dimensions."
+        )
+
+    result = tn.zeros((x.shape[0],), dtype=cores[0].dtype, device=cores[0].device)
+    for axis in range(d):
+        phi = []
+        for k in range(d):
+            phi.append(bases[k].laplace(x[:, k]) if k == axis else bases[k](x[:, k]))
+
+        state = tn.einsum('bm,rmp->brp', phi[0], cores[0])
+        for k in range(1, d):
+            core_eval = tn.einsum('bm,rmp->brp', phi[k], cores[k])
+            state = tn.einsum('bij,bjk->bik', state, core_eval)
+
+        result = result + state[:, 0, 0]
+
+    return result
