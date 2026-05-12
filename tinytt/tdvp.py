@@ -102,6 +102,7 @@ def _build_right_envs(psi, H):
 
 
 def _tt_vector_fro_norm(cores):
+    """Compute Frobenius norm of a TT-vector directly from its cores."""
     ref = cores[0]
     gram = tn.ones((1, 1), dtype=ref.dtype, device=ref.device)
     for core in cores:

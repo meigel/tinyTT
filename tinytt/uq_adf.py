@@ -520,7 +520,7 @@ def uq_adf(measurements, dimensions, basis, targeteps=1e-8, maxitr=1000, device=
     last_rank_update = 0
     n_samples = len(solutions)
     if n_samples == 0:
-        raise ValueError("measurements must contain at least one sample.")
+        raise ValueError("The measurements list must contain at least one sample.")
 
     iteration = 0
     while maxitr == 0 or iteration < maxitr:
