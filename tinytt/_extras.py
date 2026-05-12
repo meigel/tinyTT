@@ -191,6 +191,77 @@ def dot(a, b, axis=None):
     return inner(a, b)
 
 
+def add(a, b, eps=1e-12, rmax=sys.maxsize):
+    """
+    TT-native addition via block-diagonal core concatenation.
+    
+    Computes c = a + b without reconstructing full tensors.  The sum
+    TT is formed by concatenating cores block-diagonally (ranks add),
+    then optionally rounding to reduce rank.
+    
+    Parameters
+    ----------
+    a, b : TT
+        TT tensors with the same shape.
+    eps : float
+        Rounding threshold (default 1e-12).  Set to 0 to skip rounding.
+    rmax : int
+        Maximum rank after rounding.
+    
+    Returns
+    -------
+    TT
+    """
+    if not isinstance(a, tinytt._tt_base.TT) or not isinstance(b, tinytt._tt_base.TT):
+        raise InvalidArguments("Both operands should be TT instances.")
+    if a.is_ttm != b.is_ttm:
+        raise IncompatibleTypes("Both TTs must be either vectors or matrices.")
+    if a.is_ttm:
+        if a.M != b.M or a.N != b.N:
+            raise ShapeMismatch("TTM shapes do not match.")
+    elif a.N != b.N:
+        raise ShapeMismatch("TT shapes do not match.")
+    
+    d = len(a.cores)
+    dtype = a.cores[0].dtype
+    device = a.cores[0].device
+    new_cores = []
+    
+    for i in range(d):
+        ac = a.cores[i]
+        bc = b.cores[i]
+        
+        if not a.is_ttm:
+            rl, n, rr = ac.shape
+            sl, _, sr = bc.shape
+        else:
+            rl, m, n, rr = ac.shape
+            sl, _, _, sr = bc.shape
+        
+        if i == 0:
+            # First core: cat along right-rank dim
+            core = tn.cat([ac, bc], dim=-1)
+        elif i == d - 1:
+            # Last core: cat along left-rank dim
+            core = tn.cat([ac, bc], dim=0)
+        else:
+            # Middle cores: block-diagonal
+            if not a.is_ttm:
+                top = tn.cat([ac, tn.zeros((rl, n, sr), dtype=dtype, device=device)], dim=2)
+                bot = tn.cat([tn.zeros((sl, n, rr), dtype=dtype, device=device), bc], dim=2)
+            else:
+                top = tn.cat([ac, tn.zeros((rl, m, n, sr), dtype=dtype, device=device)], dim=3)
+                bot = tn.cat([tn.zeros((sl, m, n, rr), dtype=dtype, device=device), bc], dim=3)
+            core = tn.cat([top, bot], dim=0)
+        
+        new_cores.append(core)
+    
+    result = tinytt._tt_base.TT(new_cores)
+    if eps > 0 and rmax > 0:
+        result = result.round(eps=eps, rmax=rmax)
+    return result
+
+
 def elementwise_divide(a, b):
     if isinstance(a, tinytt._tt_base.TT) and isinstance(b, tinytt._tt_base.TT):
         if a.is_ttm != b.is_ttm:

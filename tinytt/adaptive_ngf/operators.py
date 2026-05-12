@@ -88,7 +88,55 @@ def dot(x: tt.TT, y: tt.TT, dense_debug: bool = False) -> float:
     return float(val.numpy().item() if hasattr(val, "numpy") else val)
 
 
+def dot_tt(x: tt.TT, y: tt.TT) -> float:
+    """TT-native inner product via sequential core contraction.
+    
+    Computes ⟨x, y⟩ = Σ_{i1,...,id} x(i1,...id) * y(i1,...,id)
+    without reconstructing the full N-dimensional tensor.
+    
+    Complexity: O(d · r³ · n) vs O(N) for dense reconstruction.
+    """
+    import tinytt._backend as tn
+    
+    xc = x.cores
+    yc = y.cores
+    d = len(xc)
+    
+    if d == 0:
+        return 0.0
+    
+    # Contract core 0: (n0, r1) × (n0, s1) → (r1, s1)
+    M = tn.einsum('iα,iβ->αβ', xc[0][0], yc[0][0])
+    
+    # Middle cores: (r_{i}, s_{i}) × (ri, ni, r_{i+1}) × (si, ni, s_{i+1}) → (r_{i+1}, s_{i+1})
+    for i in range(1, d - 1):
+        M = tn.einsum('αβ,αiν,βiμ->νμ', M, xc[i], yc[i])
+    
+    # Last core: (r_{d-1}, s_{d-1}) × (r_{d-1}, n_{d-1}) × (s_{d-1}, n_{d-1}) → scalar
+    if d > 1:
+        result = tn.einsum('αβ,αi,βi->', M, xc[-1][:, :, 0], yc[-1][:, :, 0])
+    else:
+        result = tn.einsum('i,i->', xc[0][0, :, 0], yc[0][0, :, 0])
+    
+    return float(result.numpy().item())
+
+
+def dot(x: tt.TT, y: tt.TT, dense_debug: bool = False) -> float:
+    if dense_debug:
+        return float(np.vdot(x.numpy().reshape(-1), y.numpy().reshape(-1)).real)
+    return float(tt.inner(x, y).numpy().item())
+
+
 def axpy_tt(alpha: float, x: tt.TT, beta: float, y: tt.TT, eps: float = 1e-12) -> tt.TT:
+    """a·x + b·y using native TT addition when possible."""
+    if isinstance(x, tt.TT) and isinstance(y, tt.TT):
+        if beta == 0.0:
+            return x.clone() if alpha == 1.0 else tt.TT([alpha * c for c in x.cores])
+        if alpha == 1.0 and beta == 1.0:
+            return tt.add(x, y, eps=eps, rmax=1024)
+        if alpha == 1.0 and beta == -1.0:
+            return x - y
+    # Fallback: dense path
     z = alpha * x.numpy() + beta * y.numpy()
     return tt.TT(z.reshape(x.N)).round(eps=eps)
 

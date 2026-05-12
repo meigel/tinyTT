@@ -286,12 +286,20 @@ class TT:
         raise InvalidArguments("Invalid arguments.")
 
     def __add__(self, other):
+        if isinstance(other, TT):
+            import tinytt._extras as _extras
+            return _extras.add(self, other, eps=0.0, rmax=0)  # no round, keep exact
         return self._binary_full(other, lambda a, b: a + b)
 
     def __radd__(self, other):
         return self._binary_full(other, lambda a, b: a + b, reverse=True)
 
     def __sub__(self, other):
+        if isinstance(other, TT):
+            import tinytt._extras as _extras
+            # a - b = a + (-b) = a + (negate first core of b)
+            b_neg = TT([-c.clone() if i == 0 else c.clone() for i, c in enumerate(other.cores)])
+            return _extras.add(self, b_neg, eps=0.0, rmax=0)
         return self._binary_full(other, lambda a, b: a - b)
 
     def __rsub__(self, other):
