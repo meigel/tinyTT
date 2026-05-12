@@ -25,6 +25,7 @@ from .operators import (
     apply_operator,
     axpy_tt,
     dot,
+    dot_tt,
 )
 from .adaptive_solver import adaptive_ngf_solve
 
@@ -55,6 +56,7 @@ __all__ = [
     "DiagonalOperator",
     "TTMatrixOperator",
     "dot",
+    "dot_tt",
     "axpy_tt",
     "apply_operator",
     "adaptive_ngf_solve",

@@ -56,6 +56,7 @@ def adaptive_ngf_solve(
     b: tt.TT,
     opts: AdaptiveOptions | None = None,
     x0: tt.TT | None = None,
+    metric: HilbertMetric | None = None,
     verbose: bool = False,
 ) -> tt.TT:
     r"""
@@ -83,6 +84,10 @@ def adaptive_ngf_solve(
         Configuration options (defaults used if None).
     x0 : TT or None
         Initial guess.  If None, a rank-1 ones tensor is used.
+    metric : HilbertMetric or None
+        Riemannian metric for the natural gradient.  If None, the
+        ``EnergyMetric`` is used for non-identity A and the
+        ``EuclideanMetric`` for identity A.
     verbose : bool
         If True, print progress information.
 
@@ -99,11 +104,11 @@ def adaptive_ngf_solve(
 
     # ── build energy and metric ───────────────────────────────────────
     energy = QuadraticEnergy(A, b, dense_debug=ngf_opts.dense_debug)
-    metric: HilbertMetric
-    if isinstance(_as_linear_operator(A), IdentityOperator):
-        metric = EuclideanMetric(dense_debug=ngf_opts.dense_debug)
-    else:
-        metric = EnergyMetric(A, dense_debug=ngf_opts.dense_debug)
+    if metric is None:
+        if isinstance(_as_linear_operator(A), IdentityOperator):
+            metric = EuclideanMetric(dense_debug=ngf_opts.dense_debug)
+        else:
+            metric = EnergyMetric(A, dense_debug=ngf_opts.dense_debug)
 
     # ── initial guess ────────────────────────────────────────────────
     if x0 is not None:
