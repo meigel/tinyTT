@@ -23,7 +23,7 @@ import tinytt as tt
 import tinytt._backend as tn
 
 from .energy import QuadraticEnergy
-from .metric import HilbertMetric
+from .metric import EuclideanMetric, HilbertMetric
 
 
 def _scalar(t):
@@ -97,14 +97,14 @@ def local_ng_step(
     # ── 1. Build the local Gramian ────────────────────────────────────
     G = metric.gramian(cores, k)                   # (dim, dim), dense np
 
-    # Regularise
-    g_norm = np.linalg.norm(G)
-    reg = lambda_abs + lambda_rel * g_norm
+    # Adaptive regularisation — ensure κ(G_reg) ≤ kappa_max
+    evals = np.linalg.eigvalsh(G)
+    e_max = evals[-1]
+    reg = max(lambda_abs, lambda_rel * e_max, e_max / kappa_max)
     G_reg = G + reg * np.eye(dim, dtype=G.dtype)
 
     # Condition-number check
-    evals = np.linalg.eigvalsh(G_reg)
-    kappa = evals[-1] / max(evals[0], 1e-30)
+    kappa = (e_max + reg) / max(evals[0] + reg, 1e-30)
     if kappa > kappa_max and verbose:
         print(f"  [local_ng k={k}] high condition number κ={kappa:.2e}")
 
@@ -192,6 +192,210 @@ def local_ng_step(
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Two-site DMRG sweep (fast path for identity A)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _build_left_frame_tg(cores, k):
+    """Left frame with tinygrad tensors (GPU-compatible). Same as
+    build_left_frame but returns tinygrad Tensor, not numpy array."""
+    d = len(cores)
+    if k == 0:
+        return tn.ones((1, 1), dtype=cores[0].dtype, device=cores[0].device)
+    left = cores[0][0]  # (n_0, r_1)
+    for i in range(1, k):
+        ci = cores[i]
+        left = tn.tensordot(left, ci, axes=([-1], [0]))
+        left = left.reshape(-1, ci.shape[2])
+    return left
+
+
+def _build_right_frame_tg(cores, k):
+    """Right frame with tinygrad tensors (GPU-compatible)."""
+    d = len(cores)
+    if k == d - 1:
+        return tn.ones((1, 1), dtype=cores[0].dtype, device=cores[0].device)
+    c_last = cores[-1]
+    right = c_last[:, :, 0]  # (r_{d-1}, n_{d-1})
+    for i in range(d - 2, k, -1):
+        ci = cores[i]
+        right = tn.tensordot(ci, right, axes=([-1], [0]))
+        right = right.reshape(ci.shape[0], -1)
+    return right
+
+
+def two_site_dmrg_sweep(energy, metric, cores, round_eps=1e-12, rmax=128,
+                         lambda_abs=1e-12, lambda_rel=1e-8, kappa_max=1e8,
+                         dense_debug=True):
+    """One two-site DMRG sweep.
+
+    For EuclideanMetric (identity A): converges in 1 pass by projecting
+    the RHS onto the two-site subspace (direct ALS).
+
+    For EnergyMetric (general A): builds the two-site Gramian, solves
+    the local system, Armijo line search, then SVD-splits.
+
+    Works with tinygrad tensors for both paths.
+
+    Parameters
+    ----------
+    energy : QuadraticEnergy
+    metric : HilbertMetric
+    cores : list of tinygrad Tensors
+    round_eps, rmax : float, int
+        Rounding parameters after SVD split.
+    dense_debug : bool
+    """
+    from tinytt._riemannian import left_orthogonalize
+    from .local_frames import build_left_frame, build_right_frame, build_tangent_basis, build_two_site_tensor
+
+    d = len(cores)
+    # Left-orthogonalize for balanced frames
+    cores = left_orthogonalize(cores, inplace=False)
+
+    # ── Identity fast path ──────────────────────────────────────────
+    is_identity = isinstance(metric, EuclideanMetric)
+
+    for k in range(d - 1):
+        rk, nk, rkp1 = cores[k].shape
+        nkp1 = cores[k + 1].shape[1]
+        rkp2 = cores[k + 1].shape[2]
+
+        # Build frames
+        left_np = build_left_frame(cores, k)           # (N_left, r_k) numpy
+        right_np = build_right_frame(cores, k + 1)     # (r_{k+2}, N_right) numpy
+        N_left = left_np.shape[0]
+        N_right = right_np.shape[1]
+
+        if is_identity:
+            # Fast path: project RHS onto two-site space
+            b_full = energy.b.full().numpy()
+            b_2d = b_full.reshape(N_left, nk, nkp1, N_right)
+            W = np.einsum('lx,lmnz,yz->xmny', left_np, b_2d, right_np)
+
+        else:
+            # General path: build Gramian, solve, Armijo
+            Au = energy.A.apply(tt.TT(cores))
+            grad_full = (Au.full().numpy() - energy.b.full().numpy()).reshape(-1)
+            dim_2 = rk * nk * nkp1 * rkp2
+
+            # Build two-site tangent basis B: (N, dim_2)
+            left_tg = _build_left_frame_tg(cores, k)   # tinygrad
+            right_tg = _build_right_frame_tg(cores, k + 1)
+            B = build_tangent_basis(left_np, right_np, n_k=nk * nkp1)
+            # ^ This only handles one physical dimension. For two, we need
+            #   a different approach. Let's build it manually.
+
+            # Build B for two-site space via Kronecker product:
+            # B_{(l,i,j,r)} = L[:,l] ⊗ e_i ⊗ e_j ⊗ R[r,:]
+            dim_2 = rk * nk * nkp1 * rkp2
+            N = N_left * nk * nkp1 * N_right
+            B = np.zeros((N, dim_2), dtype=np.float64)
+            col = 0
+            for l in range(rk):
+                lc = left_np[:, l]
+                for i in range(nk):
+                    ei = np.eye(nk)[i]
+                    tmp1 = np.outer(lc, ei).ravel()    # (N_left*nk,)
+                    for j in range(nkp1):
+                        ej = np.eye(nkp1)[j]
+                        tmp2 = np.outer(tmp1, ej).ravel()  # (N_left*nk*nkp1,)
+                        for r in range(rkp2):
+                            row = right_np[r, :]
+                            B[:, col] = np.outer(tmp2, row).ravel()
+                            col += 1
+
+            # Gramian and projected gradient
+            A_dense = metric.M.dense_matrix()
+            G = B.T @ A_dense @ B
+            g_proj = B.T @ grad_full
+
+            # Solve with regularization
+            evals = np.linalg.eigvalsh(G)
+            e_max = max(evals[-1], 1e-30)
+            reg = max(lambda_abs, lambda_rel * e_max, e_max / kappa_max)
+            G_reg = G + reg * np.eye(dim_2, dtype=G.dtype)
+
+            delta_vec = np.linalg.solve(G_reg, -g_proj)
+            delta_W = delta_vec.reshape(rk, nk, nkp1, rkp2)
+
+            # Armijo line search
+            W_current = build_two_site_tensor(cores, k)  # (rk, nk, nkp1, rkp2)
+            E0 = energy(tt.TT(cores))
+            slope = float(g_proj @ delta_vec)
+            alpha = 1.0
+            W_new = None
+            for _ in range(30):
+                W_try = W_current + alpha * delta_W
+                # Build temporary cores
+                u_t, s_t, vt_t = np.linalg.svd(
+                    W_try.reshape(rk * nk, nkp1 * rkp2), full_matrices=False)
+                r_t = min(rk * nk, nkp1 * rkp2, rmax)
+                u_t = u_t[:, :r_t]
+                s_t = s_t[:r_t]
+                vt_t = vt_t[:r_t, :]
+                try_cores = list(cores)
+                try_cores[k] = tn.tensor(u_t.reshape(rk, nk, r_t),
+                                          dtype=cores[k].dtype, device=cores[k].device)
+                try_cores[k+1] = tn.tensor(
+                    (np.diag(s_t) @ vt_t).reshape(r_t, nkp1, rkp2),
+                    dtype=cores[k+1].dtype, device=cores[k+1].device)
+                E1 = energy(tt.TT(try_cores))
+                if E1 <= E0 + 1e-4 * alpha * slope:
+                    W_new = W_try
+                    break
+                alpha *= 0.5
+                if alpha < 1e-14:
+                    break
+
+            if W_new is None:
+                continue  # skip this bond
+
+            # Final SVD split of accepted W
+            W_mat = W_new.reshape(rk * nk, nkp1 * rkp2)
+            u, s, vt = np.linalg.svd(W_mat, full_matrices=False)
+            r_eff = min(rkp1, rk * nk, nkp1 * rkp2, rmax)
+            if round_eps > 0:
+                s_cum = np.sqrt(np.maximum(
+                    1 - np.cumsum(s**2) / np.sum(s**2), 0))
+                r_trunc = int(np.sum(s_cum < round_eps)) if len(s_cum) > 0 and s_cum[0] > round_eps else 0
+                r_eff = max(1, min(r_eff, r_trunc + 1))
+            r_eff = max(1, min(r_eff, rk * nk, nkp1 * rkp2, rmax))
+
+            u = u[:, :r_eff]
+            s = s[:r_eff]
+            vt = vt[:r_eff, :]
+            new_left = u.reshape(rk, nk, r_eff)
+            new_right = (np.diag(s) @ vt).reshape(r_eff, nkp1, rkp2)
+            cores[k] = tn.tensor(new_left, dtype=cores[k].dtype, device=cores[k].device)
+            cores[k + 1] = tn.tensor(new_right, dtype=cores[k+1].dtype, device=cores[k+1].device)
+            continue
+
+        # ── Identity path continues here (is_identity=True) ─────────
+        # Unfold W for SVD split
+        W_mat = W.reshape(rk * nk, nkp1 * rkp2)
+        u, s, vt = np.linalg.svd(W_mat, full_matrices=False)
+
+        r_eff = min(rkp1, rk * nk, nkp1 * rkp2, rmax)
+        if round_eps > 0:
+            s_cum = np.sqrt(np.maximum(
+                1 - np.cumsum(s**2) / np.sum(s**2), 0))
+            r_trunc = int(np.sum(s_cum < round_eps)) if len(s_cum) > 0 and s_cum[0] > round_eps else 0
+            r_eff = max(1, min(r_eff, r_trunc + 1))
+        r_eff = max(1, min(r_eff, rk * nk, nkp1 * rkp2, rmax))
+
+        u = u[:, :r_eff]
+        s = s[:r_eff]
+        vt = vt[:r_eff, :]
+        new_left = u.reshape(rk, nk, r_eff)
+        new_right = (np.diag(s) @ vt).reshape(r_eff, nkp1, rkp2)
+        cores[k] = tn.tensor(new_left, dtype=cores[k].dtype, device=cores[k].device)
+        cores[k + 1] = tn.tensor(new_right, dtype=cores[k+1].dtype, device=cores[k+1].device)
+
+    return cores
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Full sweep
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -221,6 +425,9 @@ def fixed_rank_ngf_sweep(
     Each core update uses the ``local_ng_step`` function which combines
     a Gramian solve with Armijo line search.
 
+    **Fast path:** When the metric is Euclidean (identity A), uses a
+    single two-site DMRG sweep which converges in 1 pass.
+
     Parameters
     ----------
     energy : QuadraticEnergy
@@ -245,6 +452,20 @@ def fixed_rank_ngf_sweep(
     """
     d = len(cores)
 
+    # ═─ Fast path: two-site DMRG sweep (identity only) ──────────╗
+    if isinstance(metric, EuclideanMetric):
+        cores = two_site_dmrg_sweep(
+            energy, metric, cores,
+            round_eps=1e-12, rmax=128,
+            lambda_abs=lambda_abs, lambda_rel=lambda_rel, kappa_max=kappa_max,
+            dense_debug=dense_debug,
+        )
+        if verbose:
+            E1 = energy(tt.TT(cores))
+            print(f"  [two-site DMRG] E_end   = {E1:.12e}")
+        return cores, False, 1
+
+    # ═─ Standard path: single-core alternating NG ──────────────╗
     converged = False
     n_iters = 0
 
@@ -273,7 +494,6 @@ def fixed_rank_ngf_sweep(
                 verbose=verbose,
             )
             if accepted:
-                # Measure relative change
                 diff_norm = np.linalg.norm(
                     cores[k].numpy() - cores_old[k].numpy()
                 )
