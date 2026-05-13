@@ -71,8 +71,8 @@ class TTMatrixOperator:
         return self.A @ u
 
     def rayleigh_upper_bound(self) -> float:
-        A = self.dense_matrix()
-        return float(np.linalg.norm(A, ord=2))
+        M = self.dense_matrix()
+        return float(np.linalg.norm(M, ord=2))
 
     def dense_matrix(self) -> np.ndarray:
         n = int(np.prod(self.A.N))

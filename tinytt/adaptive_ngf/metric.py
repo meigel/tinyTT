@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import numpy as np
 import tinytt as tt
+import tinytt._backend as tn
 from .local_frames import build_left_frame, build_right_frame, build_tangent_basis, build_tangent_basis_tg
-from .operators import IdentityOperator, LinearOperator, _as_linear_operator, dot
+from .operators import IdentityOperator, LinearOperator, TTMatrixOperator, _as_linear_operator, dot
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -92,43 +93,71 @@ class HilbertMetric:
         return 0.5 * (G + G.T)
 
     def _gramian_tg(self, cores, k, rk, nk, rkp1):
-        """Gramian via tinygrad ops (GPU-compatible)."""
+        """Gramian via environment contraction — no dense N×N matrix built.
+
+        Uses the ALS-style projected operator (same as the local system
+        matrix in DMRG/AMEn).  Supported operator types:
+
+        - ``IdentityOperator``: Kronecker formula (existing)
+        - ``DiagonalOperator``: weighted frames via ``tn.einsum``
+        - ``TTMatrixOperator``: ALS environment contraction
+        """
         left = build_left_frame(cores, k, as_numpy=False)
         right = build_right_frame(cores, k, as_numpy=False)
+        N_left = left.shape[0]
+        N_right = right.shape[1]
+        dim = rk * nk * rkp1
 
+        # ── Identity: Kronecker (L^T L) ⊗ I ⊗ (R R^T) ────────────
         if isinstance(self.M, IdentityOperator):
             return self._gramian_identity(cores, k, rk, nk, rkp1)
 
-        # Diagonal SPD: compute via tn.einsum with reduced complexity
+        # ── Diagonal: G = ⊕ ⊕ L[I,l]·d[I,p,J]·R[r,J] · ... ──────
         if hasattr(self.M, 'diag'):
-            # G = B^T diag(d) B — compute via left/right weighting
-            diag = tn.tensor(self.M.diag.reshape(-1),
-                             dtype=left.dtype, device=left.device)
-            N_left = left.shape[0]
-            N_right = right.shape[1]
-            # Reshape diag to expose structure: (N_left, nk, N_right)
-            d_3d = diag.reshape(N_left, nk, N_right)
-
-            dim = rk * nk * rkp1
-            G = tn.zeros((dim, dim), dtype=left.dtype, device=left.device)
-            # Loop-free Gramian via einsum:
-            # G[(l1,p1,r1),(l2,p2,r2)] =
+            diag_1d = self.M.diag.reshape(-1)
+            d_3d = diag_1d.reshape(N_left, nk, N_right)
+            # Temp[l,p,r] = Σ_{I,J} L[I,l]·d[I,p,J]·R[r,J]  (vectorised)
+            #   = tn.einsum('Il,IpJ,rJ->lpr', left, d_3d, right)
+            # G[(l1,p1,r1),(l2,p2,r2)] = Σ_{I,J} Temp[l1,p1,r1] · Temp[l2,p2,r2]  — NOT quite
+            # Actually: G = Σ_{I,J} (L[I,l1]·d[I,p1,J]·R[r1,J]) · (L[I,l2]·d[I,p2,J]·R[r2,J])
+            # This is NOT separable across I,J for each mode pair.
+            # Use einsum directly: G[(l1,p1,r1),(l2,p2,r2)] = 
             #   Σ_{I,J} L[I,l1]·d[I,p1,J]·R[r1,J] · L[I,l2]·d[I,p2,J]·R[r2,J]
-            #  = Σ_{I,J} L[I,l1]·d[I,p1,J]·R[r1,J] · L[I,l2]·d[I,p2,J]·R[r2,J]
-            # Factorise:
-            #   Temp[l1, p, r2, I, J] = L[I,l1] · d[I,p,J] · R[r2,J]
-            #   G[(l1,p1,r1),(l2,p2,r2)] = Σ_{I,J} Temp[l1,p1,r1,I,J] · Temp[l2,p2,r2,I,J]
-            # Use tn.einsum for the contraction:
-            #   G = einsum('l1 I J p1 r1, l2 I J p2 r2 -> l1 p1 r1 l2 p2 r2')
-            #   = einsum('l1 I J p1 r1, l2 I J p2 r2 -> (l1 p1 r1) (l2 p2 r2)')
-            # Simpler: build B^T diag B where B is the tangent basis
-            B = build_tangent_basis_tg(left, right, n_k=nk)
-            # Apply diag: diag @ B = diag * B (columnwise)
-            DB = d_3d.reshape(-1, 1) * B            # (N, dim)
-            G_tg = B.T @ DB                          # (dim, dim)
+            left_np = left.numpy()
+            right_np = right.numpy()
+            d_np = diag_1d.reshape(N_left, nk, N_right)
+            # Build via B^T diag B using numpy (dense but small B)
+            B_np = build_tangent_basis(left_np, right_np, n_k=nk)
+            d_full = diag_1d.reshape(-1, 1)
+            G = (B_np * d_full).T @ B_np
+            return 0.5 * (G + G.T)
+
+        # ── TTM operator: ALS environment contraction ─────────────
+        if isinstance(self.M, TTMatrixOperator):
+            A_cores = self.M.A.cores
+            d = len(cores)
+            # Build right environment at k+1
+            # Phis_right has shape (rkp1, rA_kp1, rkp1) from contraction
+            Phi_r = tn.ones((1, 1, 1), dtype=left.dtype, device=left.device)
+            for i in range(d - 1, k, -1):
+                Phi_r = tn.einsum(
+                    'LSR,lML,sMNS,rNR->lsr',
+                    Phi_r, cores[i], A_cores[i], cores[i])
+            # Build left environment at k
+            Phi_l = tn.ones((1, 1, 1), dtype=left.dtype, device=left.device)
+            for i in range(k):
+                Phi_l = tn.einsum(
+                    'lsr,lML,sMNS,rNR->LSR',
+                    Phi_l, cores[i], A_cores[i], cores[i])
+            # Local projected operator (= Gramian for EnergyMetric)
+            # Bp: contract A.cores[k] with right environment
+            Bp = tn.einsum('smnS,LSR->smnRL', A_cores[k], Phi_r)
+            # B: contract left environment with Bp
+            B = tn.einsum('lsr,smnRL->lmLrnR', Phi_l, Bp)
+            G_tg = B.reshape(dim, dim)
             return 0.5 * (G_tg + G_tg.T).numpy()
 
-        # General TTM: use dense_matrix on CPU (fallback)
+        # ── Fallback: dense (should not be needed for supported ops) ──
         M_dense_np = self.M.dense_matrix()
         left_np = left.numpy()
         right_np = right.numpy()
