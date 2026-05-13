@@ -437,19 +437,21 @@ def fixed_rank_ngf_sweep(
     """
     d = len(cores)
 
-    # ═─ Two-site DMRG sweep (identity / EuclideanMetric only) ──╗
+    # ═─ Two-site DMRG sweep (all metrics) ──────────────────────╗
+    # Initializes cores via joint 2-core updates; single-core sweeps refine.
+    cores = two_site_dmrg_sweep(
+        energy, metric, cores,
+        round_eps=1e-12, rmax=128,
+        dense_debug=dense_debug,
+    )
+    if verbose:
+        E1 = energy(tt.TT(cores))
+        print(f"  [two-site DMRG] E_end   = {E1:.12e}")
+    # For identity, the two-site sweep converges in 1 pass — skip refinement.
     if isinstance(metric, EuclideanMetric):
-        cores = two_site_dmrg_sweep(
-            energy, metric, cores,
-            round_eps=1e-12, rmax=128,
-            dense_debug=dense_debug,
-        )
-        if verbose:
-            E1 = energy(tt.TT(cores))
-            print(f"  [two-site DMRG] E_end   = {E1:.12e}")
         return cores, False, 1
 
-    # ═─ Standard path: single-core alternating NG ──────────────╗
+    # ═─ Standard path: single-core alternating NG (refinement) ─╗
     converged = False
     n_iters = 0
 
