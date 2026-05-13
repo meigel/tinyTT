@@ -131,5 +131,12 @@ dmypy.json
 .pyre/
 _build/
 
-# Development-internal docs
-AGENTS.md
+# Local Claude Code state and notes
+.claude/
+.omx/
+
+# Generated example plots
+ctt_*.png
+
+# Build artefacts
+tinyTT.egg-info/

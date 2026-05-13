@@ -7,6 +7,7 @@ Basic decomposition and orthogonalization.
 import os
 import tinytt._backend as tn
 import numpy as np
+from tinytt.truncation import apply_truncation_rule
 
 
 def _scalar(val):
@@ -243,7 +244,7 @@ def rl_orthogonal(tt_cores, R, is_ttm, no_gpu=False):
     return cores_new, R
 
 
-def round_tt(tt_cores, R, eps, Rmax, is_ttm=False):
+def round_tt(tt_cores, R, eps, Rmax, is_ttm=False, rule=None):
     """
     Rounds a TT-tensor (tt_cores have to be orthogonal)
 
@@ -281,7 +282,11 @@ def round_tt(tt_cores, R, eps, Rmax, is_ttm=False):
         core_next = tn.reshape(core_next, [-1, R[i]])
 
         U, S, V = SVD(core_now)
-        r_now = min([Rmax[i], rank_chop(S, _scalar(tn.linalg.norm(S)) * eps)])
+        if rule is not None:
+            r_now = apply_truncation_rule(rule, S, position=i,
+                                          current_rank=R[i], max_rank=Rmax[i])
+        else:
+            r_now = min([Rmax[i], rank_chop(S, _scalar(tn.linalg.norm(S)) * eps)])
         r_now = int(r_now)
 
         U = U[:, :r_now]

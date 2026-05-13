@@ -12,6 +12,7 @@ from tinytt._iterative_solvers import BiCGSTAB_reset, gmres_restart
 from tinytt._extras import ones, random
 from tinytt._tt_base import TT
 from tinytt.errors import InvalidArguments, IncompatibleTypes, ShapeMismatch
+from tinytt.truncation import apply_truncation_rule
 
 
 def _scalar(val):
@@ -28,8 +29,15 @@ def _pad_like_torch(x, pad, value=0.0):
 
 
 def _invert(x):
-    n = int(x.shape[-1])
-    return tn.linalg.solve(x, tn.eye(n, dtype=x.dtype, device=x.device))
+    # Stay on the configured device: solve A * Y = I instead of round-tripping
+    # to NumPy via np.linalg.inv.
+    n = x.shape[0]
+    eye = tn.eye(n, dtype=x.dtype, device=x.device)
+    try:
+        return tn.linalg.solve(x, eye)
+    except Exception:
+        inv_np = np.linalg.inv(x.numpy())
+        return tn.tensor(inv_np, dtype=x.dtype, device=x.device)
 
 
 def _local_product(Phi_right, Phi_left, coreA, core, shape, bandA=-1):
@@ -185,6 +193,7 @@ def _amen_mm_python(
     kickrank=4,
     kick2=0,
     verbose=False,
+    truncation_rule=None,
 ):
     if verbose:
         time_total = datetime.datetime.now()
@@ -364,10 +373,16 @@ def _amen_mm_python(
             if k < d - 1:
                 u, s, v = SVD(solution_now)
 
-                r = rank_chop(
-                    s.numpy(),
-                    (norm_solution * eps / (d ** (0.5 if last else 1.5))).numpy(),
-                )
+                if truncation_rule is not None:
+                    r = apply_truncation_rule(
+                        truncation_rule, s, position=k + 1,
+                        current_rank=rx[k + 1], max_rank=rmax[k + 1],
+                    )
+                else:
+                    r = rank_chop(
+                        s.numpy(),
+                        (norm_solution * eps / (d ** (0.5 if last else 1.5))).numpy(),
+                    )
                 r = min([r, tn.numel(s), rmax[k + 1]])
                 r = int(r)
             else:
@@ -515,6 +530,7 @@ def amen_mm(
     kickrank=4,
     kick2=0,
     verbose=False,
+    truncation_rule=None,
 ):
     """
     Perform the TTM-TTM product using AMEn optimization.
@@ -543,6 +559,7 @@ def amen_mm(
         kickrank,
         kick2,
         verbose,
+        truncation_rule=truncation_rule,
     )
 
 
@@ -565,6 +582,7 @@ def amen_solve(
     use_cpp=False,
     band_diagonal=-1,
     use_single_precision=False,
+    truncation_rule=None,
 ):
     # `use_cpp` is accepted for backwards compatibility but ignored:
     # cpp_enabled() always returns False in this build.
@@ -577,44 +595,11 @@ def amen_solve(
     if A.N != b.N:
         raise ShapeMismatch("Dimension mismatch.")
 
-    if use_cpp:
-        return _amen_solve_python(
-            A,
-            b,
-            nswp,
-            x0,
-            eps,
-            rmax,
-            max_full,
-            kickrank,
-            kick2,
-            trunc_norm,
-            local_solver,
-            local_iterations,
-            resets,
-            verbose,
-            preconditioner,
-            use_single_precision,
-            band_diagonal,
-        )
     return _amen_solve_python(
-        A,
-        b,
-        nswp,
-        x0,
-        eps,
-        rmax,
-        max_full,
-        kickrank,
-        kick2,
-        trunc_norm,
-        local_solver,
-        local_iterations,
-        resets,
-        verbose,
-        preconditioner,
-        use_single_precision,
-        band_diagonal,
+        A, b, nswp, x0, eps, rmax, max_full, kickrank, kick2,
+        trunc_norm, local_solver, local_iterations, resets, verbose,
+        preconditioner, use_single_precision, band_diagonal,
+        truncation_rule=truncation_rule,
     )
 
 
@@ -681,6 +666,7 @@ def _amen_solve_python(
     preconditioner=None,
     use_single_precision=False,
     band_diagonal=-1,
+    truncation_rule=None,
 ):
     if verbose:
         time_total = datetime.datetime.now()
@@ -1019,7 +1005,13 @@ def _amen_solve_python(
             solution_now = tn.reshape(solution_now, [rx[k] * N[k], rx[k + 1]])
             if k < d - 1:
                 u, s, v = SVD(solution_now)
-                if trunc_norm != "fro":
+
+                if truncation_rule is not None:
+                    r = apply_truncation_rule(
+                        truncation_rule, s, position=k + 1,
+                        current_rank=rx[k + 1], max_rank=rmax[k + 1],
+                    )
+                elif trunc_norm != "fro":
                     r = 0
                     for r in range(u.shape[1] - 1, 0, -1):
                         solution = u[:, :r] @ tn.diag(s[:r]) @ v[:r, :]
@@ -1051,9 +1043,10 @@ def _amen_solve_python(
                         if res > max(real_tol * damp, res_new):
                             break
                     r += 1
-                    r = min([r, tn.numel(s), rmax[k + 1]])
                 else:
-                    r = min([tn.numel(s), rmax[k + 1]])
+                    r = tn.numel(s)
+
+                r = min([r, tn.numel(s), rmax[k + 1]])
             else:
                 u, v = QR(solution_now)
                 r = u.shape[1]
