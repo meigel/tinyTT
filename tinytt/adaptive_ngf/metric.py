@@ -142,16 +142,18 @@ class HilbertMetric:
             for i in range(d - 1, k, -1):
                 Phi_r = np.einsum(
                     'LSR,lML,sMNS,rNR->lsr',
-                    Phi_r, n_cores[i], A_cores[i], n_cores[i])
+                    Phi_r, n_cores[i], A_cores[i], n_cores[i],
+                    optimize='greedy')
             # Build left environment at k
             Phi_l = np.ones((1, 1, 1), dtype=np.float64)
             for i in range(k):
                 Phi_l = np.einsum(
                     'lsr,lML,sMNS,rNR->LSR',
-                    Phi_l, n_cores[i], A_cores[i], n_cores[i])
+                    Phi_l, n_cores[i], A_cores[i], n_cores[i],
+                    optimize='greedy')
             # Local projected operator (= Gramian for EnergyMetric)
-            Bp = np.einsum('smnS,LSR->smnRL', A_cores[k], Phi_r)
-            B = np.einsum('lsr,smnRL->lmLrnR', Phi_l, Bp)
+            Bp = np.einsum('smnS,LSR->smnRL', A_cores[k], Phi_r, optimize='greedy')
+            B = np.einsum('lsr,smnRL->lmLrnR', Phi_l, Bp, optimize='greedy')
             G = B.reshape(dim, dim)
             return 0.5 * (G + G.T)
 
