@@ -156,7 +156,7 @@ def test_amen_solve_uses_doerfler_adaptivity_through_solver_path():
         A, b,
         x0=None,
         nswp=8, eps=1e-4, rmax=4, kickrank=2,
-        truncation_rule=rule, use_cpp=False, verbose=False,
+        truncation_rule=rule, verbose=False,
     )
 
     assert rule.calls, (

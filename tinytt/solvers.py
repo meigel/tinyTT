@@ -154,10 +154,6 @@ class _LinearOp:
         return tn.reshape(w, [-1, 1])
 
 
-def cpp_enabled():
-    return False
-
-
 def _local_AB(Phi_left, Phi_right, coreA, coreB):
     return tn.einsum("rab,amkA,bknB,RAB->rmnR", Phi_left, coreA, coreB, Phi_right)
 
@@ -601,7 +597,6 @@ def amen_solve(
     resets=2,
     verbose=False,
     preconditioner=None,
-    use_cpp=False,
     band_diagonal=-1,
     use_single_precision=False,
     truncation_rule=None,
@@ -639,8 +634,6 @@ def amen_solve(
         Number of residual resets.
     verbose : bool
     preconditioner : optional
-    use_cpp : bool
-        Ignored (C++ path unavailable in this build).
     band_diagonal : int
         Band-diagonal structure of local problem (``-1`` = full).
     use_single_precision : bool

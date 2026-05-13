@@ -508,7 +508,7 @@ class TT:
         raise InvalidArguments("Wrong arguments.")
 
     def fast_matvec(
-        self, other, eps=1e-12, initial=None, nswp=20, verb=False, use_cpp=False
+        self, other, eps=1e-12, initial=None, nswp=20, verb=False
     ):
         if not isinstance(other, TT):
             raise InvalidArguments("Second operand has to be TT object.")
@@ -517,7 +517,7 @@ class TT:
                 "First operand should be a TT matrix and second a TT vector."
             )
         return dmrg_matvec(
-            self, other, y0=initial, eps=eps, verb=verb, nswp=nswp, use_cpp=use_cpp
+            self, other, y0=initial, eps=eps, verb=verb, nswp=nswp
         )
 
     def round(self, eps=1e-12, rmax=sys.maxsize):

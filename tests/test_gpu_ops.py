@@ -99,13 +99,13 @@ def test_gpu_dmrg_and_solvers():
     x = tt.random([2, 2, 2], [1, 2, 2, 1], device=DEVICE_RESOLVED, dtype=DTYPE)
     y = tt.random([2, 2, 2], [1, 2, 2, 1], device=DEVICE_RESOLVED, dtype=DTYPE)
 
-    z = tt.dmrg_hadamard(x, y, eps=1e-8, nswp=3, use_cpp=False, verb=False)
+    z = tt.dmrg_hadamard(x, y, eps=1e-8, nswp=3, verb=False)
     ref = x.full().numpy() * y.full().numpy()
     assert np.allclose(z.full().numpy(), ref, atol=1e-5)
 
     A = tt.eye([2, 2, 2], device=DEVICE_RESOLVED, dtype=DTYPE)
     b = A @ x
-    sol = tt.solvers.amen_solve(A, b, nswp=4, eps=1e-10, use_cpp=False, verbose=False)
+    sol = tt.solvers.amen_solve(A, b, nswp=4, eps=1e-10, verbose=False)
     err = np.linalg.norm(sol.full().numpy() - x.full().numpy())
     assert err < (1e-6 if DTYPE == tn.float64 else 1e-4)
 
@@ -126,7 +126,7 @@ def test_gpu_matvec_and_fast_matvec():
     ref = A_full @ x_full
     assert np.allclose(y.full().numpy().reshape(-1), ref, atol=ATOL)
 
-    y_fast = A.fast_matvec(x, eps=1e-10, nswp=3, use_cpp=False, verb=False)
+    y_fast = A.fast_matvec(x, eps=1e-10, nswp=3, verb=False)
     assert np.allclose(y_fast.full().numpy().reshape(-1), ref, atol=1e-5)
 
 
