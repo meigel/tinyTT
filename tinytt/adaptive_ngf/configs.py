@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""
+Configuration dataclasses for the adaptive NGF solver.
+
+``NGOptions``, ``EnrichmentOptions``, and ``AdaptiveOptions`` control the
+behaviour of :func:`adaptive_ngf_solve` and its enrichment sub-steps.
+"""
+
 from dataclasses import dataclass, field
 
 

@@ -1,3 +1,13 @@
+"""
+Thin backend shim over tinygrad ``Tensor`` operations.
+
+Wraps common tinygrad functions so the rest of tinyTT can work through a
+single ``import tinytt._backend as tn`` indirection, which simplifies future
+backend swaps (e.g. replacing tinygrad with PyTorch / JAX).
+
+All functions in this module follow tinygrad's API convention.
+"""
+
 from __future__ import annotations
 
 import importlib

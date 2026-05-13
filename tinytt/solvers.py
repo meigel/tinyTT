@@ -7,7 +7,7 @@ from __future__ import annotations
 import datetime
 import numpy as np
 import tinytt._backend as tn
-from tinytt._decomposition import QR, SVD, lr_orthogonal, rl_orthogonal, rank_chop
+from tinytt._decomposition import QR, SVD, rl_orthogonal, rank_chop
 from tinytt._iterative_solvers import BiCGSTAB_reset, gmres_restart
 from tinytt._extras import ones, random
 from tinytt._tt_base import TT

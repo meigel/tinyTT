@@ -1,3 +1,11 @@
+"""
+Linear operator abstractions for the adaptive NGF solver.
+
+Defines a ``LinearOperator`` protocol and concrete wrappers
+(``IdentityOperator``, ``DiagonalOperator``, ``TTMatrixOperator``) so the
+core solver loop in :mod:`.fixed_rank` is operator-agnostic.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -81,13 +89,6 @@ def apply_operator(A: tt.TT | LinearOperator, u: tt.TT) -> tt.TT:
     return _as_linear_operator(A).apply(u)
 
 
-def dot(x: tt.TT, y: tt.TT, dense_debug: bool = False) -> float:
-    if dense_debug:
-        return float(np.vdot(x.numpy().reshape(-1), y.numpy().reshape(-1)).real)
-    val = tt.dot(x, y)
-    return float(val.numpy().item() if hasattr(val, "numpy") else val)
-
-
 def dot_tt(x: tt.TT, y: tt.TT) -> float:
     """TT-native inner product via sequential core contraction.
     
@@ -122,6 +123,14 @@ def dot_tt(x: tt.TT, y: tt.TT) -> float:
 
 
 def dot(x: tt.TT, y: tt.TT, dense_debug: bool = False) -> float:
+    """Canonical dot product ⟨x, y⟩, delegating to :func:`dot_tt`.
+
+    Parameters
+    ----------
+    x, y : TT
+    dense_debug : bool
+        If True, verify against dense-materialised dot product.
+    """
     if dense_debug:
         return float(np.vdot(x.numpy().reshape(-1), y.numpy().reshape(-1)).real)
     return dot_tt(x, y)

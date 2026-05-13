@@ -20,6 +20,18 @@ from tinytt.errors import (
 
 
 class TT:
+    """Tensor Train (TT) tensor / TT-matrix backed by tinygrad.
+
+    The core data structure of tinyTT.  Stores ``d`` cores (tinygrad Tensors)
+    in left-canonical or mixed-canonical gauge.  For a TT-vector
+    (``is_ttm=False``) cores have shape ``(r_k, n_k, r_{k+1})``; for a
+    TT-matrix (``is_ttm=True``) cores have shape
+    ``(r_k, m_k, n_k, r_{k+1})``.  In both cases ``r_0 = r_d = 1``.
+
+    Construct from a dense array, a list of cores, or via helpers like
+    :func:`tinytt.ones`, :func:`tinytt.random`, :func:`tinytt.eye`.
+    """
+
     @property
     def is_ttm(self):
         return self.__is_ttm

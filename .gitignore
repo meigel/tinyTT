@@ -140,3 +140,4 @@ ctt_*.png
 
 # Build artefacts
 tinyTT.egg-info/
+TinyTT_Test.ipynb

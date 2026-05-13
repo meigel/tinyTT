@@ -1,3 +1,12 @@
+"""
+Adaptive NGF (Natural Gradient Flow) solver for TT linear systems.
+
+Phase-1 implementation providing fixed-rank NGF sweeps with Dörfler
+enrichment for rank adaptivity.  See submodule docs for details:
+:mod:`.fixed_rank`, :mod:`.enrichment`, :mod:`.metric`,
+:mod:`.local_frames`, :mod:`.operators`.
+"""
+
 from .configs import AdaptiveOptions, EnrichmentOptions, NGOptions
 from .energy import QuadraticEnergy
 from .metric import DiagonalMetric, EnergyMetric, EuclideanMetric, HilbertMetric
