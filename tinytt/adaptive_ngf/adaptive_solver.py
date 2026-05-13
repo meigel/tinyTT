@@ -212,6 +212,8 @@ def adaptive_ngf_solve(
             lambda_complexity=enrich_opts.lambda_complexity,
             delta_rank=enrich_opts.delta_rank,
             rmax=opts.rmax,
+            residual_norm=rel_res,
+            tol=opts.tol,
         )
 
         if best_bond is None:

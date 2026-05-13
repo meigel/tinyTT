@@ -250,7 +250,20 @@ def enrich_bond(
 
     delta_eff = min(delta_rank, len(s))
     if delta_eff == 0 or s[0] < 1e-15:
-        return cores, None
+        # SVD correction is negligible — try random kick.
+        # This happens when enrichment requires multi-bond coupling
+        # invisible to the two-site projection (common for rank-1 → rank-2
+        # transitions in >2D problems).
+        resid_norm = np.linalg.norm(resid_1d)
+        if resid_norm > 1e-10:
+            rng = np.random.RandomState(42)
+            u_corr = rng.randn(rk * nk, delta_rank)
+            u_corr /= max(np.linalg.norm(u_corr), 1e-15)
+            vt_corr = rng.randn(delta_rank, nkp1 * rkp2)
+            vt_corr /= max(np.linalg.norm(vt_corr), 1e-15)
+            s_corr = np.ones(delta_rank) * min(1e-4, resid_norm * 0.01)
+        else:
+            return cores, None
 
     # Rank-truncated enrichment
     u_corr = u[:, :delta_eff]                             # (rk*nk, delta_eff)
@@ -359,6 +372,8 @@ def select_bond(
     lambda_complexity: float = 0.0,
     delta_rank: int = 1,
     rmax: int = 128,
+    residual_norm: float = 0.0,
+    tol: float = 1e-10,
 ) -> int | None:
     """
     Select the best bond to enrich based on expansion scores.
@@ -396,6 +411,17 @@ def select_bond(
     """
     if not scores:
         return None
+
+    # ── Forced enrichment: residual is large but no score triggers ──
+    # This handles the case where enrichment requires multi-bond
+    # coupling that no single bond's two-site score captures.
+    all_zero = all(s.predicted_decrease < min_predicted_decrease
+                   for s in scores)
+    if all_zero and residual_norm > tol:
+        # Enrich the bond with the largest two-site gradient
+        best = max(scores, key=lambda s: s.two_site_norm)
+        if best.two_site_norm > 1e-15:
+            return best.bond
 
     # ── Complexity-penalised selection ─────────────────────────────
     if lambda_complexity > 0 and cores is not None:
