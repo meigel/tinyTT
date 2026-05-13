@@ -123,17 +123,7 @@ def dot_tt(x: tt.TT, y: tt.TT) -> float:
 
 
 def dot(x: tt.TT, y: tt.TT, dense_debug: bool = False) -> float:
-    """Canonical dot product ⟨x, y⟩, delegating to :func:`dot_tt`.
-
-    Parameters
-    ----------
-    x, y : TT
-    dense_debug : bool
-        If True, verify against dense-materialised dot product.
-    """
-    if dense_debug:
-        return float(np.vdot(x.numpy().reshape(-1), y.numpy().reshape(-1)).real)
-    return dot_tt(x, y)
+    return float(np.vdot(x.numpy().reshape(-1), y.numpy().reshape(-1)).real)
 
 
 def axpy_tt(alpha: float, x: tt.TT, beta: float, y: tt.TT, eps: float = 1e-12) -> tt.TT:
