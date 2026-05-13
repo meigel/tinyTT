@@ -198,6 +198,10 @@ def adaptive_ngf_solve(
             min_predicted_decrease=enrich_opts.min_predicted_decrease,
             min_fraction=enrich_opts.min_fraction_predicted_decrease,
             try_next_best=enrich_opts.try_next_best,
+            cores=cores,
+            lambda_complexity=enrich_opts.lambda_complexity,
+            delta_rank=enrich_opts.delta_rank,
+            rmax=opts.rmax,
         )
 
         if best_bond is None:

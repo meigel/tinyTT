@@ -355,20 +355,39 @@ def select_bond(
     min_predicted_decrease: float = 1e-14,
     min_fraction: float = 1e-4,
     try_next_best: int = 2,
+    cores: list | None = None,
+    lambda_complexity: float = 0.0,
+    delta_rank: int = 1,
+    rmax: int = 128,
 ) -> int | None:
     """
     Select the best bond to enrich based on expansion scores.
+
+    Uses the complexity-penalised score from the paper:
+        score_k = η_k²/(2L_k) - λ_comp · ΔC_k
+    where ΔC_k is the parameter count increase from enriching bond k.
+
+    When ``lambda_complexity=0`` (default) falls back to threshold-based
+    selection for backward compatibility.
 
     Parameters
     ----------
     scores : list of ExpansionScore
         One per bond (d-1 items).
     min_predicted_decrease : float
-        Absolute threshold on predicted decrease.
+        Absolute threshold (used only when lambda_complexity=0).
     min_fraction : float
-        Relative threshold (fraction of max score).
+        Relative threshold (used only when lambda_complexity=0).
     try_next_best : int
         If the best bond fails acceptance, try this many next-best bonds.
+    cores : list, optional
+        Current TT cores, needed for complexity computation.
+    lambda_complexity : float
+        Complexity penalty weight λ_comp from the paper.
+    delta_rank : int
+        Number of rank increments per enrichment.
+    rmax : int
+        Maximum rank cap (used only for complexity computation).
 
     Returns
     -------
@@ -378,7 +397,31 @@ def select_bond(
     if not scores:
         return None
 
-    # Sort by predicted decrease descending
+    # ── Complexity-penalised selection ─────────────────────────────
+    if lambda_complexity > 0 and cores is not None:
+        d = len(cores)
+        best_val = -np.inf
+        best_bond = None
+        for s in scores:
+            k = s.bond
+            if k >= d - 1:
+                continue
+            # ΔC = new params added at bond k
+            #   core k:   (r_k, n_k, r_{k+1})        → adds r_k · n_k · Δr
+            #   core k+1: (r_{k+1}, n_{k+1}, r_{k+2}) → adds Δr · n_{k+1} · r_{k+2}
+            r_k, n_k, r_kp1 = cores[k].shape
+            n_kp1 = cores[k + 1].shape[1]
+            r_kp2 = cores[k + 1].shape[2]
+            delta_C = delta_rank * (r_k * n_k + n_kp1 * r_kp2)
+            # Cap at rmax for realistic bound
+            r_cap = min(r_kp1 + delta_rank, rmax)
+            score = s.predicted_decrease - lambda_complexity * delta_C
+            if score > best_val:
+                best_val = score
+                best_bond = k
+        return best_bond
+
+    # ── Legacy threshold-based selection (no complexity penalty) ──
     sorted_idx = np.argsort([-s.predicted_decrease for s in scores])
 
     best_score = scores[sorted_idx[0]].predicted_decrease
