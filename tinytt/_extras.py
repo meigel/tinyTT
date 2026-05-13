@@ -8,7 +8,7 @@ import sys
 import numpy as np
 import tinytt._backend as tn
 import tinytt._tt_base
-from tinytt.errors import InvalidArguments, ShapeMismatch
+from tinytt.errors import InvalidArguments, IncompatibleTypes, ShapeMismatch
 
 
 def eye(shape, dtype=tn.float64, device=None):
@@ -259,6 +259,74 @@ def add(a, b, eps=1e-12, rmax=sys.maxsize):
     result = tinytt._tt_base.TT(new_cores)
     if eps > 0 and rmax > 0:
         result = result.round(eps=eps, rmax=rmax)
+    return result
+
+
+def kronecker_ttm(left_factors, right_factors, dtype=tn.float64, device=None):
+    """
+    Build a 2-core TT-matrix from a sum of Kronecker products without
+    forming the full N×N matrix.
+
+    For each term k, the operator is ``left_factors[k] ⊗ right_factors[k]``
+    (or vice versa, depending on the application).  The result is a TTM
+    with 2 cores and rank ``len(left_factors)`` at the internal bond.
+
+    Parameters
+    ----------
+    left_factors : list of (n×n) arrays
+        Left Kronecker factors.  All must have the same shape (n, n).
+    right_factors : list of (n×n) arrays
+        Right Kronecker factors.  Same length as *left_factors*.
+
+    Returns
+    -------
+    TT
+        A TT-matrix with ``is_ttm == True`` and 2 cores.
+    """
+    n = left_factors[0].shape[0]
+    m = len(left_factors)
+    core1 = np.zeros((1, n, n, m))
+    core2 = np.zeros((m, n, n, 1))
+    for k in range(m):
+        core1[0, :, :, k] = left_factors[k]
+        core2[k, :, :, 0] = right_factors[k]
+    return tinytt._tt_base.TT(
+        [tn.tensor(c, dtype=dtype, device=device) for c in [core1, core2]]
+    )
+
+
+def parametric_sum_ttm(base_operator, perturbations, weights, dtype=tn.float64, device=None):
+    """
+    Build ``A(y) = base_operator + Σ weights[k] · perturbations[k]``
+    as a TT-matrix.
+
+    This is useful for parametric PDEs where the operator depends
+    affinely on parameters.
+
+    Parameters
+    ----------
+    base_operator : TT or ndarray
+        Base operator (must be a TT-matrix or a 2D array).
+    perturbations : list of TT or ndarray
+        Perturbation operators (same format as *base*).
+    weights : array_like
+        Coefficients for each perturbation.
+
+    Returns
+    -------
+    TT
+        A TT-matrix.
+    """
+    from . import add
+    result = tinytt._tt_base.TT(base_operator) if not isinstance(
+        base_operator, tinytt._tt_base.TT) else base_operator.clone()
+    for k in range(len(perturbations)):
+        p = tinytt._tt_base.TT(perturbations[k]) if not isinstance(
+            perturbations[k], tinytt._tt_base.TT) else perturbations[k].clone()
+        scaled = tinytt._tt_base.TT(
+            [weights[k] * c for c in p.cores]
+        )
+        result = add(result, scaled, eps=0.0, rmax=0)
     return result
 
 
