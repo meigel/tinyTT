@@ -4,290 +4,348 @@
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Tensor-Train (TT) tensors, operators, and solvers built on top of `tinygrad`.
+Tensor-Train (TT) tensors, operators, and solvers built on `tinygrad`.
+
+Supports CPU (default), CUDA (`NV`), Metal, and OpenCL backends.
 
 ## Quickstart
 
 ```python
 import tinytt as tt
 
-x = tt.ones([4, 4])         # 4×4 all-ones TT tensor
-print(x.R)                  # ranks: [1, 1]
-print(x.full().numpy())     # materialise as numpy array
+x = tt.ones([4, 4])                # 4×4 TT tensor, rank 1
+print(x.R)                         # [1, 1]
+print(x.full().numpy())            # materialise as numpy array
+
+A = tt.eye([4, 4])                 # identity TT-matrix
+b = A @ x                          # matvec
+print((b - x).norm().numpy())      # ≈ 0
 ```
 
-## Requirements
+## Representations
 
-- Python 3.11 or later
-- `tinygrad` (installed via `pip install tinygrad` or the pinned submodule)
+tinyTT implements several tensor-network representations, each in a cleanly
+separated module:
 
-To use GPU acceleration, install the `tinygrad` submodule from source rather than
-the PyPI wheel, which may contain pre-existing backend bugs:
+| Representation | Module | Description |
+|---|---|---|
+| **TT** | `tinytt/` (core) | Standard TT-tensor / TT-matrix with full solver suite |
+| **QTT** | `TT.to_qtt()` | Quantized TT for high-dimensional problems |
+| **CTT** | `tinytt/ctt/` | Conditional transport maps (polynomial TT-matrix) |
+| **FTT** | `tinytt/functional_tt.py` | Functional TT: basis-driven regression model |
+| **Streaming TT** | `tinytt/streaming.py` | One-pass randomised TT (STTA) for streaming data |
+| **Adaptive NGF** | `tinytt/adaptive_ngf/` | Natural-gradient-flow solver with rank adaptivity |
+
+## Features
+
+### 1. Core TT Operations
+
+The `TT` class is the central data structure.
+
+```
+Construction:     TT(full, eps), tt.ones, tt.zeros, tt.eye, tt.random, tt.randn
+Arithmetic:       +, -, *, /, @ (matvec), dot, kron, cat, pad, permute, reshape
+Conversion:       .full(), .numpy(), .to_qtt(), .qtt_to_tens()
+Round/truncate:   .round(eps), round_tt (with optional truncation rule)
+```
+
+TT-matrix support (`is_ttm=True`): cores have 4 index dimensions
+(r<sub>k</sub>, m<sub>k</sub>, n<sub>k</sub>, r<sub>k+1</sub>)
+instead of 3.
+
+### 2. Solvers
+
+All solvers work on TT representations.  AMEn and ALS solve linear systems;
+DMRG and fast products handle contractions; TDVP and BUG handle time evolution.
+
+| Solver | Module | Problem |
+|---|---|---|
+| **ALS** | `tt.solvers.als_solve` | ``A·x = b`` — Alternating Least Squares |
+| **AMEn** | `tt.solvers.amen_solve` | ``A·x = b`` — AMEn (ALS + kick enrichment) |
+| **AMEn MM** | `tt.solvers.amen_mm` | ``C = A·B`` — TTM × TTM product via AMEn |
+| **DMRG matvec** | `tt.dmrg_hadamard` | Hadamard product via DMRG sweeps |
+| **DMRG mv** | `TT.fast_matvec` | TT-matrix × TT-vector via DMRG |
+| **TDVP** | `tt.tdvp.tdvp_imag_time` | Imaginary-time evolution (ground-state search) |
+| **BUG** | `tt.bug` | Basis-Update Galerkin time evolution with QR expansion |
+| **CG** | `tt.cg` | SPD-optimised conjugate gradient (matrix-free) |
+| **GMRES** | `tt.solvers.gmres_restart` | Restarted GMRES for non-SPD systems |
+| **BiCGSTAB** | `tt.solvers.BiCGSTAB_reset` | Stabilised biconjugate gradient |
+| **Adaptive NGF** | `tt.adaptive_ngf.adaptive_ngf_solve` | Natural-gradient-flow with Dörfler rank enrichment |
+| **ALS regression** | `tt.als_regression` | Functional TT regression from data |
+
+See `examples/tt_solvers.py`, `examples/tt_dmrg.py`, `examples/mpo_ising_tdvp.py`,
+and `examples/heat_equation.py` for usage.
+
+### 3. Riemannian (TT-Manifold) Optimisation
+
+Optimise directly on the fixed-rank TT quotient manifold without leaving the
+TT format:
+
+| Operation | Function | Description |
+|---|---|---|
+| **Left/right orthogonalise** | `left_orthogonalize`, `right_orthogonalize` | Full sweep QR canonicalisation |
+| **Mixed canonical** | `mixed_canonical(cores, k)` | Orthogonality centre at site k |
+| **Horizontal projection** | `horizontal_projection(cores, G)` | Project Euclidean gradient onto horizontal space |
+| **Tangent projection** | `tangent_project(x, Z)` | Lubich/Vandereycken projection of ambient tensor |
+| **QR retraction** | `qr_retraction(cores, dir, step)` | Rank-preserving retraction |
+| **SVD retraction** | `svd_retraction(cores, dir, step, rmax)` | Rank-relaxing retraction |
+| **Gauge checks** | `check_left_orthogonal`, `check_right_orthogonal` | Verify canonical form |
+
+Usage: `examples/tt_riemannian_gd.py`
+
+### 4. QTT (Quantized Tensor Train)
+
+QTT converts a standard TT into a binary-tree representation where each physical
+dimension is replaced by log<sub>2</sub>n virtual dimensions of size 2.
+
+- `tt.tensor.to_qtt()` — convert TT to QTT format
+- `tt.tensor.qtt_to_tens()` — convert QTT back to standard TT
+- QTT-compatible solvers (AMEn, ALS) work on QTT cores directly
+- Vector-valued QTT via `test_qtt_vector.py`
+
+Examples:
+- `examples/heat_equation.py` — QTT heat equation with AMEn solve
+- `examples/tt_qtt_functional.py` — QTT function regression on tensor grid
+
+### 5. CTT (Conditional Transport Maps)
+
+Polynomial TT-matrix transport maps for density estimation and sampling
+(experimental).  Located in `tinytt/ctt/`.
+
+- `LinearTTMap` / `TriangularResidualLayerTTNative` — native TT-matrix residual layers
+- `ComposedCTTMAPTG` — multi-layer composed map with tinygrad autograd training
+- Straight-line conditional flow matching
+- Exact empirical 1D Wasserstein-2 evaluation
+
+Examples:
+- `examples/ctt_param_ode.py` — single-layer linear map
+- `examples/ctt_multilayer_example.py` — composed residual CTT layers
+- `examples/ctt_tinygrad_example.py` — recommended autograd training path
+
+### 6. FTT (Functional TT / Regression)
+
+Basis-driven functional regression without materialising a dense grid.
+
+**Object-oriented API** (`tinytt._functional`):
+- `LegendreFeatures(degree, orthonormal)` — Legendre on [-1,1], with `grad()`, `laplace()`
+- `HermiteFeatures(degree, orthonormal)` — probabilist Hermite, with `grad()`, `laplace()`
+- `MonomialFeatures(degree)` — monomials 1, x, x², …
+
+**Functional-free functions** (`tinytt._functional`):
+- `monomial_features(X, deg)`, `legendre_features(X, deg)`, `hermite_features(X, deg)`
+- `evaluate(cores, bases, X)` — evaluate a functional TT at points
+- `gradient()`, `jacobian()`, `divergence()`, `laplace()` — analytic derivatives
+
+**ALS regression** (`tinytt.regression`):
+- `als_regression(X, Y, bases, ranks)` — train a functional TT from data
+- `als_continuity_fit(X, Y, F_grad, bases)` — fit V s.t. ⟨F_grad,V⟩ + div(V) ≈ Y
+
+Examples:
+- `examples/tt_functional.py` — scalar/vector-valued FunctionalTT regression
+- `examples/tt_vector_valued.py` — TT-matrix as trainable linear map
+
+### 7. Streaming TT (STTA)
+
+One-pass randomised TT approximation for data too large to materialise.
+
+- `StreamingTT(shape, ranks, data_stream)` — incremental STTA object
+- `streaming_tt(shape, ranks, data)` — convenience function returning a `TT`
+
+The data stream can be a tensor (sliced along dim 0), a callable returning an
+iterator, or any iterable.
+
+### 8. UQ-ADF (Uncertainty Quantification)
+
+Adaptive density fitting for parametric PDEs with uncertain inputs.
+`tinytt.uq_adf.uq_adf()` builds a TT surrogate from weighted measurements.
+
+- Scalar and vector-valued outputs
+- Adaptive rank enrichment based on stagnation detection
+- Polynomial bases (Legendre / Hermite) with optional orthonormalisation
+- Gradient or ALS per-core update rules
+
+Examples:
+- `examples/tt_uq_adf_darcy.py` — parametric Darcy flow with KL expansion
+
+### 9. Truncation Rules
+
+Configurable rank-selection strategies for SVD truncation, usable in
+`round_tt(rule=…)`, `amen_solve(truncation_rule=…)`, and
+`amen_mm(truncation_rule=…)`.
+
+| Rule | Description |
+|---|---|
+| `Threshold(eps)` | Keep r where ‖S[r:]‖ ≤ eps·‖S‖ |
+| `Doerfler(theta)` | Minimal r with retained energy ≥ (1-θ)·total |
+| `DoerflerAdaptivity(delta, …)` | Dörfler that grows rank when condition unmet |
+| `AdaptiveThreshold(base_eps)` | Threshold that scales with rank |
+| Custom | Any callable `(S, **context) → int` via `TruncationRule` protocol |
+
+### 10. Line Search
+
+`armijo_ls(loss_fn, x, direction)` — two-way Armijo-Goldstein backtracking line
+search. Works with flat tensors or structured parameter lists (e.g., TT cores).
+Accepts optional custom retraction for manifold optimisation.
+
+### 11. Autograd Helpers
+
+`tinytt.grad` module wraps tinygrad's autograd for TT objects:
+
+```python
+tt.grad.watch(x)        # mark all TT cores as leaf variables
+loss = tt.dot(x, x)
+grads = tt.grad.grad(loss, x)   # one gradient tensor per core
+tt.grad.unwatch(x)      # detach (optional)
+```
+
+## Setup
+
+**Requirements:** Python 3.11+, tinygrad, numpy
+
+```bash
+git clone https://github.com/meigel/tinyTT.git
+cd tinyTT
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt        # tinygrad + numpy
+pip install -e .
+```
+
+Optional development dependencies:
+
+```bash
+pip install -r requirements-dev.txt    # pytest
+```
+
+**GPU acceleration:** install the pinned tinygrad submodule from source
+rather than the PyPI wheel:
 
 ```bash
 git submodule update --init tinygrad
 pip install ./tinygrad
 ```
 
-## Highlights
-
-- TT tensors and TT-matrices on a `tinygrad` backend.
-- CPU is the default execution path; optional `tinygrad` devices such as `NV`
-  (NVIDIA CUDA), `METAL`, or `CL` (OpenCL) can be selected with `TINYTT_DEVICE`.
-- **GPU**: 7/7 GPU tests pass with the submodule tinygrad. First-run JIT
-  compilation adds ~0.4s per kernel pattern (cached via `TINYTT_TINYJIT=1`).
-  Known limitation: TT-cross interpolation hangs on GPU (use CPU backend).
-- **CPU**: All 234 tests pass on the default CPU backend.
-- **Core solvers**: ALS, AMEn, DMRG, TDVP for time evolution.
-- **QTT**: Quantized Tensor Train (QTT) format for high-dimensional problems.
-- **CTT**: Conditional Triangular Tensor transport maps for uncertainty quantification.
-- **Riemannian optimisation**: QR gauge sweeps, horizontal-space projection,
-  QR retraction for the fixed-rank TT manifold.
-- **Conjugate gradient solver**: SPD-optimised CG solver with regularisation.
-- **Armijo line search**: Two-way backtracking line search for Riemannian/Euclidean optimisation.
-- **Functional feature maps**: Monomial, Legendre, and Hermite polynomial bases for functional TT models.
-- **Streaming TT (STTA)**: One-pass randomised TT approximation for large or streaming data.
-- **Truncation rules**: Configurable rank-selection strategies (Threshold, Dörfler, adaptive) for rounding and solvers.
-- Interpolation, autograd helpers, and utility functions.
+`requirements.txt` uses the PyPI `tinygrad` package. When the submodule is
+present, tinyTT prefers that checkout at import time so you stay pinned to
+the repository version.
 
 ## Repository Layout
 
-- `tinytt/`: main library code.
-- `tinytt/ctt/`: conditional transport-map module.
-- `tests/`: tinyTT test suite.
-- `examples/`: runnable tinyTT examples.
-- `tinygrad/`: pinned `tinygrad` submodule (optional, see Setup below).
-
-## Setup
-
-Install from PyPI (once published):
-
-```bash
-pip install tinytt
+```
+tinytt/                    # main library
+├── _tt_base.py            # TT class (core)
+├── _decomposition.py      # SVD, QR, TT rounding
+├── _extras.py             # helpers: eye, zeros, kron, cat, pad, …
+├── _aux_ops.py            # auxiliary operations
+├── _dmrg.py               # DMRG matvec / Hadamard
+├── _fast_mult.py          # fast Hadamard product, matvec, matmat
+├── solvers.py             # ALS, AMEn solvers
+├── _iterative_solvers.py  # CG, GMRES, BiCGSTAB
+├── tdvp.py                # TDVP time evolution
+├── bug.py                 # BUG time evolution
+├── _riemannian.py         # Riemannian manifold operations
+├── _linesearch.py         # Armijo line search
+├── _functional.py         # Legendre/Hermite/Monomial basis functions
+├── functional_tt.py       # FunctionalTT class
+├── regression.py          # ALS regression + continuity fit
+├── uq_adf.py              # UQ-ADF surrogate construction
+├── interpolate.py         # TT-cross, maxvol
+├── streaming.py           # STTA (one-pass randomised TT)
+├── truncation.py          # Rank truncation rules
+├── grad.py                # Autograd helpers
+├── errors.py              # Exception classes
+├── ctt/                   # Conditional transport maps
+├── adaptive_ngf/          # Adaptive NGF solver
+tinygrad/                  # Pinned tinygrad submodule (optional)
+tests/                     # Test suite
+examples/                  # Runnable example scripts
 ```
 
-Or from source:
-
-```bash
-git clone https://github.com/meigel/tinyTT.git
-cd tinyTT
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt    # installs tinygrad + numpy
-pip install -e .
-```
-
-`requirements.txt` installs `tinygrad` from PyPI. If the local `tinygrad/` submodule
-is present, `tinytt` prefers that checkout at import time so you can stay pinned
-to the repository version.
-
-Optional development dependencies:
-
-```bash
-python3 -m pip install -r requirements-dev.txt
-```
-
-**Note**: tinyTT requires Python 3.11+ due to dependency on `Self` type annotation
-from `typing`. Python 3.10 is not supported.
-
-## Usage
+## Usage Examples
 
 ```python
 import numpy as np
 import tinytt as tt
 
-# 1. Create a TT tensor from a full array
+# ---- TT construction ----
 full = np.arange(8, dtype=np.float64).reshape(2, 2, 2)
 x = tt.TT(full, eps=1e-12)
-print("Ranks:", x.R)                          # [1, 2, 2, 1]
 
-# 2. Arithmetic
+# ---- TT arithmetic (native — no dense materialisation) ----
 y = 0.5 * (x + tt.ones([2, 2, 2]))
-print("Reconstruction rel_err:",
-      np.linalg.norm(y.full().numpy() - 0.5 * (full + 1))
-      / np.linalg.norm(full))
+err = np.linalg.norm(y.full().numpy() - 0.5 * (full + 1))
 
-# 3. TT-matrix matvec (A @ x where A is a TT-matrix)
-A = tt.eye([2, 2, 2])                         # identity TTM
+# ---- TT-matrix matvec ----
+A = tt.eye([2, 2, 2])
 z = A @ x
-print("Matvec rel_err:",
-      np.linalg.norm(z.full().numpy() - full) / np.linalg.norm(full))
+
+# ---- Solve A·x = b with AMEn ----
+b = A @ x
+sol = tt.solvers.amen_solve(A, b, nswp=10, eps=1e-10)
+print("Solve error:", float((sol - x).norm().numpy()))
+
+# ---- Riemannian gradient descent ----
+from tinytt._riemannian import horizontal_projection, qr_retraction
+theta = [c.clone() for c in x.cores]      # initial guess on manifold
+grad = [c.clone() for c in theta]          # placeholder euclidean gradient
+tan = horizontal_projection(theta, grad)   # project to tangent space
+theta = qr_retraction(theta, tan, step=0.1)  # retract
+
+# ---- Streaming TT (STTA) ----
+from tinytt.streaming import streaming_tt
+st = streaming_tt(shape=[2, 2, 2], ranks=[2, 2], data_stream=full)
 ```
 
-Representative examples:
-
-- `examples/basic_usage.py`: TT construction, arithmetic, and matvec.
-- `examples/tt_basics.py`: rounding and dense reconstruction.
-- `examples/tt_helpers.py`, `examples/tt_linalg.py`: helper routines and linear algebra.
-- `examples/tt_fast_products.py`, `examples/tt_dmrg.py`: fast contractions and DMRG.
-- `examples/tt_solvers.py`, `examples/tt_autograd.py`: solvers and differentiation.
-- `examples/mpo_ising_tdvp.py`: minimal MPO + TDVP sweep.
-- `examples/ctt_param_ode.py`: polynomial TT-matrix transport map for a
-  parametric ODE flow.
-- `examples/ctt_multilayer_example.py`: composed CTT residual layers.
-- `examples/heat_equation.py`: QTT heat equation solve with AMEn.
-- `examples/tt_riemannian_gd.py`: Riemannian gradient descent on the TT manifold.
-- `examples/tt_functional.py`: Scalar and vector-valued FunctionalTT regression
-  with Legendre basis functions and gradient descent training.
-- `examples/tt_vector_valued.py`: Learning a vector-valued map f(k) → R⁴
-  using a TT-matrix as a trainable linear operator.
-- `examples/tt_qtt_functional.py`: QTT function regression and vector-valued
-  QTT on a 2D tensor grid, demonstrating QTT compression.
-- `examples/tt_uq_adf_darcy.py`: UQ-ADF for parametric Darcy flow PDE with
-  uncertain log-permeability (KL expansion, adaptive rank).
-
-All examples report **relative error** where applicable (‖pred − truth‖ / ‖truth‖)
-rather than absolute error, since relative error is scale-invariant and more
-meaningful for comparing accuracy across problems.
-
-Some example scripts write plots and therefore require `matplotlib` in addition
-to the runtime dependencies.
-
 ## Tests
-
-Run the tinyTT test suite:
 
 ```bash
 pip install pytest
 pytest -q tests
 ```
 
-GPU tests are opt-in and require `TINYTT_DEVICE`:
+GPU tests require `TINYTT_DEVICE`:
 
 ```bash
-TINYTT_DEVICE=NV pytest -q tests/test_gpu_ops.py
+TINYTT_DEVICE=NV pytest -q tests/test_gpu_ops.py    # 7/7 pass
 TINYTT_DEVICE=NV pytest -q tests/test_gpu_smoke.py
 ```
 
-All 7 GPU tests pass when tinygrad is built from the submodule (see Setup).
-Tests run slower on first invocation due to CUDA JIT kernel compilation
-(~0.4s per operation pattern). The `test_interpolate.py` (TT-cross) hangs
-on GPU — this is a known tinygrad backend limitation; use the CPU backend
-for interpolation tasks.
-
-The `tests/test_uq_adf_skfem.py` case is intentionally slow and skips itself if
-it exceeds the time budget. The faster UQ-ADF smoke test is:
-
-```bash
-pytest -q tests/test_uq_adf_fast.py
-```
-
-**Note**: Many tests require `clang` to be installed for tinygrad CPU kernel
-compilation. If not available, some tests will skip or fail.
+- All 7 GPU tests pass when tinygrad is built from the submodule.
+- First-run GPU JIT compilation adds ~0.4 s per kernel pattern
+  (cache with `TINYTT_TINYJIT=1`).
+- `test_interpolate.py` (TT-cross) hangs on GPU — use CPU backend.
+- `test_uq_adf_skfem.py` skips itself if the optional `skfem` dependency
+  is missing or exceeds the time budget.  The fast smoke test is:
+  ```bash
+  pytest -q tests/test_uq_adf_fast.py
+  ```
 
 ## Environment Flags
 
-- `TINYTT_DEVICE=NV|METAL|CL|...`: default `tinygrad` device for new tensors
-  (use `NV` for NVIDIA GPUs, `METAL` for Apple, `CL` for OpenCL).
-- `TINYTT_TINYJIT=1`: enable `TinyJit` kernel caching (reduces GPU JIT overhead
-  after the first compilation of each kernel pattern).
-- `TINYTT_SVD_BACKEND=numpy|tinygrad`: choose the SVD backend. Falls back to
-  NumPy automatically on GPU when tinygrad's SVD is unavailable.
-- `TINYTT_FORCE_FP32=1`: force `float32` on devices without usable `float64`.
-
-## Troubleshooting
-
-### Python Version
-tinyTT requires Python 3.11+ due to dependency on `Self` type annotation from
-`typing`. Python 3.10 is not supported.
-
-### Clang Requirement
-The tinygrad CPU backend requires `clang` to be installed for kernel compilation.
-Install it via your system package manager (e.g., `apt install clang` on Debian/Ubuntu)
-or set a different device (e.g., `TINYTT_DEVICE=CUDA`) if a GPU is available.
-
-### tinygrad Version
-The repository includes a pinned `tinygrad` submodule under `tinygrad/`.
-This is the recommended version for GPU support, as PyPI wheels may omit NVRTC
-bindings or contain SVD backend bugs. To use it:
-
-```bash
-git submodule update --init tinygrad
-pip install ./tinygrad
-```
-
-The pip package `tinygrad>=0.10` also works for CPU-only usage. Tested with
-submodule at commit `76ff378` (post-0.12.0).
-
-## Features
-
-### Tensor Train (TT)
-
-Full-featured TT implementation with:
-- Construction from dense tensors, arrays, or cores
-- QTT conversion (`to_qtt()`, `qtt_to_tens()`)
-- Arithmetic operations, matvec, einsum
-- Rank truncation with SVD
-
-### Solvers
-
-- **ALS**: Alternating Least Squares for linear systems
-- **DMRG**: Density Matrix Renormalization Group
-- **AMEn**: Alternating Minimal Energy methods
-- **TDVP**: Time-Dependent Variational Principle for time evolution
-- **BUG**: Basis-Update and Galerkin TT/MPO time evolution with QR basis
-  expansion and Galerkin local sweeps
-
-### QTT (Quantized Tensor Train)
-
-For high-dimensional problems (e.g., PDEs):
-- Automatic conversion to QTT format
-- Efficient representation of operators in QTT
-- AMEn solves directly against QTT operators in `examples/heat_equation.py`
-
-### CTT (Conditional Transport Maps)
-
-Experimental module for building conditional transport maps:
-- Native TT-matrix residual layers through `TriangularResidualLayerTTNative`
-- `tinygrad` autograd training for composed maps
-- Legacy NumPy dense baselines retained for compatibility
-- Straight-line conditional flow matching utilities
-- Exact empirical 1D Wasserstein-2 evaluation
-- See `examples/ctt_param_ode.py` and `examples/ctt_multilayer_example.py`
-
-### Riemannian Optimisation
-
-Tools for optimisation on the fixed-rank TT quotient manifold:
-- **QR gauge sweeps**: `left_orthogonalize()` / `right_orthogonalize()` bring TT cores
-  into left/right-canonical form via sequences of QR decompositions.
-- **Horizontal projection**: `horizontal_projection()` projects Euclidean gradients
-  onto the horizontal space of the TT manifold (removes gauge-dependent components).
-- **QR retraction**: `qr_retraction()` maps a tangent vector back to the manifold
-  while restoring the left-canonical gauge.
-- **Gauge checks**: `check_left_orthogonal()` / `check_right_orthogonal()` verify
-  the canonical form numerically.
-
-### Conjugate Gradient Solver
-
-- `cg()` solves SPD systems ``(A + reg·I) x = b`` matrix-free.
-- Includes automatic regularisation for ill-conditioned problems.
-- Supports batched (matrix) right-hand sides.
-
-### Armijo Line Search
-
-- `armijo_ls()` is a generic two-way Armijo-Goldstein backtracking line search.
-- Works with any callable ``loss_fn`` and optional custom retraction.
-- Supports both flat tensors and structured parameter lists (e.g., TT cores).
-
-### Functional Feature Maps
-
-Polynomial basis functions for functional TT models:
-- `monomial_features()` — monomials ``1, x, x², …``
-- `legendre_features()` — Legendre polynomials, optionally orthonormal on ``[-1,1]``
-- `hermite_features()` — probabilist Hermite polynomials, optionally orthonormal w.r.t. the standard Gaussian
+| Flag | Effect |
+|---|---|
+| `TINYTT_DEVICE=NV\|METAL\|CL\|…` | Default tinygrad device |
+| `TINYTT_TINYJIT=1` | Enable `TinyJit` kernel caching |
+| `TINYTT_SVD_BACKEND=numpy\|tinygrad` | SVD backend (auto-fallback on GPU) |
+| `TINYTT_FORCE_FP32=1` | Force float32 on devices without usable float64 |
 
 ## NumPy Fallbacks
 
-Several routines rely on NumPy for stability or because `tinygrad` does
-not provide a matching primitive. On GPU these paths copy data to CPU, compute,
-and copy results back:
+Several routines copy data to CPU, compute, and copy back because tinygrad
+lacks a matching primitive:
 
-- **SVD**: `tinytt/_decomposition.py` falls back to NumPy automatically when
-  tinygrad's GPU SVD is unavailable or fails. This enables all SVD-dependent
-  operations (rounding, solvers) on GPU, albeit with CPU transfer overhead.
-- `tinytt/interpolate.py` uses NumPy for `maxvol` and dense solves
-  (may hang on GPU; CPU recommended).
-- `tinytt/uq_adf.py` uses NumPy dense linear algebra and special-function helpers.
-- Some solver helpers use NumPy solves on small dense systems.
+- **SVD**: automatically falls back to NumPy when tinygrad's GPU SVD
+  is unavailable or fails (all core operations work on GPU).
+- **Interpolation** (`maxvol`, dense solves): CPU recommended (may hang on GPU).
+- **UQ-ADF**: NumPy dense linear algebra and special-function helpers.
+- Some solver helpers use NumPy on small dense systems.
 
-This makes tinyTT CPU-first today, with functional GPU support for most core
-operations.
+This makes tinyTT CPU-first today, with functional GPU support for most
+core operations.
+
+## Troubleshooting
+
+- **Python 3.10 not supported** — requires 3.11+ for `Self` type annotation.
+- **Clang required** — tinygrad's CPU backend compiles kernels with `clang`.
+  Install via package manager: `apt install clang` (Debian/Ubuntu).
+- **tinygrad version** — the pinned `tinygrad/` submodule is the recommended
+  version for GPU support.  PyPI `tinygrad>=0.10` works for CPU-only.
