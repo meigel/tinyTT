@@ -34,9 +34,14 @@ def build_left_frame(cores: list, k: int, as_numpy: bool = True) -> np.ndarray |
     For k == 0 the left frame is the 1×1 identity (no left cores).
     """
     d = len(cores)
-    ref = cores[0]
     if k == 0:
-        return tn.ones((1, 1), dtype=ref.dtype, device=ref.device)
+        if as_numpy:
+            return np.ones((1, 1), dtype=np.float64)
+        # For GPU path: figure dtype from cores
+        ref = cores[0]
+        cdtype = ref.dtype if hasattr(ref, 'dtype') else tn.float64
+        cdevice = getattr(ref, 'device', None)
+        return tn.ones((1, 1), dtype=cdtype, device=cdevice)
 
     left = cores[0][0]                          # (n_0, r_1)  — tinygrad Tensor
 
@@ -62,7 +67,12 @@ def build_right_frame(cores: list, k: int, as_numpy: bool = True) -> np.ndarray 
     d = len(cores)
     ref = cores[0]
     if k == d - 1:
-        return tn.ones((1, 1), dtype=ref.dtype, device=ref.device)
+        if as_numpy:
+            return np.ones((1, 1), dtype=np.float64)
+        ref = cores[0]
+        cdtype = ref.dtype if hasattr(ref, 'dtype') else tn.float64
+        cdevice = getattr(ref, 'device', None)
+        return tn.ones((1, 1), dtype=cdtype, device=cdevice)
 
     c_last = cores[-1]                          # (r_{d-1}, n_{d-1}, 1)
     right = c_last[:, :, 0]                     # (r_{d-1}, n_{d-1})
