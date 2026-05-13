@@ -65,9 +65,9 @@ class TTMatrixOperator:
     eps: float = 1e-12
     nswp: int = 20
 
-    def apply(self, u: tt.TT) -> tt.TT:
+    def apply(self, u: tt.TT, eps: float = 1e-10) -> tt.TT:
         if self.use_fast_matvec:
-            return self.A.fast_matvec(u, eps=self.eps, nswp=self.nswp)
+            return self.A.fast_matvec(u, eps=eps, nswp=self.nswp)
         return self.A @ u
 
     def rayleigh_upper_bound(self) -> float:

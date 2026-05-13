@@ -273,38 +273,14 @@ def two_site_dmrg_sweep(energy, metric, cores, round_eps=1e-12, rmax=128,
             b_2d = b_full.reshape(N_left, nk, nkp1, N_right)
             direction = np.einsum('lx,lmnz,yz->xmny', left, b_2d, right)
         else:
-            # Build two-site Gramian: G_2 = B^T A B  (size dim_2 × dim_2)
+            # Projected gradient descent in the two-site space (no Gramian build).
+            # Compute g_2 = L^T @ (Au-b) @ R  — the projected residual.
             Au = energy.A.apply(tt.TT(cores))
             grad = (Au.full().numpy() - energy.b.full().numpy())
             grad_2d = grad.reshape(N_left, nk, nkp1, N_right)
-
-            # Projected gradient (rhs): g_2 = L^T @ r @ R
             g_2 = np.einsum('lx,lmjn,yn->xmjy', left, grad_2d, right)
-            dim_2 = rk * nk * nkp1 * rkp2
-
-            # Build two-site tangent basis B: (N, dim_2), orthonormal columns
-            N = N_left * nk * nkp1 * N_right
-            B = np.zeros((N, dim_2), dtype=np.float64)
-            col = 0
-            for l in range(rk):
-                lc = left[:, l]
-                for i in range(nk):
-                    ei = np.eye(nk)[i]
-                    tmp1 = np.outer(lc, ei).ravel()
-                    for j in range(nkp1):
-                        ej = np.eye(nkp1)[j]
-                        tmp2 = np.outer(tmp1, ej).ravel()
-                        for r in range(rkp2):
-                            row = right[r, :]
-                            B[:, col] = np.outer(tmp2, row).ravel()
-                            col += 1
-
-            # Gramian and solve
-            A_dense = metric.M.dense_matrix()
-            G = B.T @ A_dense @ B
-            reg = max(1e-12, np.linalg.norm(G) / 1e8)
-            delta = np.linalg.solve(G + reg * np.eye(dim_2), -g_2.ravel())
-            direction = delta.reshape(rk, nk, nkp1, rkp2)
+            g_norm = max(np.linalg.norm(g_2), 1e-15)
+            direction = -g_2 / g_norm
 
         # ── Armijo line search ───────────────────────────────────
         E0 = energy(tt.TT(cores))
