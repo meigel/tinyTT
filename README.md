@@ -34,6 +34,7 @@ separated module:
 | **CTT** | `tinytt/ctt/` | Conditional transport maps (polynomial TT-matrix) |
 | **FTT** | `tinytt/functional_tt.py` | Functional TT: basis-driven regression model |
 | **Streaming TT** | `tinytt/streaming.py` | One-pass randomised TT (STTA) for streaming data |
+| **Compositional TT** | `tinytt/compositional.py` | Composition of multiple TT-matrix layers (deep TT) |
 | **Adaptive NGF** | `tinytt/adaptive_ngf/` | Natural-gradient-flow solver with rank adaptivity |
 
 ## Features
@@ -187,7 +188,25 @@ Configurable rank-selection strategies for SVD truncation, usable in
 search. Works with flat tensors or structured parameter lists (e.g., TT cores).
 Accepts optional custom retraction for manifold optimisation.
 
-### 11. Autograd Helpers
+### 11. Compositional TT
+
+Chains multiple TT-matrix layers as ``f(x) = (T_L ∘ … ∘ T_1)(x)`` — a deep
+TT analogous to a neural network where each weight matrix is a TT-matrix.
+
+```python
+from tinytt.compositional import CompositionalTT
+
+# Compose two TTMs: 16 → 8 → 16
+f = CompositionalTT([T1, T2])
+y = f(x)                     # forward pass
+outs = f.layer_outputs(x)    # all intermediate representations
+```
+
+Supports ``.clone()``, ``.to(device)``, ``.round(eps)``, and
+``.detach()``.  Each layer is a ``TT`` instance and can be accessed
+individually via ``f.layers[i]``.
+
+### 12. Autograd Helpers
 
 `tinytt.grad` module wraps tinygrad's autograd for TT objects:
 

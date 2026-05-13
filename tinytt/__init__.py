@@ -84,6 +84,7 @@ import tinytt._functional as functional
 from . import truncation
 from . import streaming
 from .streaming import StreamingTT, streaming_tt
+from .compositional import CompositionalTT
 
 __all__ = [
     'TT',
@@ -144,6 +145,7 @@ __all__ = [
     'streaming',
     'StreamingTT',
     'streaming_tt',
+    'CompositionalTT',
 ]
 
 # keep alias for typo
