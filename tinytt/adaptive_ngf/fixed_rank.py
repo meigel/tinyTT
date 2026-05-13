@@ -361,12 +361,12 @@ def two_site_dmrg_sweep(energy, metric, cores, round_eps=1e-12, rmax=128,
         except np.linalg.LinAlgError:
             continue  # SVD failed, skip this bond
 
-        r_eff = min(rkp1, rk * nk, nkp1 * rkp2, rmax)
+        r_eff = min(rk * nk, nkp1 * rkp2, rmax)
         if round_eps > 0:
             s_cum = np.sqrt(np.maximum(
                 1 - np.cumsum(s**2) / np.sum(s**2), 0))
             r_trunc = int(np.sum(s_cum < round_eps)) if len(s_cum) > 0 and s_cum[0] > round_eps else 0
-            r_eff = max(1, min(r_eff, r_trunc + 1))
+            r_eff = max(rkp1, min(r_eff, r_trunc + 1))
         r_eff = max(1, min(r_eff, rk * nk, nkp1 * rkp2, rmax))
 
         u = u[:, :r_eff]
