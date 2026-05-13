@@ -46,6 +46,8 @@ pip install ./tinygrad
 - **Conjugate gradient solver**: SPD-optimised CG solver with regularisation.
 - **Armijo line search**: Two-way backtracking line search for Riemannian/Euclidean optimisation.
 - **Functional feature maps**: Monomial, Legendre, and Hermite polynomial bases for functional TT models.
+- **Streaming TT (STTA)**: One-pass randomised TT approximation for large or streaming data.
+- **Truncation rules**: Configurable rank-selection strategies (Threshold, Dörfler, adaptive) for rounding and solvers.
 - Interpolation, autograd helpers, and utility functions.
 
 ## Repository Layout

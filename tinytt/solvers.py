@@ -534,6 +534,28 @@ def amen_mm(
 ):
     """
     Perform the TTM-TTM product using AMEn optimization.
+
+    Parameters
+    ----------
+    A, B : TT
+        TT-matrix instances.
+    nswp : int
+        Number of sweeps.
+    X0 : TT or None
+        Initial guess.
+    eps : float
+        Rounding tolerance.
+    rmax : int
+        Maximum rank.
+    kickrank : int
+        Rank for the kick / enrichment.
+    kick2 : int
+        Secondary enrichment rank.
+    verbose : bool
+    truncation_rule : TruncationRule or None
+        Optional rule for rank selection during SVD truncation.
+        When provided it takes precedence over the built-in residual-based
+        or Frobenius-norm rank choice.
     """
     if not (isinstance(A, TT) and isinstance(B, TT)):
         raise InvalidArguments("A and B must be TT instances.")
@@ -584,8 +606,49 @@ def amen_solve(
     use_single_precision=False,
     truncation_rule=None,
 ):
-    # `use_cpp` is accepted for backwards compatibility but ignored:
-    # cpp_enabled() always returns False in this build.
+    """
+    Solve ``A @ x = b`` for a TT-matrix ``A`` and TT-vector ``b`` using AMEn.
+
+    Parameters
+    ----------
+    A : TT
+        TT-matrix (must be square).
+    b : TT
+        TT-vector right-hand side.
+    nswp : int
+        Number of sweeps.
+    x0 : TT or None
+        Initial guess.
+    eps : float
+        Target residual tolerance.
+    rmax : int
+        Maximum rank.
+    max_full : int
+        Maximum dense size before switching to iterative.
+    kickrank : int
+        Rank for the kick / enrichment.
+    kick2 : int
+        Secondary enrichment rank.
+    trunc_norm : str
+        Norm used for truncation (``"res"`` or ``"fro"``).
+    local_solver : int
+        Local solver choice.
+    local_iterations : int
+        Iterations for the local solver.
+    resets : int
+        Number of residual resets.
+    verbose : bool
+    preconditioner : optional
+    use_cpp : bool
+        Ignored (C++ path unavailable in this build).
+    band_diagonal : int
+        Band-diagonal structure of local problem (``-1`` = full).
+    use_single_precision : bool
+    truncation_rule : TruncationRule or None
+        Optional rule for rank selection during SVD truncation.
+        When provided it takes precedence over the built-in residual-based
+        or Frobenius-norm rank choice.
+    """
     if not (isinstance(A, TT) and isinstance(b, TT)):
         raise InvalidArguments("A and b must be TT instances.")
     if not (A.is_ttm and not b.is_ttm):

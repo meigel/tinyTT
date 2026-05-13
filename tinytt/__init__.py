@@ -1,5 +1,26 @@
 r"""
 Tensor-Train (TT) decomposition using tinygrad as the backend.
+
+Modules
+-------
+tt.TT
+    Core TT tensor / TT-matrix class.
+tt.solvers
+    ALS, AMEn, DMRG solvers.
+tt.tdvp
+    Time-evolution (TDVP) sweeps.
+tt.uq_adf
+    Uncertainty quantification via ADF regression.
+tt.interpolate
+    TT-cross interpolation, maxvol.
+tt.ctt
+    Conditional transport maps.
+tt.truncation
+    Configurable truncation rules for SVD rank selection.
+tt.streaming
+    One-pass randomised TT approximation (STTA).
+tt.riemannian
+    Riemannian manifold operations (projection, retraction).
 """
 
 from ._tt_base import TT

@@ -1,3 +1,25 @@
+"""
+Truncation rules for rank selection in TT rounding and solvers.
+
+Provides configurable strategies for choosing the retained rank from a
+singular-value spectrum, usable wherever ``round_tt``, ``amen_solve``, or
+``amen_mm`` accept a ``rule`` / ``truncation_rule`` parameter.
+
+Classes
+-------
+TruncationRule
+    Protocol for custom truncation callables.
+Threshold
+    Keep smallest ``r`` such that ``||S[r:]|| <= eps * ||S||``.
+Doerfler
+    Dörfler condition: keep smallest ``r`` with
+    ``sum(S[r:]²) <= (1-theta) * sum(S²)``.
+DoerflerAdaptivity
+    Dörfler criterion that can increase rank when the condition is not met.
+AdaptiveThreshold
+    Threshold that scales ``eps`` based on rank.
+"""
+
 from __future__ import annotations
 
 import inspect
