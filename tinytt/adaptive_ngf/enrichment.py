@@ -231,22 +231,28 @@ def enrich_bond(
     N_left = left.shape[0]
     N_right = right_two.shape[1]
 
-    # 3. Compute the full-space residual: r = b - A·u
+    # 3. Compute the full-space residual: r = b - A·u  (tinygrad, GPU-compatible)
     u_tt = tt.TT([c.clone() for c in cores])
     Au = energy.A.apply(u_tt) if not isinstance(energy.A, tt.TT) else (energy.A @ u_tt)
-    resid_1d = energy.b.full().numpy().reshape(-1) - Au.full().numpy().reshape(-1)
+    b_tg = energy.b.full()
+    Au_tg = Au.full()
+    resid_1d = (b_tg - Au_tg).reshape(-1).numpy()
 
     # 4. Reshape residual to expose the two-site structure (k, k+1)
     resid = resid_1d.reshape(N_left, nk, nkp1, N_right)  # (N_left, nk, nkp1, N_right)
 
-    # 5. Project onto the two-site tangent space to get the gradient
+    # 5. Project onto the two-site tangent space via tn.einsum (GPU-compatible)
     #    δW[α,i,j,γ] = Σ L[I,α] · resid[I,i,j,J] · R[γ,J]
-    two_site_grad = np.tensordot(left.T, resid, axes=([-1], [0]))    # (rk, nk, nkp1, N_right)
-    two_site_grad = np.tensordot(two_site_grad, right_two, axes=([-1], [1]))  # (rk, nk, nkp1, rkp2)
+    left_tg = tn.tensor(left, dtype=cores[0].dtype, device=cores[0].device)
+    right_tg = tn.tensor(right_two, dtype=cores[0].dtype, device=cores[0].device)
+    resid_tg = tn.tensor(resid, dtype=cores[0].dtype, device=cores[0].device)
+    two_site_grad = tn.einsum('Ia,InmJ,bJ->anmb', left_tg, resid_tg, right_tg)
+    W_mat_tg = two_site_grad.reshape(rk * nk, nkp1 * rkp2)
 
-    # 6. Extract the dominant enrichment directions via SVD
-    W_mat = two_site_grad.reshape(rk * nk, nkp1 * rkp2)   # two-site matrix
-    u, s, vt = np.linalg.svd(W_mat, full_matrices=False)
+    # 6. Extract enrichment directions via SVD (tinygrad SVD)
+    u_tg, s_tg, vt_tg = tn.linalg.svd(W_mat_tg, full_matrices=False)
+    # Convert to numpy for the correction assembly
+    u = u_tg.numpy(); s = s_tg.numpy(); vt = vt_tg.numpy()
 
     delta_eff = min(delta_rank, len(s))
     if delta_eff == 0 or s[0] < 1e-15:
@@ -273,17 +279,26 @@ def enrich_bond(
     correction_left = u_corr.reshape(rk, nk, delta_eff)
     correction_right = (np.diag(s_corr) @ vt_corr).reshape(delta_eff, nkp1, rkp2)
 
-    # 7. Insert correction into the zero-padded cores
+    # 7. Insert correction into the zero-padded cores using tn.cat
     new_cores = [c.clone() for c in zcores]
 
-    ck_np = new_cores[k].numpy()
-    ckp1_np = new_cores[k + 1].numpy()
+    ck = new_cores[k]; ckp1 = new_cores[k + 1]
+    dtype = ck.dtype; device = ck.device
+    corr_left_tg = tn.tensor(correction_left, dtype=dtype, device=device)
+    corr_right_tg = tn.tensor(correction_right, dtype=dtype, device=device)
 
-    ck_np[:, :, rkp1:] += correction_left                # add to zero portion of core k
-    ckp1_np[rkp1:, :, :] += correction_right              # add to zero portion of core k+1
+    # Replace zero portion with correction: tn.cat([orig, orig + corr][..., :rkp1+delta])
+    # Simpler: create new core by concatenating original part with corrected zero part
+    ck_orig = ck[:, :, :rkp1]                               # (rk, nk, rkp1)
+    ck_corr = ck[:, :, rkp1:] + corr_left_tg                 # (rk, nk, delta_eff)
+    new_cores[k] = tn.cat([ck_orig, ck_corr], dim=2)
 
-    new_cores[k] = tn.tensor(ck_np, dtype=cores[k].dtype, device=cores[k].device)
-    new_cores[k + 1] = tn.tensor(ckp1_np, dtype=cores[k + 1].dtype, device=cores[k + 1].device)
+    ckp1_orig = ckp1[rkp1:, :, :]                            # (delta_eff, nkp1, rkp2)
+    # Wait — after zero-expand, ckp1 shape is (rkp1+delta, nkp1, rkp2)
+    # The zero portion is at the END: ckp1[rkp1:, :, :]
+    ckp1_before = ckp1[:rkp1, :, :]                          # (rkp1, nkp1, rkp2) — original
+    ckp1_after = ckp1[rkp1:, :, :] + corr_right_tg            # (delta_eff, nkp1, rkp2) — corrected
+    new_cores[k + 1] = tn.cat([ckp1_before, ckp1_after], dim=0)
 
     return new_cores, correction_left
 
@@ -322,12 +337,16 @@ def expansion_score_dense(
 
     # Compute residual r = b - A*u
     Au = energy.A.apply(u_tt)
-    resid_tt = axpy_tt(1.0, energy.b, -1.0, Au, eps=0.0)   # b - Au
+    resid_tg = energy.b.full() - Au.full()                     # tinygrad Tensor
+    resid_np = resid_tg.numpy().reshape(left.shape[0], nk, nkp1, right.shape[1])
 
-    # Project the residual into the two-site space
-    resid_full = resid_tt.full().numpy().reshape(left.shape[0], nk, nkp1, right.shape[1])
-    g_proj = np.tensordot(left.T, resid_full, axes=([-1], [0]))  # (rk, nk, nkp1, N_right)
-    g_proj = np.tensordot(g_proj, right, axes=([-1], [1]))       # (rk, nk, nkp1, rkp2)
+    # Project the residual into the two-site space via tn.einsum
+    # g[α,i,j,β] = Σ_{I,J} left[I,α] · resid[I,i,j,J] · right[β,J]
+    left_tg = tn.tensor(left, dtype=tn.float64)
+    right_tg = tn.tensor(right, dtype=tn.float64)
+    resid_tg2 = tn.tensor(resid_np, dtype=tn.float64)
+    g_proj_tg = tn.einsum('Ia,InmJ,bJ->anmb', left_tg, resid_tg2, right_tg)
+    g_proj = g_proj_tg.numpy()
 
     g_norm = np.linalg.norm(g_proj)
 
