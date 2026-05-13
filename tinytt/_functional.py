@@ -545,14 +545,23 @@ def evaluate(cores, bases, x):
         )
     phi = [bases[k](x[:, k]) for k in range(d)]
 
-    state = tn.einsum('bm,rmp->brp', phi[0], cores[0])
-    for k in range(1, d):
-        core_eval = tn.einsum('bm,rmp->brp', phi[k], cores[k])
-        state = tn.einsum('bij,bjk->bik', state, core_eval)
+    ndim = cores[0].ndim
+    if ndim == 4:
+        # 4D cores encode the output dimension in the last axis.
+        state = tn.einsum('bm,rmpx->brpx', phi[0], cores[0])
+        for k in range(1, d):
+            core_eval = tn.einsum('bm,rmpx->brpx', phi[k], cores[k])
+            state = tn.einsum('bijx,bjkx->bikx', state, core_eval)
+        result = state.sum(axis=1)[:, 0, :]
+    else:
+        state = tn.einsum('bm,rmp->brp', phi[0], cores[0])
+        for k in range(1, d):
+            core_eval = tn.einsum('bm,rmp->brp', phi[k], cores[k])
+            state = tn.einsum('bij,bjk->bik', state, core_eval)
 
-    result = state[:, :, 0]  # (m, out_dim)
-    if out_dim == 1:
-        result = result[:, 0]
+        result = state[:, :, 0]  # (m, out_dim)
+        if out_dim == 1:
+            result = result[:, 0]
     return result
 
 

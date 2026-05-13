@@ -303,13 +303,15 @@ def _contract_core(core, phi):
 
     Parameters
     ----------
-    core : ndarray, shape (r_l, n, r_r)
+    core : ndarray, shape (r_l, n, r_r) or (r_l, n, r_r, out_dim)
     phi : ndarray, shape (B, n)
 
     Returns
     -------
-    ndarray, shape (B, r_l, r_r)
+    ndarray, shape (B, r_l, r_r) or (B, r_l, r_r, out_dim)
     """
+    if core.ndim == 4:
+        return np.einsum('rmqx,bm->brqx', core, phi)
     return np.einsum('rmq,bm->brq', core, phi)
 
 
@@ -318,7 +320,8 @@ def _evaluate_tt(cores, phi_batch):
 
     Parameters
     ----------
-    cores : list of ndarray, each shape (r_k, n_k, r_{k+1})
+    cores : list of ndarray, each shape (r_k, n_k, r_{k+1}) or
+            (r_k, n_k, r_{k+1}, out_dim) when ``out_dim > 1``.
     phi_batch : list of ndarray, each shape (B, n_k)
 
     Returns
@@ -327,10 +330,16 @@ def _evaluate_tt(cores, phi_batch):
     """
     B = phi_batch[0].shape[0]
     d = len(cores)
-    A = _contract_core(cores[0], phi_batch[0])  # (B, r_0, r_1)
+    ndim = cores[0].ndim
+    A = _contract_core(cores[0], phi_batch[0])  # (B, r_0, r_1) or (B, r_0, r_1, o)
     for k in range(1, d):
-        Ak = _contract_core(cores[k], phi_batch[k])  # (B, r_k, r_{k+1})
-        A = np.einsum('bij,bjk->bik', A, Ak)
+        Ak = _contract_core(cores[k], phi_batch[k])
+        if ndim == 4:
+            A = np.einsum('bijx,bjkx->bikx', A, Ak)
+        else:
+            A = np.einsum('bij,bjk->bik', A, Ak)
+    if ndim == 4:
+        return A.sum(axis=1)[:, 0, :]
     return A.squeeze(-1).squeeze(-1).reshape(B, -1)
 
 
