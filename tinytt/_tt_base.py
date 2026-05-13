@@ -311,6 +311,15 @@ class TT:
         """Exact TT addition by block-stacking cores. Result rank is r_a + r_b
         at internal sites; outer ranks stay 1."""
         d = len(self.__N)
+        # d=1 case: single core where k=0 is both first and last.
+        # Block-stacking on dim=-1 produces outer rank > 1, violating TT invariants.
+        # Fall back to dense for d=1.
+        if d == 1:
+            if self.__is_ttm:
+                s = [(m, n) for m, n in zip(self.__M, self.__N)]
+            else:
+                s = [n for n in self.__N]
+            return TT(self.full() + other.full(), shape=s if self.__is_ttm else None)
         new_cores = []
         for k in range(d):
             ac = self.cores[k]
