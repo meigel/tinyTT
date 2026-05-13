@@ -1,16 +1,15 @@
 """
-Dense local-frame (environment) construction for the TT manifold.
+Local-frame (environment) construction for the TT manifold.
 
 For a TT with cores [θ₁, …, θ_d], the *local frame* at position *k*
 spans the tangent space directions that only change core *k* while
 keeping all other cores fixed.  The frame factorises into a *left
 frame* (cores 0 … k-1) and a *right frame* (cores k+1 … d-1).
 
-Two-site frames extend this to consecutive cores for rank-enrichment.
-
-All functions in this module work in dense (numpy) format — they convert
-tinygrad tensors to numpy arrays for safe, traceable linear algebra.
-This is the Phase-1 "dense-debug" path.
+All computation uses tinygrad operations (GPU-compatible).  The
+``as_numpy`` parameter controls whether the result is returned as a
+numpy array (for backward compatibility with the Armijo line search
+and other numpy-based consumers) or as a tinygrad Tensor.
 """
 
 from __future__ import annotations
@@ -19,67 +18,67 @@ import numpy as np
 import tinytt._backend as tn
 
 
-def build_left_frame(cores: list, k: int) -> np.ndarray:
-    """
-    Dense left-frame matrix at core position *k*.
+# ═══════════════════════════════════════════════════════════════════════
+# GPU-compatible frame builders
+# ═══════════════════════════════════════════════════════════════════════
 
-    Contracts cores 0 … k-1 left-to-right and returns a matrix of shape
-    ``(N_left, r_k)`` where ``N_left = ∏_{i<k} n_i``.  Each column
-    corresponds to a left-interface index α ∈ {1, …, r_k}.
+
+def build_left_frame(cores: list, k: int, as_numpy: bool = True) -> np.ndarray | tn.Tensor:
+    """
+    Left-frame matrix at core position *k*.
+
+    Contracts cores 0 … k-1 left-to-right using tinygrad operations
+    (GPU-compatible). Returns shape ``(N_left, r_k)`` where
+    ``N_left = ∏_{i<k} n_i``.
 
     For k == 0 the left frame is the 1×1 identity (no left cores).
     """
     d = len(cores)
+    ref = cores[0]
     if k == 0:
-        return np.ones((1, 1), dtype=np.float64)
+        return tn.ones((1, 1), dtype=ref.dtype, device=ref.device)
 
-    c0 = cores[0].numpy()                     # (1, n_0, r_1)
-    left = c0[0]                               # (n_0, r_1)
+    left = cores[0][0]                          # (n_0, r_1)  — tinygrad Tensor
 
     for i in range(1, k):
-        ci = cores[i].numpy()                  # (r_i, n_i, r_{i+1})
-        # left: (N_sofar, r_i), ci: (r_i, n_i, r_{i+1})
-        left = np.tensordot(left, ci, axes=([-1], [0]))
-        # -> (N_sofar, n_i, r_{i+1})
-        left = left.reshape(-1, ci.shape[2])   # (N_sofar * n_i, r_{i+1})
+        ci = cores[i]                           # (r_i, n_i, r_{i+1})
+        left = tn.tensordot(left, ci, axes=([-1], [0]))
+        left = left.reshape(-1, ci.shape[2])
 
-    return left                                 # (N_left, r_k)
+    if as_numpy:
+        return left.numpy()
+    return left
 
 
-def build_right_frame(cores: list, k: int) -> np.ndarray:
+def build_right_frame(cores: list, k: int, as_numpy: bool = True) -> np.ndarray | tn.Tensor:
     """
-    Dense right-frame matrix at core position *k*.
+    Right-frame matrix at core position *k*.
 
-    Contracts cores k+1 … d-1 right-to-left and returns a matrix of shape
-    ``(r_{k+1}, N_right)`` where ``N_right = ∏_{i>k} n_i``.  Each row
-    corresponds to a right-interface index β ∈ {1, …, r_{k+1}}.
+    Contracts cores k+1 … d-1 right-to-left using tinygrad operations
+    (GPU-compatible). Returns shape ``(r_{k+1}, N_right)``.
 
     For k == d-1 the right frame is the 1×1 identity (no right cores).
     """
     d = len(cores)
+    ref = cores[0]
     if k == d - 1:
-        return np.ones((1, 1), dtype=np.float64)
+        return tn.ones((1, 1), dtype=ref.dtype, device=ref.device)
 
-    # Start from the last core and work backwards
-    c_last = cores[-1].numpy()                 # (r_{d-1}, n_{d-1}, 1)
-    right = c_last[:, :, 0]                    # (r_{d-1}, n_{d-1})
+    c_last = cores[-1]                          # (r_{d-1}, n_{d-1}, 1)
+    right = c_last[:, :, 0]                     # (r_{d-1}, n_{d-1})
 
     for i in range(d - 2, k, -1):
-        ci = cores[i].numpy()                  # (r_i, n_i, r_{i+1})
-        # right: (r_{i+1}, N_sofar), ci: (r_i, n_i, r_{i+1})
-        right = np.tensordot(ci, right, axes=([-1], [0]))
-        # -> (r_i, n_i, N_sofar)
-        right = right.reshape(ci.shape[0], -1)  # (r_i, n_i * N_sofar)
+        ci = cores[i]                           # (r_i, n_i, r_{i+1})
+        right = tn.tensordot(ci, right, axes=([-1], [0]))
+        right = right.reshape(ci.shape[0], -1)
 
-    return right                                 # (r_{k+1}, N_right)
+    if as_numpy:
+        return right.numpy()
+    return right
 
 
 def build_local_core(cores: list, k: int) -> np.ndarray:
-    """
-    Extract the *k*-th core as a dense numpy array.
-
-    Returns shape ``(r_k, n_k, r_{k+1})``.
-    """
+    """Extract the *k*-th core as a dense numpy array."""
     return cores[k].numpy()
 
 
