@@ -31,7 +31,7 @@ separated module:
 |---|---|---|
 | **TT** | `tinytt/` (core) | Standard TT-tensor / TT-matrix with full solver suite |
 | **QTT** | `TT.to_qtt()` | Quantized TT for high-dimensional problems |
-| **CTT** | `tinytt/ctt/` | Conditional transport maps (polynomial TT-matrix) |
+| **CTT** | `tinytt/conditional_transport/` | Conditional transport maps (polynomial TT-matrix) |
 | **FTT** | `tinytt/functional_tt.py` | Functional TT: basis-driven regression model |
 | **Streaming TT** | `tinytt/streaming.py` | One-pass randomised TT (STTA) for streaming data |
 | **Compositional TT** | `tinytt/compositional.py` | Composition of multiple TT-matrix layers (deep TT) |
@@ -111,7 +111,7 @@ Examples:
 ### 5. CTT (Conditional Transport Maps)
 
 Polynomial TT-matrix transport maps for density estimation and sampling
-(experimental).  Located in `tinytt/ctt/`.
+(experimental).  Located in `tinytt/conditional_transport/`.
 
 - `LinearTTMap` / `TriangularResidualLayerTTNative` — native TT-matrix residual layers
 - `ComposedCTTMAPTG` — multi-layer composed map with tinygrad autograd training
@@ -272,7 +272,7 @@ tinytt/                    # main library
 ├── truncation.py          # Rank truncation rules
 ├── grad.py                # Autograd helpers
 ├── errors.py              # Exception classes
-├── ctt/                   # Conditional transport maps
+├── conditional_transport/  # Conditional transport maps
 ├── adaptive_ngf/          # Adaptive NGF solver
 tinygrad/                  # Pinned tinygrad submodule (optional)
 tests/                     # Test suite

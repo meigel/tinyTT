@@ -2,7 +2,7 @@
 Legacy NumPy helpers for conditional triangular maps.
 
 These classes are retained as small dense baselines. For TT-matrix velocity
-fields and autograd training, prefer ``tinytt.ctt.ctt_tinygrad``.
+fields and autograd training, prefer ``tinytt.conditional_transport.transport_tinygrad``.
 """
 
 import numpy as np

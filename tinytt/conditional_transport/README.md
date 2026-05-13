@@ -1,6 +1,6 @@
 # Conditional Triangular Tensor Trains
 
-`tinytt.ctt` contains experimental code for parameter-conditioned transport maps
+`tinytt.conditional_transport` contains experimental code for parameter-conditioned transport maps
 with triangular residual structure. The implementation currently exposes two
 styles:
 
@@ -20,15 +20,15 @@ stable public interface.
 
 ## Available Components
 
-Legacy NumPy-oriented classes from `tinytt.ctt.ctt_map`:
+Legacy NumPy-oriented classes from `tinytt.conditional_transport.transport_map`:
 
 - `TTMap`: simple dense affine transport baseline.
 - `LinearTTMap`: dense linear conditional map.
 - `TriangularResidualLayer`: residual layer with linear or MLP velocity.
 - `ComposedCTTMAP`: composition of residual layers.
-- `train_composed_ctt`: manual-backprop training loop from `tinytt.ctt.training`.
+- `train_composed_ctt`: manual-backprop training loop from `tinytt.conditional_transport.training`.
 
-`tinygrad` autograd classes from `tinytt.ctt.ctt_tinygrad`:
+`tinygrad` autograd classes from `tinytt.conditional_transport.transport_tinygrad`:
 
 - `TriangularResidualLayerTG`: dense linear or MLP residual layer.
 - `TriangularResidualLayerTT`: low-rank factorized residual layer.
@@ -66,7 +66,7 @@ Minimal manual-backprop example:
 
 ```python
 import numpy as np
-from tinytt.ctt import TriangularResidualLayer, ComposedCTTMAP, train_composed_ctt
+from tinytt.conditional_transport import TriangularResidualLayer, ComposedCTTMAP, train_composed_ctt
 
 d = 2
 p = 2
@@ -93,7 +93,7 @@ Minimal `tinygrad` autograd example:
 
 ```python
 import numpy as np
-from tinytt.ctt import TriangularResidualLayerTG, ComposedCTTMAPTG, train_ctt_tinygrad
+from tinytt.conditional_transport import TriangularResidualLayerTG, ComposedCTTMAPTG, train_ctt_tinygrad
 
 d = 2
 p = 2

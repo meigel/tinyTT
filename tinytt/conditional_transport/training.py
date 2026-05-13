@@ -325,7 +325,7 @@ def demo_training():
     """
     Demo of the training utilities.
     """
-    from .ctt_map import LinearTTMap
+    from .transport_map import LinearTTMap
     
     print("Training utilities demo")
     print("-" * 40)

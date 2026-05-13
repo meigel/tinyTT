@@ -76,7 +76,7 @@ def generate_training_data(n_samples, d=2, p=2, seed=42):
 
 def demo():
     """Run the parametric ODE flow example with multi-layer CTT."""
-    from tinytt.ctt import LinearTTMap, TriangularResidualLayer, ComposedCTTMAP, train_composed_ctt
+    from tinytt.conditional_transport import LinearTTMap, TriangularResidualLayer, ComposedCTTMAP, train_composed_ctt
     
     print("=" * 60)
     print("CTT Multi-Layer Parametric ODE Flow Example")

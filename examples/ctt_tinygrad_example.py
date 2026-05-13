@@ -10,7 +10,7 @@ no manual chain-rule code.
 
 import numpy as np
 
-from tinytt.ctt import ComposedCTTMAPTG, TriangularResidualLayerTG, train_ctt_tinygrad
+from tinytt.conditional_transport import ComposedCTTMAPTG, TriangularResidualLayerTG, train_ctt_tinygrad
 
 
 def parametric_ode_flow(a, mu, t=1.0, n_steps=20):

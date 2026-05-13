@@ -4,18 +4,18 @@ Tests for CTT (Conditional Triangular Tensor Train) module.
 
 import numpy as np
 import pytest
-from tinytt.ctt import (
+from tinytt.conditional_transport import (
     TTMap,
     LinearTTMap,
     TriangularResidualLayer,
     characteristic_matching_loss,
 )
-from tinytt.ctt.ctt_map import ComposedCTTMAP
-from tinytt.ctt.training import flow_matching_loss, wasserstein_2_1d, wasserstein_evaluation
+from tinytt.conditional_transport.transport_map import ComposedCTTMAP
+from tinytt.conditional_transport.training import flow_matching_loss, wasserstein_2_1d, wasserstein_evaluation
 
 try:
     from tinygrad import Tensor
-    from tinytt.ctt import (
+    from tinytt.conditional_transport import (
         ComposedCTTMAPTG,
         TriangularResidualLayerTG,
         TriangularResidualLayerTT,
@@ -451,7 +451,7 @@ class TestTTVelocityField:
     
     def test_creation(self):
         """Test TTVelocityField can be created."""
-        from tinytt.ctt.ctt_map import TTVelocityField
+        from tinytt.conditional_transport.transport_map import TTVelocityField
         
         vf = TTVelocityField(d=2, p=3)
         assert vf.d == 2
@@ -459,7 +459,7 @@ class TestTTVelocityField:
     
     def test_forward(self):
         """Test velocity field forward pass."""
-        from tinytt.ctt.ctt_map import TTVelocityField
+        from tinytt.conditional_transport.transport_map import TTVelocityField
         
         vf = TTVelocityField(d=2, p=2)
         
@@ -472,7 +472,7 @@ class TestTTVelocityField:
     
     def test_jacobian(self):
         """Test Jacobian computation."""
-        from tinytt.ctt.ctt_map import TTVelocityField
+        from tinytt.conditional_transport.transport_map import TTVelocityField
         
         vf = TTVelocityField(d=2, p=2)
         

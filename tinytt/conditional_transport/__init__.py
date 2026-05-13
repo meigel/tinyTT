@@ -11,7 +11,7 @@ Legacy NumPy baselines:
 - ctt_map.py: small dense/manual-backprop helpers retained for compatibility.
 """
 
-from .ctt_map import TTMap, TriangularResidualLayer, ComposedCTTMAP, LinearTTMap
+from .transport_map import TTMap, TriangularResidualLayer, ComposedCTTMAP, LinearTTMap
 from .training import (
     characteristic_matching_loss,
     flow_matching_loss,
@@ -22,7 +22,7 @@ from .training import (
 
 # Tinygrad autograd version (recommended)
 try:
-    from .ctt_tinygrad import (
+    from .transport_tinygrad import (
         TriangularResidualLayerTG,
         TriangularResidualLayerTT,
         TriangularResidualLayerTTNative,
