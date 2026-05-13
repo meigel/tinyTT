@@ -30,7 +30,7 @@ class EnrichmentOptions:
     reg: float = 1e-12
     min_predicted_decrease: float = 1e-14
     min_fraction_predicted_decrease: float = 1e-4
-    lambda_complexity: float = 0.0
+    lambda_complexity: float = -1.0  # <0 means auto: tol / 100
     try_next_best: int = 2
     armijo_beta: float = 0.5
     alpha_min: float = 1e-6

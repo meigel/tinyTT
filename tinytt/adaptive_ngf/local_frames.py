@@ -106,6 +106,38 @@ def build_two_site_tensor(cores: list, k: int) -> np.ndarray:
     return two
 
 
+def build_tangent_basis_tg(
+    left: tn.Tensor, right: tn.Tensor, n_k: int
+) -> tn.Tensor:
+    r"""
+    GPU-compatible tangent basis using tinygrad operations.
+
+    Returns ``B`` of shape ``(N, dim)`` as a tinygrad Tensor.
+    ``left`` has shape ``(N_left, r_k)``, ``right`` has shape ``(r_{k+1}, N_right)``.
+    Each column is :math:`\operatorname{vec}(L[:,l] \otimes e_p \otimes R[r,:])`.
+    """
+    N_left, rk = left.shape
+    rkp1, N_right = right.shape
+    dim = rk * n_k * rkp1
+    N = N_left * n_k * N_right
+    dtype = left.dtype
+    device = left.device
+
+    # Build B column by column using tn.cat
+    cols = []
+    for l in range(rk):
+        lc = left[:, l]                          # (N_left,)
+        for p in range(n_k):
+            ep = tn.eye(n_k, dtype=dtype, device=device)[p]  # (n_k,)
+            tmp = tn.einsum('i,j->ij', lc, ep).reshape(-1)   # (N_left * n_k,)
+            for r in range(rkp1):
+                row = right[r, :]                 # (N_right,)
+                col = tn.einsum('i,j->ij', tmp, row).reshape(-1)  # (N,)
+                cols.append(col)
+
+    return tn.stack(cols, dim=1) if cols else tn.zeros((N, 0), dtype=dtype, device=device)
+
+
 def split_two_site_tensor(W: np.ndarray, r_new: int) -> tuple[np.ndarray, np.ndarray]:
     """
     Split a two-site tensor back into two cores via truncated SVD.

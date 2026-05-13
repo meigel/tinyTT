@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import numpy as np
 import tinytt as tt
-from .local_frames import build_left_frame, build_right_frame, build_tangent_basis
+from .local_frames import build_left_frame, build_right_frame, build_tangent_basis, build_tangent_basis_tg
 from .operators import IdentityOperator, LinearOperator, _as_linear_operator, dot
 
 
@@ -58,7 +58,7 @@ class HilbertMetric:
         """Inner product of flat arrays (for line-search use)."""
         return float(np.dot(x.ravel(), y.ravel()))
 
-    # ── Gramian construction (dense-debug) ────────────────────────────
+    # ── Gramian construction ────────────────────────────────────────
 
     def gramian(self, cores: list, k: int) -> np.ndarray:
         """
@@ -78,25 +78,63 @@ class HilbertMetric:
         if isinstance(self.M, IdentityOperator):
             return self._gramian_identity(cores, k, rk, nk, rkp1)
 
-        # ── general operator: build via tangent basis ────────────
-        left = build_left_frame(cores, k)          # (N_left, r_k)
-        right = build_right_frame(cores, k)        # (r_{k+1}, N_right)
+        if self.dense_debug:
+            return self._gramian_dense(cores, k, rk, nk, rkp1)
+        return self._gramian_tg(cores, k, rk, nk, rkp1)
 
-        N_left = left.shape[0]
-        N_right = right.shape[1]
-        dim = rk * nk * rkp1
-        N = N_left * nk * N_right
-
-        M_dense = self.M.dense_matrix()            # (N, N)
-
-        # Build B: (N, dim)  —  each column is a tangent basis vector
+    def _gramian_dense(self, cores, k, rk, nk, rkp1):
+        """Gramian via dense numpy (CPU-only)."""
+        left = build_left_frame(cores, k)
+        right = build_right_frame(cores, k)
+        M_dense = self.M.dense_matrix()
         B = build_tangent_basis(left, right, n_k=nk)
-
-        # G_k = B^T M_dense B
         G = B.T @ M_dense @ B
-        # Symmetrize for numerical safety
-        G = 0.5 * (G + G.T)
-        return G
+        return 0.5 * (G + G.T)
+
+    def _gramian_tg(self, cores, k, rk, nk, rkp1):
+        """Gramian via tinygrad ops (GPU-compatible)."""
+        left = build_left_frame(cores, k, as_numpy=False)
+        right = build_right_frame(cores, k, as_numpy=False)
+
+        if isinstance(self.M, IdentityOperator):
+            return self._gramian_identity(cores, k, rk, nk, rkp1)
+
+        # Diagonal SPD: compute via tn.einsum with reduced complexity
+        if hasattr(self.M, 'diag'):
+            # G = B^T diag(d) B — compute via left/right weighting
+            diag = tn.tensor(self.M.diag.reshape(-1),
+                             dtype=left.dtype, device=left.device)
+            N_left = left.shape[0]
+            N_right = right.shape[1]
+            # Reshape diag to expose structure: (N_left, nk, N_right)
+            d_3d = diag.reshape(N_left, nk, N_right)
+
+            dim = rk * nk * rkp1
+            G = tn.zeros((dim, dim), dtype=left.dtype, device=left.device)
+            # Loop-free Gramian via einsum:
+            # G[(l1,p1,r1),(l2,p2,r2)] =
+            #   Σ_{I,J} L[I,l1]·d[I,p1,J]·R[r1,J] · L[I,l2]·d[I,p2,J]·R[r2,J]
+            #  = Σ_{I,J} L[I,l1]·d[I,p1,J]·R[r1,J] · L[I,l2]·d[I,p2,J]·R[r2,J]
+            # Factorise:
+            #   Temp[l1, p, r2, I, J] = L[I,l1] · d[I,p,J] · R[r2,J]
+            #   G[(l1,p1,r1),(l2,p2,r2)] = Σ_{I,J} Temp[l1,p1,r1,I,J] · Temp[l2,p2,r2,I,J]
+            # Use tn.einsum for the contraction:
+            #   G = einsum('l1 I J p1 r1, l2 I J p2 r2 -> l1 p1 r1 l2 p2 r2')
+            #   = einsum('l1 I J p1 r1, l2 I J p2 r2 -> (l1 p1 r1) (l2 p2 r2)')
+            # Simpler: build B^T diag B where B is the tangent basis
+            B = build_tangent_basis_tg(left, right, n_k=nk)
+            # Apply diag: diag @ B = diag * B (columnwise)
+            DB = d_3d.reshape(-1, 1) * B            # (N, dim)
+            G_tg = B.T @ DB                          # (dim, dim)
+            return 0.5 * (G_tg + G_tg.T).numpy()
+
+        # General TTM: use dense_matrix on CPU (fallback)
+        M_dense_np = self.M.dense_matrix()
+        left_np = left.numpy()
+        right_np = right.numpy()
+        B_np = build_tangent_basis(left_np, right_np, n_k=nk)
+        G = B_np.T @ M_dense_np @ B_np
+        return 0.5 * (G + G.T)
 
     def _gramian_identity(
         self, cores: list, k: int, rk: int, nk: int, rkp1: int

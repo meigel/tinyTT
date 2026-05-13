@@ -121,6 +121,16 @@ def adaptive_ngf_solve(
 
     d = len(cores)
 
+    # ── auto lambda_complexity ─────────────────────────────────────────
+    if enrich_opts.lambda_complexity < 0:
+        # Heuristic: penalty such that η²/(2L) ≈ tol is competitive with
+        # a single bond enrichment (ΔC ~ n·r_avg).  Set λ_comp such that
+        # λ_comp · ΔC_typical ≈ tol / 10.
+        r_avg = max(1, int(np.mean([float(c.shape[0]) for c in cores])))
+        n_avg = int(np.mean([float(c.shape[1]) for c in cores]))
+        delta_C_typical = enrich_opts.delta_rank * n_avg * r_avg * 2
+        enrich_opts.lambda_complexity = (opts.tol / 10.0) / max(delta_C_typical, 1)
+
     # ── outer loop ────────────────────────────────────────────────────
     for outer_iter in range(opts.max_outer):
         if verbose:
