@@ -241,18 +241,13 @@ def enrich_bond(
     # 4. Reshape residual to expose the two-site structure (k, k+1)
     resid = resid_1d.reshape(N_left, nk, nkp1, N_right)  # (N_left, nk, nkp1, N_right)
 
-    # 5. Project onto the two-site tangent space via tn.einsum (GPU-compatible)
+    # 5. Project onto the two-site tangent space (numpy — tinygrad SVD is QR-based and slow)
     #    δW[α,i,j,γ] = Σ L[I,α] · resid[I,i,j,J] · R[γ,J]
-    left_tg = tn.tensor(left, dtype=cores[0].dtype, device=cores[0].device)
-    right_tg = tn.tensor(right_two, dtype=cores[0].dtype, device=cores[0].device)
-    resid_tg = tn.tensor(resid, dtype=cores[0].dtype, device=cores[0].device)
-    two_site_grad = tn.einsum('Ia,InmJ,bJ->anmb', left_tg, resid_tg, right_tg)
-    W_mat_tg = two_site_grad.reshape(rk * nk, nkp1 * rkp2)
+    two_site_grad = np.einsum('Ia,InmJ,bJ->anmb', left, resid, right_two)
+    W_mat = two_site_grad.reshape(rk * nk, nkp1 * rkp2)
 
-    # 6. Extract enrichment directions via SVD (tinygrad SVD)
-    u_tg, s_tg, vt_tg = tn.linalg.svd(W_mat_tg, full_matrices=False)
-    # Convert to numpy for the correction assembly
-    u = u_tg.numpy(); s = s_tg.numpy(); vt = vt_tg.numpy()
+    # 6. Extract enrichment directions via numpy SVD (LAPACK-backed, fast)
+    u, s, vt = np.linalg.svd(W_mat, full_matrices=False)
 
     delta_eff = min(delta_rank, len(s))
     if delta_eff == 0 or s[0] < 1e-15:
@@ -335,18 +330,14 @@ def expansion_score_dense(
     u_tt = tt.TT(cores)
     E0 = energy(u_tt)
 
-    # Compute residual r = b - A*u
+    # Compute residual r = b - A*u (pure numpy — no tinygrad JIT overhead)
     Au = energy.A.apply(u_tt)
-    resid_tg = energy.b.full() - Au.full()                     # tinygrad Tensor
-    resid_np = resid_tg.numpy().reshape(left.shape[0], nk, nkp1, right.shape[1])
+    resid_np = (energy.b.full().numpy() - Au.full().numpy())
+    resid_np = resid_np.reshape(left.shape[0], nk, nkp1, right.shape[1])
 
-    # Project the residual into the two-site space via tn.einsum
+    # Project the residual into the two-site space via pure numpy
     # g[α,i,j,β] = Σ_{I,J} left[I,α] · resid[I,i,j,J] · right[β,J]
-    left_tg = tn.tensor(left, dtype=tn.float64)
-    right_tg = tn.tensor(right, dtype=tn.float64)
-    resid_tg2 = tn.tensor(resid_np, dtype=tn.float64)
-    g_proj_tg = tn.einsum('Ia,InmJ,bJ->anmb', left_tg, resid_tg2, right_tg)
-    g_proj = g_proj_tg.numpy()
+    g_proj = np.einsum('Ia,InmJ,bJ->anmb', left, resid_np, right)
 
     g_norm = np.linalg.norm(g_proj)
 

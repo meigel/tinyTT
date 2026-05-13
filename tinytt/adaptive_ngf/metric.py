@@ -132,30 +132,28 @@ class HilbertMetric:
             G = (B_np * d_full).T @ B_np
             return 0.5 * (G + G.T)
 
-        # ── TTM operator: ALS environment contraction ─────────────
+        # ── TTM operator: ALS environment contraction (numpy — no JIT) ──
         if isinstance(self.M, TTMatrixOperator):
-            A_cores = self.M.A.cores
-            d = len(cores)
+            A_cores = [c.numpy() for c in self.M.A.cores]
+            n_cores = [c.numpy() for c in cores]
+            d = len(n_cores)
             # Build right environment at k+1
-            # Phis_right has shape (rkp1, rA_kp1, rkp1) from contraction
-            Phi_r = tn.ones((1, 1, 1), dtype=left.dtype, device=left.device)
+            Phi_r = np.ones((1, 1, 1), dtype=np.float64)
             for i in range(d - 1, k, -1):
-                Phi_r = tn.einsum(
+                Phi_r = np.einsum(
                     'LSR,lML,sMNS,rNR->lsr',
-                    Phi_r, cores[i], A_cores[i], cores[i])
+                    Phi_r, n_cores[i], A_cores[i], n_cores[i])
             # Build left environment at k
-            Phi_l = tn.ones((1, 1, 1), dtype=left.dtype, device=left.device)
+            Phi_l = np.ones((1, 1, 1), dtype=np.float64)
             for i in range(k):
-                Phi_l = tn.einsum(
+                Phi_l = np.einsum(
                     'lsr,lML,sMNS,rNR->LSR',
-                    Phi_l, cores[i], A_cores[i], cores[i])
+                    Phi_l, n_cores[i], A_cores[i], n_cores[i])
             # Local projected operator (= Gramian for EnergyMetric)
-            # Bp: contract A.cores[k] with right environment
-            Bp = tn.einsum('smnS,LSR->smnRL', A_cores[k], Phi_r)
-            # B: contract left environment with Bp
-            B = tn.einsum('lsr,smnRL->lmLrnR', Phi_l, Bp)
-            G_tg = B.reshape(dim, dim)
-            return 0.5 * (G_tg + G_tg.T).numpy()
+            Bp = np.einsum('smnS,LSR->smnRL', A_cores[k], Phi_r)
+            B = np.einsum('lsr,smnRL->lmLrnR', Phi_l, Bp)
+            G = B.reshape(dim, dim)
+            return 0.5 * (G + G.T)
 
         # ── Fallback: dense (should not be needed for supported ops) ──
         M_dense_np = self.M.dense_matrix()
