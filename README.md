@@ -31,10 +31,9 @@ separated module:
 |---|---|---|
 | **TT** | `tinytt/` (core) | Standard TT-tensor / TT-matrix with full solver suite |
 | **QTT** | `TT.to_qtt()` | Quantized TT for high-dimensional problems |
-| **CTT** | `tinytt/conditional_transport/` | Conditional transport maps (polynomial TT-matrix) |
+| **CTT (Compositional TT)** | `tinytt/compositional.py` | Deep composition of multiple TT-matrix layers |
 | **FTT** | `tinytt/functional_tt.py` | Functional TT: basis-driven regression model |
 | **Streaming TT** | `tinytt/streaming.py` | One-pass randomised TT (STTA) for streaming data |
-| **Compositional TT** | `tinytt/compositional.py` | Composition of multiple TT-matrix layers (deep TT) |
 | **Adaptive NGF** | `tinytt/adaptive_ngf/` | Natural-gradient-flow solver with rank adaptivity |
 
 ## Features
@@ -108,20 +107,25 @@ Examples:
 - `examples/heat_equation.py` — QTT heat equation with AMEn solve
 - `examples/tt_qtt_functional.py` — QTT function regression on tensor grid
 
-### 5. CTT (Conditional Transport Maps)
+### 5. CTT (Compositional TT)
 
-Polynomial TT-matrix transport maps for density estimation and sampling
-(experimental).  Located in `tinytt/conditional_transport/`.
+Chains multiple TT-matrix layers as ``f(x) = (T_L ∘ … ∘ T_1)(x)`` — a deep
+TT analogous to a neural network where each weight matrix is a TT-matrix.
 
-- `LinearTTMap` / `TriangularResidualLayerTTNative` — native TT-matrix residual layers
-- `ComposedCTTMAPTG` — multi-layer composed map with tinygrad autograd training
-- Straight-line conditional flow matching
-- Exact empirical 1D Wasserstein-2 evaluation
+```python
+from tinytt.compositional import CompositionalTT
 
-Examples:
-- `examples/ctt_param_ode.py` — single-layer linear map
-- `examples/ctt_multilayer_example.py` — composed residual CTT layers
-- `examples/ctt_tinygrad_example.py` — recommended autograd training path
+# Compose two TTMs: 16 → 8 → 16
+f = CompositionalTT([T1, T2])
+y = f(x)                     # forward pass
+outs = f.layer_outputs(x)    # all intermediate representations
+```
+
+Supports ``.clone()``, ``.to(device)``, ``.round(eps)``, and
+``.detach()``.  Each layer is a ``TT`` instance and can be accessed
+individually via ``f.layers[i]``.
+
+Example: `examples/tt_compositional.py`
 
 ### 6. FTT (Functional TT / Regression)
 
@@ -188,25 +192,7 @@ Configurable rank-selection strategies for SVD truncation, usable in
 search. Works with flat tensors or structured parameter lists (e.g., TT cores).
 Accepts optional custom retraction for manifold optimisation.
 
-### 11. Compositional TT
-
-Chains multiple TT-matrix layers as ``f(x) = (T_L ∘ … ∘ T_1)(x)`` — a deep
-TT analogous to a neural network where each weight matrix is a TT-matrix.
-
-```python
-from tinytt.compositional import CompositionalTT
-
-# Compose two TTMs: 16 → 8 → 16
-f = CompositionalTT([T1, T2])
-y = f(x)                     # forward pass
-outs = f.layer_outputs(x)    # all intermediate representations
-```
-
-Supports ``.clone()``, ``.to(device)``, ``.round(eps)``, and
-``.detach()``.  Each layer is a ``TT`` instance and can be accessed
-individually via ``f.layers[i]``.
-
-### 12. Autograd Helpers
+### 11. Autograd Helpers
 
 `tinytt.grad` module wraps tinygrad's autograd for TT objects:
 
@@ -272,8 +258,8 @@ tinytt/                    # main library
 ├── truncation.py          # Rank truncation rules
 ├── grad.py                # Autograd helpers
 ├── errors.py              # Exception classes
-├── conditional_transport/  # Conditional transport maps
-├── adaptive_ngf/          # Adaptive NGF solver
+├── conditional_transport/  # [Legacy, for reference] will move to tinytt-extended
+├── adaptive_ngf/          # [Experimental] Adaptive NGF solver, will move to tinytt-extended
 tinygrad/                  # Pinned tinygrad submodule (optional)
 tests/                     # Test suite
 examples/                  # Runnable example scripts
@@ -302,16 +288,15 @@ b = A @ x
 sol = tt.solvers.amen_solve(A, b, nswp=10, eps=1e-10)
 print("Solve error:", float((sol - x).norm().numpy()))
 
-# ---- Riemannian gradient descent ----
-from tinytt._riemannian import horizontal_projection, qr_retraction
-theta = [c.clone() for c in x.cores]      # initial guess on manifold
-grad = [c.clone() for c in theta]          # placeholder euclidean gradient
-tan = horizontal_projection(theta, grad)   # project to tangent space
-theta = qr_retraction(theta, tan, step=0.1)  # retract
+# ---- Compositional TT (deep TT) ----
+from tinytt.compositional import CompositionalTT
+f = CompositionalTT([A, A])                # A ∘ A
+y = f(x)                                   # A·(A·x)
 
-# ---- Streaming TT (STTA) ----
-from tinytt.streaming import streaming_tt
-st = streaming_tt(shape=[2, 2, 2], ranks=[2, 2], data_stream=full)
+# ---- Riemannian optimisation ----
+from tinytt._riemannian import horizontal_projection, qr_retraction
+tan = horizontal_projection(x.cores, grad)  # project to tangent space
+theta = qr_retraction(x.cores, tan, 0.1)    # retract to manifold
 ```
 
 ## Tests
