@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import numpy as np
 
-from tinytt.flow_matching import TimeDependentFunctionalTTVelocity, rollout, straight_line_fm_loss
+from tinytt.flow_matching import (
+    TimeDependentFunctionalTTVelocity,
+    make_four_mode_gaussian_pair_data,
+    rollout,
+    sinkhorn_divergence,
+    straight_line_fm_loss,
+)
 import tinytt._backend as tn
 from tinytt.conditional_transport.transport_tinygrad import AdamOptimizer
 
@@ -89,3 +95,14 @@ def test_tinytt_fm_training_smoke_reduces_translation_loss():
         best = min(best, loss_val)
     assert best < first
     assert best < 1e-2
+
+
+def test_four_mode_gaussian_pair_data_is_paired_and_contracting():
+    source, target = make_four_mode_gaussian_pair_data(32, 4, seed=0)
+    assert np.allclose(target, 0.72 * source)
+    assert source.shape == target.shape == (32, 4)
+
+
+def test_sinkhorn_divergence_zero_for_identical_samples():
+    x = np.array([[0.0, 0.0], [1.0, -1.0], [0.5, 0.25]], dtype=np.float64)
+    assert sinkhorn_divergence(x, x, max_points=3) < 1e-12

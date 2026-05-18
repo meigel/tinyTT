@@ -53,7 +53,7 @@ def write_convergence_plots(results: list[dict], plot_dir: Path) -> list[str]:
     import matplotlib.pyplot as plt
 
     paths: list[str] = []
-    metrics = ("loss", "energy", "sample_rel_l2")
+    metrics = ("loss", "energy", "sinkhorn")
     for result in results:
         history = result["history"]
         fig, axes = plt.subplots(1, 3, figsize=(11, 3.2), constrained_layout=True)
@@ -110,6 +110,7 @@ def run_case(name: str, sampler: Sampler, d: int, args: argparse.Namespace) -> d
         )
         return {
             "energy": metrics["energy"],
+            "sinkhorn": metrics["sinkhorn"],
             "sample_rel_l2": metrics["sample_rel_l2"],
         }
 
@@ -130,6 +131,7 @@ def run_case(name: str, sampler: Sampler, d: int, args: argparse.Namespace) -> d
         batch_size=args.batch,
         lr=args.lr,
         seed=args.seed + 17,
+        grad_clip_norm=args.grad_clip,
         paired=True,
         metric_hook=metric_hook,
     )
@@ -156,6 +158,8 @@ def run_case(name: str, sampler: Sampler, d: int, args: argparse.Namespace) -> d
         "final_fm_loss": train.history[-1]["loss"],
         "initial_energy": initial_metrics["energy"],
         "final_energy": final_metrics["energy"],
+        "initial_sinkhorn": initial_metrics["sinkhorn"],
+        "final_sinkhorn": final_metrics["sinkhorn"],
         "initial_sample_rel_l2": initial_metrics["sample_rel_l2"],
         "final_sample_rel_l2": final_metrics["sample_rel_l2"],
         "initial_paired_rel_l2": initial_metrics["paired_rel_l2"],
@@ -182,6 +186,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--steps", type=int, default=20)
     parser.add_argument("--method", choices=["euler", "rk4"], default="euler")
     parser.add_argument("--domain-pad", type=float, default=0.08)
+    parser.add_argument("--grad-clip", type=float, default=1.0)
     parser.add_argument("--vmax", type=float, default=5.0)
     parser.add_argument("--init-scale", type=float, default=0.01)
     parser.add_argument("--learnable-bias", action="store_true")
@@ -203,7 +208,7 @@ def main() -> None:
             print(
                 f"{result['name']}: loss {result['initial_fm_loss']:.4g}->{result['best_fm_loss']:.4g}, "
                 f"energy {result['initial_energy']:.4g}->{result['final_energy']:.4g}, "
-                f"sample_rel_l2 {result['initial_sample_rel_l2']:.4g}->{result['final_sample_rel_l2']:.4g}",
+                f"sinkhorn {result['initial_sinkhorn']:.4g}->{result['final_sinkhorn']:.4g}",
                 flush=True,
             )
     plot_paths = write_convergence_plots(results, Path(args.plot_dir)) if args.plot_dir else []
