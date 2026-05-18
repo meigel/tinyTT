@@ -4,6 +4,7 @@ import numpy as np
 
 from tinytt.flow_matching import TimeDependentFunctionalTTVelocity, rollout, straight_line_fm_loss
 import tinytt._backend as tn
+from tinytt.conditional_transport.transport_tinygrad import AdamOptimizer
 
 
 class ConstantVelocity:
@@ -58,3 +59,33 @@ def test_rollout_time_only_velocity():
     for method in ["euler", "rk4"]:
         out = rollout(TimeOnlyVelocity(), x0, n_steps=6, method=method)
         assert np.allclose(out.numpy(), np.full_like(x0, 0.5))
+
+
+def test_tinytt_fm_training_smoke_reduces_translation_loss():
+    rng = np.random.default_rng(0)
+    source = 2.0 * rng.random((128, 2)) - 1.0
+    target = source + np.array([0.25, -0.1])
+    vf = TimeDependentFunctionalTTVelocity(
+        2,
+        [[-1.2, 1.3], [-1.2, 1.2]],
+        poly_degree=2,
+        time_degree=1,
+        ranks=[2, 3, 3, 1],
+        apply_cutoff=False,
+        learnable_bias=True,
+        seed=0,
+    )
+    vf.output_bias.assign(tn.tensor((target - source).mean(axis=0), dtype=tn.float64))
+    opt = AdamOptimizer(vf.parameters(), lr=0.02)
+    first = None
+    best = float("inf")
+    for epoch in range(20):
+        loss = straight_line_fm_loss(vf, source, target, seed=epoch)
+        loss.backward()
+        opt.step()
+        loss_val = float(loss.numpy())
+        if first is None:
+            first = loss_val
+        best = min(best, loss_val)
+    assert best < first
+    assert best < 1e-2
