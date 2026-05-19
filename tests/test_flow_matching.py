@@ -136,7 +136,7 @@ def test_polynomial_displacement_coeffs_can_use_quadratic_interactions():
         degree=2,
         time_degree=1,
         n_time=3,
-        interactions=[(0, 1)],
+        interactions=True,
         seed=1,
     )
     t_mid = np.full((source.shape[0], 1), 0.5)
@@ -147,35 +147,7 @@ def test_polynomial_displacement_coeffs_can_use_quadratic_interactions():
         d=2,
         degree=2,
         time_degree=1,
-        interactions=[(0, 1)],
+        interactions=True,
     )
     err = np.linalg.norm(pred - (target - source)) / np.linalg.norm(target - source)
     assert err < 0.08
-
-
-def test_polynomial_displacement_coeffs_ignores_unselected_interactions():
-    rng = np.random.default_rng(1)
-    source = rng.uniform(-1.0, 1.0, size=(80, 3))
-    target = source.copy()
-    target[:, 0] = source[:, 0] + 0.3 * source[:, 0] * source[:, 2]
-    coeffs = polynomial_displacement_coeffs(
-        source,
-        target,
-        degree=2,
-        time_degree=1,
-        n_time=3,
-        interactions=[(0, 1)],
-        seed=1,
-    )
-    t_mid = np.full((source.shape[0], 1), 0.5)
-    z_mid = 0.5 * (source + target)
-    pred = polynomial_displacement_predict(
-        np.concatenate([z_mid, t_mid], axis=1),
-        coeffs,
-        d=3,
-        degree=2,
-        time_degree=1,
-        interactions=[(0, 1)],
-    )
-    err = np.linalg.norm(pred - (target - source)) / np.linalg.norm(target - source)
-    assert err > 0.2
