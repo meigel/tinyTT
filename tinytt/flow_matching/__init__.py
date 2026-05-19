@@ -9,7 +9,6 @@ from tinytt.flow_matching.benchmarks import (
     evaluate_pairwise,
     make_banana_pair_data,
     make_four_mode_gaussian_pair_data,
-    sinkhorn_divergence,
     relative_l2_marginals,
     train_fm,
 )
@@ -25,7 +24,6 @@ __all__ = [
     "evaluate_pairwise",
     "make_banana_pair_data",
     "make_four_mode_gaussian_pair_data",
-    "sinkhorn_divergence",
     "relative_l2_marginals",
     "rollout",
     "straight_line_fm_loss",
