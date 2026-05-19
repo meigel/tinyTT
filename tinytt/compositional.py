@@ -103,7 +103,7 @@ class CompositionalTT:
         x : TT or Tensor or ndarray
             Input.  If a dense tensor or array it is converted to a TT-vector
             via SVD.  The shape (after conversion) must match
-            ``self.layers[0].M``.
+            ``self.layers[0].N``.
 
         Returns
         -------
@@ -123,7 +123,7 @@ class CompositionalTT:
                     f"got {h.N}."
                 )
             h = layer @ h
-            if i < self.n_layers - 1:
+            if i < self.n_layers - 1 and len(h.N) > 1:
                 h = h.round(eps=1e-12)
         return h
 
@@ -140,7 +140,7 @@ class CompositionalTT:
         for i, layer in enumerate(self.layers):
             h = layer @ h
             outputs.append(h)
-            if i < self.n_layers - 1:
+            if i < self.n_layers - 1 and len(h.N) > 1:
                 h = h.round(eps=1e-12)
         return outputs
 
@@ -182,5 +182,10 @@ class CompositionalTT:
                 raise InvalidArguments("CompositionalTT input must be a TT-vector.")
             return x
         if tn.is_tensor(x):
+            if x.ndim == 1:
+                return TT([x.reshape(1, x.shape[0], 1)])
             return TT(x, eps=1e-12)
-        return TT(np.asarray(x, dtype=np.float64), eps=1e-12)
+        array = np.asarray(x, dtype=np.float64)
+        if array.ndim == 1:
+            return TT([tn.tensor(array.reshape(1, array.shape[0], 1))])
+        return TT(array, eps=1e-12)

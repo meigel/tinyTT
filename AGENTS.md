@@ -31,6 +31,7 @@ autograd utilities). Key supporting areas are organized as follows:
 | Core TT & rounding | `test_decomposition.py` |
 | Error handling | `test_error_cases.py` |
 | QTT | `test_qtt.py` |
+| Compositional TT | `test_compositional.py` |
 | Interpolation | `test_interpolate.py` |
 | ALS reliability | `test_als_reliability.py` |
 | UQ-ADF | `test_uq_adf.py`, `test_uq_adf_fast.py`, `test_uq_adf_skfem.py` |

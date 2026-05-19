@@ -453,6 +453,9 @@ def to_tt(A, N=None, eps=1e-14, rmax=100, is_sparse=False):
 
     d = len(N)
 
+    if d == 1:
+        return [tn.reshape(A, [1, N[0], 1])], [1, 1]
+
     # ── GPU safety: copy to CPU, decompose in numpy, copy cores back ──────
     is_gpu = tn.is_tensor(A) and not _device_is_cpu(A.device)
     if is_gpu:
