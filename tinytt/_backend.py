@@ -21,29 +21,8 @@ if "XDG_CACHE_HOME" not in os.environ:
     os.environ["XDG_CACHE_HOME"] = "/tmp"
 
 _TINYGRAD_ROOT = Path(__file__).resolve().parents[1] / "tinygrad"
-
-
-def _import_tinygrad():
-    """Import tinygrad, preferring an installed package over bundled checkout.
-
-    Development checkouts may include a sibling ``tinygrad/`` directory.  That
-    fallback is useful when tinygrad is not installed, but it should not shadow
-    an explicitly installed dependency.
-    """
-    try:
-        from tinygrad import Tensor, dtypes, TinyJit
-        return Tensor, dtypes, TinyJit
-    except Exception:
-        if not _TINYGRAD_ROOT.exists():
-            raise
-        for name in list(sys.modules):
-            if name == "tinygrad" or name.startswith("tinygrad."):
-                sys.modules.pop(name, None)
-        root = str(_TINYGRAD_ROOT)
-        if root not in sys.path:
-            sys.path.insert(0, root)
-        from tinygrad import Tensor, dtypes, TinyJit
-        return Tensor, dtypes, TinyJit
+if _TINYGRAD_ROOT.exists() and str(_TINYGRAD_ROOT) not in sys.path:
+    sys.path.insert(0, str(_TINYGRAD_ROOT))
 
 if not os.getenv("TINYTT_DEVICE") and not os.getenv("DEV"):
     os.environ["DEV"] = "CPU"
@@ -57,7 +36,7 @@ if _TINYTT_DEVICE_ENV and _TINYTT_DEVICE_ENV.upper().startswith("GPU") and not _
     os.environ.setdefault(mapped.split(":")[0], "1")
     os.environ.pop("GPU", None)
 
-Tensor, dtypes, TinyJit = _import_tinygrad()
+from tinygrad import Tensor, dtypes, TinyJit
 
 USE_TINYJIT = os.getenv("TINYTT_TINYJIT", "0").lower() in ("1", "true", "yes")
 _jit_cache: dict[tuple, TinyJit] = {}

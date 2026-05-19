@@ -3,13 +3,19 @@ CTT using tinygrad autograd - NO manual backprop needed!
 """
 
 import numpy as np
+import sys
+from pathlib import Path
 
+# Add tinygrad to path
+_TINYGRAD_ROOT = Path(__file__).resolve().parents[1] / "tinygrad"
+if _TINYGRAD_ROOT.exists() and str(_TINYGRAD_ROOT) not in sys.path:
+    sys.path.insert(0, str(_TINYGRAD_ROOT))
+
+import tinygrad
+from tinygrad import Tensor
 import tinytt as tt
-import tinytt._backend as tn
 from tinytt._aux_ops import dense_matvec
 from tinytt._decomposition import lr_orthogonal
-
-Tensor = tn.Tensor
 
 
 def _as_batch_tensor(value):
