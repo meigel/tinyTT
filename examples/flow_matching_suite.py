@@ -29,35 +29,18 @@ from tinytt.flow_matching import (
     evaluate_pairwise,
     make_banana_pair_data,
     make_four_mode_gaussian_pair_data,
-    polynomial_displacement_coeffs,
-    PolynomialResidualVelocity,
     train_fm,
 )
 
 
-Sampler = Callable[[int, int, int, argparse.Namespace], tuple[np.ndarray, np.ndarray]]
+Sampler = Callable[[int, int, int], tuple[np.ndarray, np.ndarray]]
 
 
-def _banana_shift(d: int, value: float) -> np.ndarray | None:
-    if abs(float(value)) < 1e-15:
-        return None
-    shift = np.zeros(d, dtype=np.float64)
-    shift[0] = float(value)
-    return shift
+def _banana_sampler(n: int, d: int, seed: int) -> tuple[np.ndarray, np.ndarray]:
+    return make_banana_pair_data(n, d, curvature=1.5, angle_deg=45.0, seed=seed)
 
 
-def _banana_sampler(n: int, d: int, seed: int, args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
-    return make_banana_pair_data(
-        n,
-        d,
-        curvature=args.banana_curvature,
-        angle_deg=args.banana_angle,
-        shift=_banana_shift(d, args.banana_shift),
-        seed=seed,
-    )
-
-
-def _gm_sampler(n: int, d: int, seed: int, args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
+def _gm_sampler(n: int, d: int, seed: int) -> tuple[np.ndarray, np.ndarray]:
     return make_four_mode_gaussian_pair_data(n, d, seed=seed)
 
 
@@ -95,7 +78,7 @@ def write_convergence_plots(results: list[dict], plot_dir: Path) -> list[str]:
 
 
 def run_case(name: str, sampler: Sampler, d: int, args: argparse.Namespace) -> dict:
-    source, target = sampler(args.train, d, args.seed, args)
+    source, target = sampler(args.train, d, args.seed)
     domain = domain_from_paths(source, target, pad_frac=args.domain_pad)
     vf = build_velocity(
         d,
@@ -103,38 +86,19 @@ def run_case(name: str, sampler: Sampler, d: int, args: argparse.Namespace) -> d
         poly_degree=args.poly,
         time_degree=args.tpoly,
         rank=args.rank,
-        output_rank=args.output_rank,
         init_scale=args.init_scale,
         apply_cutoff=not args.no_cutoff,
         learnable_bias=args.learnable_bias,
         seed=args.seed,
     )
-    if args.baseline_degree > 0:
-        coeffs = polynomial_displacement_coeffs(
-            source,
-            target,
-            degree=args.baseline_degree,
-            time_degree=args.baseline_time_degree,
-            n_time=args.baseline_samples,
-            seed=args.seed + 31,
-        )
-        vf = PolynomialResidualVelocity(
-            vf,
-            coeffs,
-            degree=args.baseline_degree,
-            time_degree=args.baseline_time_degree,
-        )
     if args.learnable_bias:
         vf.output_bias.assign(tn.tensor((target - source).mean(axis=0), dtype=tn.float64))
 
-    metric_source, metric_target = sampler(args.eval, d, args.seed + 1009, args)
+    metric_source, metric_target = sampler(args.eval, d, args.seed + 1009)
 
     def metric_hook(epoch: int) -> dict:
         if args.metric_every <= 0 or (epoch != 1 and epoch % args.metric_every != 0 and epoch != args.epochs):
             return {}
-        include_sinkhorn = epoch in {1, args.epochs} or (
-            args.sinkhorn_every > 0 and epoch % args.sinkhorn_every == 0
-        )
         metrics = evaluate_pairwise(
             vf,
             metric_source,
@@ -143,15 +107,12 @@ def run_case(name: str, sampler: Sampler, d: int, args: argparse.Namespace) -> d
             n_steps=args.steps,
             method=args.method,
             vmax=args.vmax,
-            include_sinkhorn=include_sinkhorn,
         )
-        point = {
+        return {
             "energy": metrics["energy"],
+            "sinkhorn": metrics["sinkhorn"],
             "sample_rel_l2": metrics["sample_rel_l2"],
         }
-        if "sinkhorn" in metrics:
-            point["sinkhorn"] = metrics["sinkhorn"]
-        return point
 
     initial_metrics = evaluate_pairwise(
         vf,
@@ -161,7 +122,6 @@ def run_case(name: str, sampler: Sampler, d: int, args: argparse.Namespace) -> d
         n_steps=args.steps,
         method=args.method,
         vmax=args.vmax,
-        include_sinkhorn=True,
     )
     train = train_fm(
         vf,
@@ -172,7 +132,6 @@ def run_case(name: str, sampler: Sampler, d: int, args: argparse.Namespace) -> d
         lr=args.lr,
         seed=args.seed + 17,
         grad_clip_norm=args.grad_clip,
-        loss_every=args.loss_every,
         paired=True,
         metric_hook=metric_hook,
     )
@@ -184,7 +143,6 @@ def run_case(name: str, sampler: Sampler, d: int, args: argparse.Namespace) -> d
         n_steps=args.steps,
         method=args.method,
         vmax=args.vmax,
-        include_sinkhorn=True,
     )
     return {
         "name": name,
@@ -195,11 +153,6 @@ def run_case(name: str, sampler: Sampler, d: int, args: argparse.Namespace) -> d
         "epochs": args.epochs,
         "lr": args.lr,
         "batch_size": args.batch,
-        "banana_curvature": args.banana_curvature if name.startswith("banana") else None,
-        "banana_angle": args.banana_angle if name.startswith("banana") else None,
-        "banana_shift": args.banana_shift if name.startswith("banana") else None,
-        "baseline_degree": args.baseline_degree,
-        "baseline_time_degree": args.baseline_time_degree,
         "best_fm_loss": train.best_loss,
         "initial_fm_loss": train.history[0]["loss"],
         "final_fm_loss": train.history[-1]["loss"],
@@ -223,7 +176,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--poly", type=int, default=4)
     parser.add_argument("--tpoly", type=int, default=2)
     parser.add_argument("--rank", type=int, default=None)
-    parser.add_argument("--output-rank", type=int, default=None)
     parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--lr", type=float, default=1e-2)
     parser.add_argument("--train", type=int, default=4096)
@@ -231,20 +183,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--eval", type=int, default=512)
     parser.add_argument("--metric-points", type=int, default=512)
     parser.add_argument("--metric-every", type=int, default=100)
-    parser.add_argument("--sinkhorn-every", type=int, default=0)
-    parser.add_argument("--loss-every", type=int, default=1)
     parser.add_argument("--steps", type=int, default=20)
     parser.add_argument("--method", choices=["euler", "rk4"], default="euler")
     parser.add_argument("--domain-pad", type=float, default=0.08)
     parser.add_argument("--grad-clip", type=float, default=1.0)
     parser.add_argument("--vmax", type=float, default=5.0)
     parser.add_argument("--init-scale", type=float, default=0.01)
-    parser.add_argument("--baseline-degree", type=int, default=0)
-    parser.add_argument("--baseline-time-degree", type=int, default=2)
-    parser.add_argument("--baseline-samples", type=int, default=4)
-    parser.add_argument("--banana-curvature", type=float, default=1.5)
-    parser.add_argument("--banana-angle", type=float, default=45.0)
-    parser.add_argument("--banana-shift", type=float, default=0.0)
     parser.add_argument("--learnable-bias", action="store_true")
     parser.add_argument("--no-cutoff", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
