@@ -142,6 +142,12 @@ def is_tensor(x) -> bool:
     return isinstance(x, Tensor)
 
 
+def _constant_tensor(x: Tensor) -> Tensor:
+    """tinyTT tensors are constants unless callers explicitly enable autograd."""
+    x.requires_grad_(False)
+    return x
+
+
 def tensor(data, dtype=None, device=None):
     resolved = _resolve_device(device)
     target_dtype = coerce_dtype(dtype, resolved, data)
@@ -154,7 +160,7 @@ def tensor(data, dtype=None, device=None):
         return out
     if target_dtype is None and isinstance(data, (list, tuple, np.ndarray)):
         target_dtype = default_float_dtype(resolved)
-    return Tensor(data, dtype=target_dtype, device=resolved)
+    return _constant_tensor(Tensor(data, dtype=target_dtype, device=resolved))
 
 
 def ones(shape, dtype=None, device=None):
@@ -162,7 +168,7 @@ def ones(shape, dtype=None, device=None):
     target_dtype = coerce_dtype(dtype, resolved)
     if target_dtype is None:
         target_dtype = default_float_dtype(resolved)
-    return Tensor.ones(*shape, dtype=target_dtype, device=resolved)
+    return _constant_tensor(Tensor.ones(*shape, dtype=target_dtype, device=resolved))
 
 
 def zeros(shape, dtype=None, device=None):
@@ -170,7 +176,7 @@ def zeros(shape, dtype=None, device=None):
     target_dtype = coerce_dtype(dtype, resolved)
     if target_dtype is None:
         target_dtype = default_float_dtype(resolved)
-    return Tensor.zeros(*shape, dtype=target_dtype, device=resolved)
+    return _constant_tensor(Tensor.zeros(*shape, dtype=target_dtype, device=resolved))
 
 
 def rand(shape, dtype=None, device=None):
@@ -178,7 +184,7 @@ def rand(shape, dtype=None, device=None):
     target_dtype = coerce_dtype(dtype, resolved)
     if target_dtype is None:
         target_dtype = default_float_dtype(resolved)
-    return Tensor.rand(*shape, dtype=target_dtype, device=resolved)
+    return _constant_tensor(Tensor.rand(*shape, dtype=target_dtype, device=resolved))
 
 
 def randn(shape, dtype=None, device=None):
@@ -186,7 +192,7 @@ def randn(shape, dtype=None, device=None):
     target_dtype = coerce_dtype(dtype, resolved)
     if target_dtype is None:
         target_dtype = default_float_dtype(resolved)
-    return Tensor.randn(*shape, dtype=target_dtype, device=resolved)
+    return _constant_tensor(Tensor.randn(*shape, dtype=target_dtype, device=resolved))
 
 
 def eye(n, m=None, dtype=None, device=None):
@@ -194,19 +200,19 @@ def eye(n, m=None, dtype=None, device=None):
     target_dtype = coerce_dtype(dtype, resolved)
     if target_dtype is None:
         target_dtype = default_float_dtype(resolved)
-    return Tensor.eye(n, m, dtype=target_dtype, device=resolved)
+    return _constant_tensor(Tensor.eye(n, m, dtype=target_dtype, device=resolved))
 
 
 def arange(start, stop=None, step=1, dtype=None, device=None):
     resolved = _resolve_device(device)
     target_dtype = coerce_dtype(dtype, resolved)
-    return Tensor.arange(start, stop, step, dtype=target_dtype, device=resolved)
+    return _constant_tensor(Tensor.arange(start, stop, step, dtype=target_dtype, device=resolved))
 
 
 def linspace(start, stop, steps, dtype=None, device=None):
     resolved = _resolve_device(device)
     target_dtype = coerce_dtype(dtype, resolved)
-    return Tensor.linspace(start, stop, steps, dtype=target_dtype, device=resolved)
+    return _constant_tensor(Tensor.linspace(start, stop, steps, dtype=target_dtype, device=resolved))
 
 
 def reshape(x: Tensor, shape):

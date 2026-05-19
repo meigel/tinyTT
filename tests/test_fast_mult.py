@@ -10,7 +10,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import tinytt._backend as tn
 import tinytt as tt
-from tinytt._fast_mult import fast_hadammard, fast_mv, fast_mm, swap_cores
+from tinytt._fast_mult import fast_hadamard, fast_mv, fast_mm, swap_cores
 from tinytt.errors import InvalidArguments, ShapeMismatch
 
 
@@ -41,7 +41,7 @@ class TestFastMult:
         b = tt.random([2, 3, 4], [1, 2, 2, 1])
 
         ref = a.full().numpy() * b.full().numpy()
-        c = fast_hadammard(a, b)
+        c = fast_hadamard(a, b)
         np.testing.assert_allclose(c.full().numpy(), ref, atol=1e-8)
 
     @NEEDS_CLANG
@@ -95,8 +95,8 @@ class TestFastMult:
         with pytest.raises((ShapeMismatch, InvalidArguments)):
             fast_mv(a, b)
 
-        # -- fast_hadammard: mismatched shapes (TT vectors) --
+        # -- fast_hadamard: mismatched shapes (TT vectors) --
         a = tt.random([2, 3], [1, 2, 1])
         b = tt.random([4, 5], [1, 2, 1])
         with pytest.raises((ShapeMismatch, InvalidArguments)):
-            fast_hadammard(a, b)
+            fast_hadamard(a, b)

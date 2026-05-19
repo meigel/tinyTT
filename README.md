@@ -258,8 +258,7 @@ tinytt/                    # main library
 ├── truncation.py          # Rank truncation rules
 ├── grad.py                # Autograd helpers
 ├── errors.py              # Exception classes
-├── conditional_transport/  # [Legacy, for reference] will move to tinytt-extended
-├── adaptive_ngf/          # [Experimental] Adaptive NGF solver, will move to tinytt-extended
+├── adaptive_ngf/          # Adaptive natural-gradient-flow solver
 tinygrad/                  # Pinned tinygrad submodule (optional)
 tests/                     # Test suite
 examples/                  # Runnable example scripts
@@ -300,6 +299,11 @@ theta = qr_retraction(x.cores, tan, 0.1)    # retract to manifold
 ```
 
 ## Tests
+
+Conditional triangular tensor-train transport maps and the `examples/ctt_*.py`
+scripts have moved to
+[`tinyTT-extended`](https://github.com/meigel/tinyTT-extended).  Compositional
+TT remains in this repository as `tinytt.compositional`.
 
 ```bash
 pip install pytest

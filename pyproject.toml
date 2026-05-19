@@ -12,7 +12,7 @@ name = "tinyTT"
 version = "0.3"
 description = "Tensor-Train decomposition in tinygrad."
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.18",
     "tinygrad",
@@ -24,6 +24,7 @@ authors = [
 keywords = ["tinygrad", "tensor-train decomposition"]
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]

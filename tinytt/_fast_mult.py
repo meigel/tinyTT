@@ -50,7 +50,7 @@ def swap_cores(core_a, core_b, eps):
     )
 
 
-def fast_hadammard(tt_a, tt_b, eps=1e-10):
+def fast_hadamard(tt_a, tt_b, eps=1e-10):
     """
     Fast elementwise multiplication (Hadamard) between two TT/TTM tensors.
     """
@@ -84,6 +84,10 @@ def fast_hadammard(tt_a, tt_b, eps=1e-10):
                 cores[j], cores[j + 1] = swap_cores(cores[j], cores[j + 1], eps)
     from tinytt._tt_base import TT
     return TT(cores)
+
+
+# Backward-compatible alias for the historical misspelling.
+fast_hadammard = fast_hadamard
 
 
 def fast_mv(tt_a, tt_b, eps=1e-10):

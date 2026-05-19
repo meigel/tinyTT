@@ -78,7 +78,7 @@ def test_gpu_fast_products():
     x = tt.random([2, 2, 2], [1, 2, 2, 1], device=DEVICE_RESOLVED, dtype=DTYPE)
     y = tt.random([2, 2, 2], [1, 2, 2, 1], device=DEVICE_RESOLVED, dtype=DTYPE)
 
-    z = tt.fast_hadammard(x, y, eps=1e-8)
+    z = tt.fast_hadamard(x, y, eps=1e-8)
     ref = x.full().numpy() * y.full().numpy()
     assert np.allclose(z.full().numpy(), ref, atol=1e-5)
 

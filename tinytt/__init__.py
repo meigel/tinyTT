@@ -13,8 +13,6 @@ tt.uq_adf
     Uncertainty quantification via ADF regression.
 tt.interpolate
     TT-cross interpolation, maxvol.
-tt.ctt
-    Conditional transport maps.
 tt.truncation
     Configurable truncation rules for SVD rank selection.
 tt.streaming
@@ -47,7 +45,7 @@ from ._extras import (
     shape_tuple_to_mn,
 )
 from ._dmrg import dmrg_hadamard
-from ._fast_mult import fast_hadammard, fast_mv, fast_mm
+from ._fast_mult import fast_hadamard, fast_hadammard, fast_mv, fast_mm
 from . import grad
 from . import solvers
 from .solvers import amen_mm
@@ -56,7 +54,6 @@ from . import uq_adf
 from . import tdvp
 from . import bug
 
-# ── new in this extension ──────────────────────────────────────────────
 from ._riemannian import (
     qr_retraction,
     svd_retraction,
@@ -116,10 +113,10 @@ __all__ = [
     'tdvp',
     'bug',
     'dmrg_hadamard',
+    'fast_hadamard',
     'fast_hadammard',
     'fast_mv',
     'fast_mm',
-    # new
     'cg',
     'armijo_ls',
     'qr_retraction',
@@ -147,6 +144,3 @@ __all__ = [
     'streaming_tt',
     'CompositionalTT',
 ]
-
-# keep alias for typo
-fast_hadamard = fast_hadammard

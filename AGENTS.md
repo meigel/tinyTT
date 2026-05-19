@@ -22,7 +22,7 @@ autograd utilities). Key supporting areas are organized as follows:
 | **Functional** | `_functional.py` | Polynomial feature maps (monomial, Legendre, Hermite) |
 | Interpolation | `interpolate.py` | TT-cross, maxvol |
 | Uncertainty | `uq_adf.py` | UQ with ADF |
-| CTT | `ctt/` | Conditional transport maps |
+| Compositional TT | `compositional.py` | Composition of TT-matrix layers |
 
 ### Test files
 
@@ -35,7 +35,6 @@ autograd utilities). Key supporting areas are organized as follows:
 | ALS reliability | `test_als_reliability.py` |
 | UQ-ADF | `test_uq_adf.py`, `test_uq_adf_fast.py`, `test_uq_adf_skfem.py` |
 | UQ-ADF (fast) | `test_uq_adf_fast_skfem.py` |
-| CTT | `test_ctt.py` |
 | TDVP | `test_tdvp_mpo_smoke.py` |
 | GPU | `test_gpu_ops.py`, `test_gpu_smoke.py` |
 | **Riemannian** | `test_riemannian.py` |
@@ -62,7 +61,7 @@ autograd utilities). Key supporting areas are organized as follows:
 - `pip install -r requirements-dev.txt` installs pytest and dev tooling.
 - `PYTHONPATH=. pytest -q tests` runs tinyTT test suite.
 
-To run only the new tests added in the extension:
+To run a focused subset of solver, manifold, line-search, and functional tests:
 ```
 PYTHONPATH=. DEV=PYTHON pytest tests/test_riemannian.py tests/test_cg.py tests/test_linesearch.py tests/test_functional.py -q
 ```
