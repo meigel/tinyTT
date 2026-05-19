@@ -66,13 +66,6 @@ class TimeDependentFunctionalTTVelocity:
             params.append(self.output_bias)
         return params
 
-    def parameter_count(self) -> int:
-        total = sum(int(np.prod(core.shape)) for core in self.cores)
-        total += int(np.prod(self.output_scale.shape))
-        if self.learnable_bias:
-            total += int(np.prod(self.output_bias.shape))
-        return total
-
     def __call__(self, x_t) -> Tensor:
         return self.forward(x_t)
 
@@ -91,9 +84,10 @@ class TimeDependentFunctionalTTVelocity:
         return velocity
 
     def _apply_boundary_cutoff(self, x_t: Tensor, velocity: Tensor) -> Tensor:
+        x_np = x_t.numpy()
         cutoffs = []
         for j in range(self.d):
             a, b = self.domain[j]
-            tau = (x_t[:, j] - float(a)) / (float(b) - float(a))
-            cutoffs.append(tn.sin(np.pi * tau) ** 2)
-        return velocity * tn.stack(cutoffs, dim=1)
+            tau = (x_np[:, j] - a) / (b - a)
+            cutoffs.append(np.sin(np.pi * tau) ** 2)
+        return velocity * tn.tensor(np.stack(cutoffs, axis=1), dtype=tn.float64)
