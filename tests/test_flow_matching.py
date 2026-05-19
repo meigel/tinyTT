@@ -4,7 +4,9 @@ import numpy as np
 
 from tinytt.flow_matching import (
     TimeDependentFunctionalTTVelocity,
+    make_banana_pair_data,
     make_four_mode_gaussian_pair_data,
+    polynomial_displacement_coeffs,
     rollout,
     sinkhorn_divergence,
     straight_line_fm_loss,
@@ -103,6 +105,20 @@ def test_four_mode_gaussian_pair_data_is_paired_and_contracting():
     assert source.shape == target.shape == (32, 4)
 
 
+def test_banana_pair_data_supports_target_shift():
+    source, target = make_banana_pair_data(16, 3, curvature=1.5, angle_deg=0.0, shift=[0.25, 0.0, -0.5], seed=0)
+    _, unshifted = make_banana_pair_data(16, 3, curvature=1.5, angle_deg=0.0, seed=0)
+    assert source.shape == target.shape == (16, 3)
+    assert np.allclose(target - unshifted, np.array([0.25, 0.0, -0.5]))
+
+
 def test_sinkhorn_divergence_zero_for_identical_samples():
     x = np.array([[0.0, 0.0], [1.0, -1.0], [0.5, 0.25]], dtype=np.float64)
     assert sinkhorn_divergence(x, x, max_points=3) < 1e-12
+
+
+def test_polynomial_displacement_coeffs_fit_constant_displacement():
+    x = np.linspace(-1.0, 1.0, 16).reshape(-1, 1)
+    target = x + 0.25
+    coeffs = polynomial_displacement_coeffs(x, target, degree=2, time_degree=2, n_time=3)
+    assert np.allclose(coeffs[0], [0.25], atol=1e-12)

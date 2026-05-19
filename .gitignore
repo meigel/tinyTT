@@ -52,6 +52,10 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 
+# Generated benchmark outputs
+plots/
+results/
+
 # Translations
 *.mo
 *.pot

@@ -55,6 +55,7 @@ class TimeDependentFunctionalTTVelocity:
             self.cores.append(tn.tensor(arr, dtype=tn.float64).requires_grad_(True))
         self.output_scale = tn.tensor([1.0], dtype=tn.float64).requires_grad_(True)
         self.output_bias = tn.tensor(np.zeros(self.d), dtype=tn.float64).requires_grad_(learnable_bias)
+        self._calibrate_init(float(init_scale))
 
     @property
     def rank(self) -> list[int]:
@@ -89,6 +90,24 @@ class TimeDependentFunctionalTTVelocity:
         if self.apply_cutoff:
             velocity = self._apply_boundary_cutoff(x_t, velocity)
         return velocity
+
+    def _calibrate_init(self, target_std: float) -> None:
+        """Match the initial output scale used by the PyTorch reference."""
+        if target_std <= 0:
+            return
+        device = self.cores[0].device
+        probe = tn.rand((512, self.d + 1), dtype=self.cores[0].dtype, device=device)
+        cols = []
+        for j, (a, b) in enumerate(self.domain):
+            cols.append(float(a) + (float(b) - float(a)) * probe[:, j])
+        a_t, b_t = self.time_domain
+        cols.append(float(a_t) + (float(b_t) - float(a_t)) * probe[:, -1])
+        x_t = tn.stack(cols, dim=1)
+        out_std = float(self.forward(x_t).std().numpy())
+        if out_std > 1e-15:
+            factor = (target_std / out_std) ** (1.0 / len(self.cores))
+            for core in self.cores:
+                core.assign(core.detach() * factor)
 
     def _apply_boundary_cutoff(self, x_t: Tensor, velocity: Tensor) -> Tensor:
         cutoffs = []
