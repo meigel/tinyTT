@@ -62,6 +62,21 @@ def _gm_sampler(n: int, d: int, seed: int, args: argparse.Namespace) -> tuple[np
     return make_four_mode_gaussian_pair_data(n, d, seed=seed)
 
 
+def _baseline_interaction_pairs(d: int, args: argparse.Namespace) -> list[tuple[int, int]]:
+    mode = args.baseline_interaction_pairs
+    if args.baseline_interactions:
+        mode = "all"
+    if mode == "none":
+        return []
+    if mode == "first":
+        return [(0, 1)] if d > 1 else []
+    if mode == "adjacent":
+        return [(i, i + 1) for i in range(0, d - 1, 2)]
+    if mode == "all":
+        return [(i, j) for i in range(d) for j in range(i + 1, d)]
+    raise ValueError(f"unknown baseline interaction mode {mode!r}")
+
+
 def write_convergence_plots(results: list[dict], plot_dir: Path) -> list[str]:
     plot_dir.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("MPLCONFIGDIR", str(plot_dir / ".matplotlib"))
@@ -99,6 +114,7 @@ def run_case(name: str, sampler: Sampler, d: int, args: argparse.Namespace) -> d
     source, target = sampler(args.train, d, args.seed, args)
     domain = domain_from_paths(source, target, pad_frac=args.domain_pad)
     baseline_coeffs = None
+    baseline_interaction_pairs = _baseline_interaction_pairs(d, args)
     vf = build_velocity(
         d,
         domain,
@@ -118,7 +134,7 @@ def run_case(name: str, sampler: Sampler, d: int, args: argparse.Namespace) -> d
             degree=args.baseline_degree,
             time_degree=args.baseline_time_degree,
             n_time=args.baseline_samples,
-            interactions=args.baseline_interactions,
+            interactions=baseline_interaction_pairs,
             seed=args.seed + 31,
         )
         baseline_coeffs = coeffs
@@ -127,7 +143,7 @@ def run_case(name: str, sampler: Sampler, d: int, args: argparse.Namespace) -> d
             coeffs,
             degree=args.baseline_degree,
             time_degree=args.baseline_time_degree,
-            interactions=args.baseline_interactions,
+            interactions=baseline_interaction_pairs,
         )
     if args.learnable_bias:
         mean_bias = (target - source).mean(axis=0)
@@ -143,7 +159,7 @@ def run_case(name: str, sampler: Sampler, d: int, args: argparse.Namespace) -> d
                 d,
                 args.baseline_degree,
                 time_degree=args.baseline_time_degree,
-                interactions=args.baseline_interactions,
+                interactions=baseline_interaction_pairs,
             )
             mean_bias = (target - source - baseline_mid).mean(axis=0)
         elif baseline_coeffs is not None and args.baseline_bias_mode == "zero":
@@ -223,7 +239,8 @@ def run_case(name: str, sampler: Sampler, d: int, args: argparse.Namespace) -> d
         "banana_shift": args.banana_shift if name.startswith("banana") else None,
         "baseline_degree": args.baseline_degree,
         "baseline_time_degree": args.baseline_time_degree,
-        "baseline_interactions": args.baseline_interactions,
+        "baseline_interaction_pairs": baseline_interaction_pairs,
+        "baseline_interaction_mode": "all" if args.baseline_interactions else args.baseline_interaction_pairs,
         "baseline_bias_mode": args.baseline_bias_mode,
         "best_fm_loss": train.best_loss,
         "initial_fm_loss": train.history[0]["loss"],
@@ -268,6 +285,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--baseline-time-degree", type=int, default=2)
     parser.add_argument("--baseline-samples", type=int, default=4)
     parser.add_argument("--baseline-interactions", action="store_true")
+    parser.add_argument(
+        "--baseline-interaction-pairs",
+        choices=["none", "first", "adjacent", "all"],
+        default="none",
+    )
     parser.add_argument("--baseline-bias-mode", choices=["residual", "total", "zero"], default="residual")
     parser.add_argument("--banana-curvature", type=float, default=1.5)
     parser.add_argument("--banana-angle", type=float, default=45.0)
