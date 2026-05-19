@@ -7,6 +7,7 @@ from tinytt.flow_matching import (
     make_banana_pair_data,
     make_four_mode_gaussian_pair_data,
     polynomial_displacement_coeffs,
+    polynomial_displacement_predict,
     rollout,
     sinkhorn_divergence,
     straight_line_fm_loss,
@@ -122,3 +123,31 @@ def test_polynomial_displacement_coeffs_fit_constant_displacement():
     target = x + 0.25
     coeffs = polynomial_displacement_coeffs(x, target, degree=2, time_degree=2, n_time=3)
     assert np.allclose(coeffs[0], [0.25], atol=1e-12)
+
+
+def test_polynomial_displacement_coeffs_can_use_quadratic_interactions():
+    rng = np.random.default_rng(0)
+    source = rng.uniform(-1.0, 1.0, size=(80, 2))
+    target = source.copy()
+    target[:, 0] = source[:, 0] + 0.3 * source[:, 0] * source[:, 1]
+    coeffs = polynomial_displacement_coeffs(
+        source,
+        target,
+        degree=2,
+        time_degree=1,
+        n_time=3,
+        interactions=True,
+        seed=1,
+    )
+    t_mid = np.full((source.shape[0], 1), 0.5)
+    z_mid = 0.5 * (source + target)
+    pred = polynomial_displacement_predict(
+        np.concatenate([z_mid, t_mid], axis=1),
+        coeffs,
+        d=2,
+        degree=2,
+        time_degree=1,
+        interactions=True,
+    )
+    err = np.linalg.norm(pred - (target - source)) / np.linalg.norm(target - source)
+    assert err < 0.08

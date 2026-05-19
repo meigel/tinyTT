@@ -12,6 +12,26 @@ training-time cadence separately. A value of `0` computes Sinkhorn only at the
 first and final metric checkpoints, while final summary metrics always include
 Sinkhorn.
 
+For high-dimensional curved banana cases, `--baseline-degree` fits a fixed
+least-squares polynomial baseline to the flow-matching velocity
+
+```text
+u_t(z_t) = x1 - x0,    z_t = (1 - t) x0 + t x1.
+```
+
+The trained TT velocity is then a residual correction. Enable
+`--baseline-interactions` when the map contains rotated quadratic structure:
+it adds `x_i x_j t^q` features, which are important when the interpolation
+coordinates mix the original banana coordinates, but expensive in high
+dimension.
+
+With a baseline active, `--baseline-bias-mode` controls the learnable residual
+bias initialization. `residual` initializes from the residual mean and gives a
+clean baseline at startup. `total` initializes from the total displacement; this
+can be a useful warm start when residual training is expected to make a larger
+correction, but it double-counts the low-order baseline initially. `zero` leaves
+the residual bias at zero.
+
 Generated benchmark outputs live under `plots/` and `results/`; these are
 ignored by git. Commit only curated benchmark artifacts that are intended to be
 reviewed as documentation.
