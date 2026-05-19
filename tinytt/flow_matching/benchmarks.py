@@ -19,12 +19,7 @@ Sampler = Callable[[int, int, int], tuple[np.ndarray, np.ndarray]]
 
 
 class PolynomialResidualVelocity:
-    """Fixed polynomial baseline in `(x,t)` plus trainable TT residual velocity.
-
-    The baseline approximates the conditional flow-matching velocity
-    `u_t(z_t)=x_1-x_0` from sampled interpolation states
-    `z_t=(1-t)x_0+t x_1`.  The TT then learns only the residual velocity.
-    """
+    """Fixed polynomial baseline in `(x,t)` plus trainable TT residual velocity."""
 
     def __init__(
         self,
@@ -32,13 +27,11 @@ class PolynomialResidualVelocity:
         coeffs: np.ndarray,
         degree: int,
         time_degree: int = 2,
-        interactions: bool = False,
     ) -> None:
         self.residual = residual
         self.coeffs = tn.tensor(coeffs, dtype=tn.float64)
         self.degree = int(degree)
         self.time_degree = int(time_degree)
-        self.interactions = bool(interactions)
         self.d = residual.d
 
     @property
@@ -70,25 +63,13 @@ class PolynomialResidualVelocity:
             x_power = x ** power
             for t_power in t_powers:
                 cols.append(x_power * t_power)
-        if self.interactions and self.degree >= 2 and self.d > 1:
-            for i in range(self.d):
-                for j in range(i + 1, self.d):
-                    cross = x[:, i : i + 1] * x[:, j : j + 1]
-                    for t_power in t_powers:
-                        cols.append(cross * t_power)
         return tn.cat(cols, dim=1)
 
     def forward(self, x_t):
         return self._features(x_t) @ self.coeffs + self.residual(x_t)
 
 
-def _polynomial_design_from_xt(
-    x_t: np.ndarray,
-    d: int,
-    degree: int,
-    time_degree: int,
-    interactions: bool = False,
-) -> np.ndarray:
+def _polynomial_design_from_xt(x_t: np.ndarray, d: int, degree: int, time_degree: int) -> np.ndarray:
     if degree <= 0:
         return np.ones((x_t.shape[0], 1), dtype=np.float64)
     x = x_t[:, :d]
@@ -102,12 +83,6 @@ def _polynomial_design_from_xt(
         x_power = x ** power
         for t_power in t_powers:
             features.append(x_power * t_power)
-    if interactions and degree >= 2 and d > 1:
-        for i in range(d):
-            for j in range(i + 1, d):
-                cross = x[:, i : i + 1] * x[:, j : j + 1]
-                for t_power in t_powers:
-                    features.append(cross * t_power)
     return np.concatenate(features, axis=1)
 
 
@@ -118,7 +93,6 @@ def polynomial_displacement_coeffs(
     *,
     time_degree: int = 2,
     n_time: int = 4,
-    interactions: bool = False,
     seed: int = 0,
 ) -> np.ndarray:
     """Least-squares polynomial FM baseline fitted on sampled `(z_t,t)` states."""
@@ -130,29 +104,9 @@ def polynomial_displacement_coeffs(
     x0 = np.repeat(source, n_time, axis=0)
     displacement = np.repeat(target - source, n_time, axis=0)
     z_t = x0 + t * displacement
-    design = _polynomial_design_from_xt(
-        np.concatenate([z_t, t], axis=1),
-        source.shape[1],
-        degree,
-        time_degree,
-        interactions=interactions,
-    )
+    design = _polynomial_design_from_xt(np.concatenate([z_t, t], axis=1), source.shape[1], degree, time_degree)
     coeffs, *_ = np.linalg.lstsq(design, displacement, rcond=None)
     return coeffs.astype(np.float64)
-
-
-def polynomial_displacement_predict(
-    x_t: np.ndarray,
-    coeffs: np.ndarray,
-    d: int,
-    degree: int,
-    *,
-    time_degree: int = 2,
-    interactions: bool = False,
-) -> np.ndarray:
-    """Evaluate a fitted polynomial FM velocity baseline on NumPy inputs."""
-    design = _polynomial_design_from_xt(x_t, d, degree, time_degree, interactions=interactions)
-    return design @ coeffs
 
 
 def banana_map(x: np.ndarray, curvature: float = 1.5, shift_val: float = 1.0) -> np.ndarray:

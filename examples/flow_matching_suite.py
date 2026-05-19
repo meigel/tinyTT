@@ -30,7 +30,6 @@ from tinytt.flow_matching import (
     make_banana_pair_data,
     make_four_mode_gaussian_pair_data,
     polynomial_displacement_coeffs,
-    polynomial_displacement_predict,
     PolynomialResidualVelocity,
     train_fm,
 )
@@ -98,7 +97,6 @@ def write_convergence_plots(results: list[dict], plot_dir: Path) -> list[str]:
 def run_case(name: str, sampler: Sampler, d: int, args: argparse.Namespace) -> dict:
     source, target = sampler(args.train, d, args.seed, args)
     domain = domain_from_paths(source, target, pad_frac=args.domain_pad)
-    baseline_coeffs = None
     vf = build_velocity(
         d,
         domain,
@@ -118,37 +116,16 @@ def run_case(name: str, sampler: Sampler, d: int, args: argparse.Namespace) -> d
             degree=args.baseline_degree,
             time_degree=args.baseline_time_degree,
             n_time=args.baseline_samples,
-            interactions=args.baseline_interactions,
             seed=args.seed + 31,
         )
-        baseline_coeffs = coeffs
         vf = PolynomialResidualVelocity(
             vf,
             coeffs,
             degree=args.baseline_degree,
             time_degree=args.baseline_time_degree,
-            interactions=args.baseline_interactions,
         )
     if args.learnable_bias:
-        mean_bias = (target - source).mean(axis=0)
-        if baseline_coeffs is not None and args.baseline_bias_mode == "residual":
-            # The fixed baseline already carries the low-order displacement.
-            # Initialize the trainable TT bias to the residual mean, not to the
-            # total displacement, to avoid double-counting translations.
-            t_mid = np.full((source.shape[0], 1), 0.5, dtype=np.float64)
-            z_mid = 0.5 * (source + target)
-            baseline_mid = polynomial_displacement_predict(
-                np.concatenate([z_mid, t_mid], axis=1),
-                baseline_coeffs,
-                d,
-                args.baseline_degree,
-                time_degree=args.baseline_time_degree,
-                interactions=args.baseline_interactions,
-            )
-            mean_bias = (target - source - baseline_mid).mean(axis=0)
-        elif baseline_coeffs is not None and args.baseline_bias_mode == "zero":
-            mean_bias = np.zeros(d, dtype=np.float64)
-        vf.output_bias.assign(tn.tensor(mean_bias, dtype=tn.float64))
+        vf.output_bias.assign(tn.tensor((target - source).mean(axis=0), dtype=tn.float64))
 
     metric_source, metric_target = sampler(args.eval, d, args.seed + 1009, args)
 
@@ -223,8 +200,6 @@ def run_case(name: str, sampler: Sampler, d: int, args: argparse.Namespace) -> d
         "banana_shift": args.banana_shift if name.startswith("banana") else None,
         "baseline_degree": args.baseline_degree,
         "baseline_time_degree": args.baseline_time_degree,
-        "baseline_interactions": args.baseline_interactions,
-        "baseline_bias_mode": args.baseline_bias_mode,
         "best_fm_loss": train.best_loss,
         "initial_fm_loss": train.history[0]["loss"],
         "final_fm_loss": train.history[-1]["loss"],
@@ -267,8 +242,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--baseline-degree", type=int, default=0)
     parser.add_argument("--baseline-time-degree", type=int, default=2)
     parser.add_argument("--baseline-samples", type=int, default=4)
-    parser.add_argument("--baseline-interactions", action="store_true")
-    parser.add_argument("--baseline-bias-mode", choices=["residual", "total", "zero"], default="residual")
     parser.add_argument("--banana-curvature", type=float, default=1.5)
     parser.add_argument("--banana-angle", type=float, default=45.0)
     parser.add_argument("--banana-shift", type=float, default=0.0)
