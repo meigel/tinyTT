@@ -34,7 +34,6 @@ separated module:
 | **CTT (Compositional TT)** | `tinytt/compositional.py` | Deep composition of multiple TT-matrix layers |
 | **FTT** | `tinytt/functional_tt.py` | Functional TT: basis-driven regression model |
 | **Streaming TT** | `tinytt/streaming.py` | One-pass randomised TT (STTA) for streaming data |
-| **Adaptive NGF** | `tinytt/adaptive_ngf/` | Natural-gradient-flow solver with rank adaptivity |
 
 ## Features
 
@@ -70,7 +69,6 @@ DMRG and fast products handle contractions; TDVP and BUG handle time evolution.
 | **CG** | `tt.cg` | SPD-optimised conjugate gradient (matrix-free) |
 | **GMRES** | `tt.solvers.gmres_restart` | Restarted GMRES for non-SPD systems |
 | **BiCGSTAB** | `tt.solvers.BiCGSTAB_reset` | Stabilised biconjugate gradient |
-| **Adaptive NGF** | `tt.adaptive_ngf.adaptive_ngf_solve` | Natural-gradient-flow with Dörfler rank enrichment |
 | **ALS regression** | `tt.als_regression` | Functional TT regression from data |
 
 See `examples/tt_solvers.py`, `examples/tt_dmrg.py`, `examples/mpo_ising_tdvp.py`,
@@ -258,7 +256,6 @@ tinytt/                    # main library
 ├── truncation.py          # Rank truncation rules
 ├── grad.py                # Autograd helpers
 ├── errors.py              # Exception classes
-├── adaptive_ngf/          # Adaptive natural-gradient-flow solver
 tinygrad/                  # Pinned tinygrad submodule (optional)
 tests/                     # Test suite
 examples/                  # Runnable example scripts
@@ -299,11 +296,6 @@ theta = qr_retraction(x.cores, tan, 0.1)    # retract to manifold
 ```
 
 ## Tests
-
-Conditional triangular tensor-train transport maps and the `examples/ctt_*.py`
-scripts have moved to
-[`tinyTT-extended`](https://github.com/meigel/tinyTT-extended).  Compositional
-TT remains in this repository as `tinytt.compositional`.
 
 ```bash
 pip install pytest
