@@ -118,6 +118,16 @@ class TestDecompositionInternals:
         assert np.allclose(tfull.numpy(), full, atol=1e-10)
 
     @NEEDS_CLANG
+    def test_mat_to_tt_accepts_scipy_sparse_matrix(self):
+        """Sparse matrix inputs can be converted to TT-matrix form."""
+        scipy_sparse = pytest.importorskip("scipy.sparse")
+        A_sparse = scipy_sparse.diags([1.0, 2.0, 3.0, 4.0], format="csr")
+        A_tt = tt.TT(A_sparse, shape=[(2, 2), (2, 2)], eps=1e-12, rmax=8)
+
+        assert A_tt.is_ttm
+        assert np.allclose(A_tt.full().numpy().reshape(4, 4), A_sparse.toarray(), atol=1e-10)
+
+    @NEEDS_CLANG
     def test_round_tt_basic(self):
         """round_tt reduces extra rank while preserving the tensor within tolerance."""
         t = tt.random([2, 3, 4], [1, 4, 4, 1])

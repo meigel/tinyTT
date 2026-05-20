@@ -19,6 +19,10 @@ from tinytt.errors import (
 )
 
 
+def _is_scipy_sparse_matrix(source) -> bool:
+    return hasattr(source, "toarray") and hasattr(source, "tocsr") and hasattr(source, "shape")
+
+
 class TT:
     """Tensor Train (TT) tensor / TT-matrix backed by tinygrad.
 
@@ -122,6 +126,30 @@ class TT:
                 if self.__is_ttm
                 else [n for n in self.N]
             )
+            return
+
+        if _is_scipy_sparse_matrix(source):
+            if shape is None:
+                raise InvalidArguments("Sparse matrix input requires TT-matrix shape=[(m1,n1), ...].")
+            if not (
+                isinstance(shape, list)
+                and len(shape) > 0
+                and isinstance(shape[0], tuple)
+            ):
+                raise InvalidArguments("Sparse matrix input requires TT-matrix shape=[(m1,n1), ...].")
+            self.__M = [s[0] for s in shape]
+            self.__N = [s[1] for s in shape]
+            self.cores, self.__R = mat_to_tt(
+                source, self.__M, self.__N, eps, rmax, is_sparse=True
+            )
+            if dtype is not None or device is not None:
+                self.cores = [
+                    c.cast(dtype) if dtype is not None else c for c in self.cores
+                ]
+                if device is not None:
+                    self.cores = [c.to(device) for c in self.cores]
+            self.__is_ttm = True
+            self.shape = [(m, n) for m, n in zip(self.__M, self.__N)]
             return
 
         if isinstance(source, np.ndarray):

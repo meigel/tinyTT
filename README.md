@@ -105,6 +105,11 @@ Examples:
 - `examples/heat_equation.py` — QTT heat equation with AMEn solve
 - `examples/tt_qtt_functional.py` — QTT function regression on tensor grid
 
+QTT remains useful for power-of-two tensorized grids and high-dimensional
+operator compression.  Sparse FEM scaling for parametric Darcy does not require
+QTT as the first step: use sparse FEM matrices for the physical solves, then
+fit the parametric map with UQ-ADF or TT surrogates.
+
 ### 5. CTT (Compositional TT)
 
 Chains multiple TT-matrix layers as ``f(x) = (T_L ∘ … ∘ T_1)(x)`` — a deep
@@ -166,6 +171,7 @@ Adaptive density fitting for parametric PDEs with uncertain inputs.
 - Adaptive rank enrichment based on stagnation detection
 - Polynomial bases (Legendre / Hermite) with optional orthonormalisation
 - Gradient or ALS per-core update rules
+- Darcy FEM samples use SciPy sparse matrices and sparse direct solves
 
 Examples:
 - `examples/tt_uq_adf_darcy.py` — parametric Darcy flow with KL expansion
@@ -336,7 +342,8 @@ lacks a matching primitive:
 - **SVD**: automatically falls back to NumPy when tinygrad's GPU SVD
   is unavailable or fails (all core operations work on GPU).
 - **Interpolation** (`maxvol`, dense solves): CPU recommended (may hang on GPU).
-- **UQ-ADF**: NumPy dense linear algebra and special-function helpers.
+- **UQ-ADF**: NumPy dense linear algebra for the small regression subproblems;
+  FEM sample generation should use SciPy sparse matrices and sparse solves.
 - Some solver helpers use NumPy on small dense systems.
 
 This makes tinyTT CPU-first today, with functional GPU support for most

@@ -344,16 +344,23 @@ def mat_to_tt(A, M, N, eps, rmax=1000, is_sparse=False):
         return
 
     if is_sparse:
-        pass
-    else:
-        A = tn.reshape(A, M + N)
+        # SciPy sparse matrices are accepted for interoperability with FEM
+        # assembly paths.  The TT-SVD itself is still dense, so this path is
+        # intended for moderate factor/operator conversion, not for solving
+        # large sparse systems by materialising them.
+        if hasattr(A, "toarray"):
+            A = tn.tensor(A.toarray())
+        else:
+            A = tn.tensor(np.asarray(A))
 
-        permute = tuple(np.arange(2 * d).reshape([2, d]).transpose().flatten())
-        A = tn.permute(A, permute)
+    A = tn.reshape(A, M + N)
 
-        A = tn.reshape(A, [i[0] * i[1] for i in zip(M, N)])
+    permute = tuple(np.arange(2 * d).reshape([2, d]).transpose().flatten())
+    A = tn.permute(A, permute)
 
-        ttv, R = to_tt(A, eps=eps, rmax=rmax)
+    A = tn.reshape(A, [i[0] * i[1] for i in zip(M, N)])
+
+    ttv, R = to_tt(A, eps=eps, rmax=rmax)
 
     cores = []
     # cores have to be in the TT-matrix format ( rIr' -> rijr')

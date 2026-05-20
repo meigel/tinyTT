@@ -62,7 +62,9 @@ def _relative_l2_h1(err, ref, m, k):
 def test_uq_adf_darcy_log_normal_skfem():
     skfem = pytest.importorskip("skfem")
     pytest.importorskip("scipy")
-    from skfem import MeshQuad, ElementQuad1, InteriorBasis, BilinearForm, LinearForm, condense, solve
+    from scipy import sparse as sp
+    from scipy.sparse.linalg import spsolve
+    from skfem import MeshQuad, ElementQuad1, InteriorBasis, BilinearForm, LinearForm, condense
     from skfem.helpers import dot, grad
 
     np.random.seed(0)
@@ -124,7 +126,11 @@ def test_uq_adf_darcy_log_normal_skfem():
 
         A = laplace.assemble(basis_local)
         b = load.assemble(basis_local)
-        return solve(*condense(A, b, D=dofs))
+        A_c, b_c, x_full, interior = condense(A, b, D=dofs)
+        assert sp.issparse(A_c)
+        x_full = np.asarray(x_full, dtype=float)
+        x_full[interior] = spsolve(A_c.tocsr(), b_c)
+        return x_full
 
     Ns = 120
     poly_dim = 5

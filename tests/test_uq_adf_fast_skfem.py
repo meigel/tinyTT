@@ -19,8 +19,10 @@ if tn.default_float_dtype() == tn.float32:
 @pytest.mark.fast
 def test_uq_adf_darcy_fast():
     skfem = pytest.importorskip("skfem")
+    scipy_sparse = pytest.importorskip("scipy.sparse")
+    spsolve = pytest.importorskip("scipy.sparse.linalg").spsolve
     from skfem import (MeshQuad, ElementQuad1, InteriorBasis,
-                        BilinearForm, LinearForm, condense, solve)
+                        BilinearForm, LinearForm, condense)
     from skfem.helpers import dot, grad
 
     np.random.seed(0)
@@ -52,13 +54,18 @@ def test_uq_adf_darcy_fast():
         for j, k in enumerate(ks):
             coeff += np.sqrt(lambdas[j]) * np.sin(np.pi*k*basis.doflocs[0]) * np.sin(np.pi*k*basis.doflocs[1]) * yvec[j]
         A = diffusion.assemble(basis, sigma=sigma, coeff=coeff)
-        return solve(*condense(A, b_fixed, D=D))
+        A_c, b_c, x_full, interior = condense(A, b_fixed, D=D)
+        assert scipy_sparse.issparse(A_c)
+        x_full = np.asarray(x_full, dtype=float)
+        x_full[interior] = spsolve(A_c.tocsr(), b_c)
+        return x_full
 
     # ---- samples ----
     Ns = 40
     meas = uq.UQMeasurementSet()
     for i in range(Ns):
-        meas.add(rng.uniform(-1.0, 1.0, size=M), solve_sample(rng.uniform(-1.0, 1.0, size=M)))
+        yvec = rng.uniform(-1.0, 1.0, size=M)
+        meas.add(yvec, solve_sample(yvec))
         if (i + 1) % 20 == 0:
             print(f"  [{time.perf_counter()-t0:.0f}s] samples {i+1}/{Ns}")
     print(f"  [{time.perf_counter()-t0:.0f}s] generating samples done")

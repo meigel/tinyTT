@@ -28,8 +28,10 @@ from tinytt import uq_adf as uq
 # FEM solver for one parametric sample
 # ---------------------------------------------------------------------------
 try:
+    from scipy import sparse as sp
+    from scipy.sparse.linalg import spsolve
     from skfem import MeshQuad, ElementQuad1, InteriorBasis
-    from skfem import BilinearForm, LinearForm, condense, solve
+    from skfem import BilinearForm, LinearForm, condense
     from skfem.helpers import dot, grad
 except ImportError:
     sys.exit("This example requires scikit-fem (pip install scikit-fem)")
@@ -101,7 +103,12 @@ def solve_sample(yvec, basis_local, dofs):
                   * np.sin(np.pi * k * basis_local.doflocs[1])
                   * yvec[j])
     A = diffusion.assemble(basis_local, sigma=sigma, coeff=coeff)
-    return solve(*condense(A, b_fixed, D=dofs))
+    A_c, b_c, x_full, interior = condense(A, b_fixed, D=dofs)
+    if not sp.issparse(A_c):
+        raise TypeError("Expected sparse condensed FEM matrix")
+    x_full = np.asarray(x_full, dtype=float)
+    x_full[interior] = spsolve(A_c.tocsr(), b_c)
+    return x_full
 
 
 # ---------------------------------------------------------------------------
