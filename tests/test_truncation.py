@@ -141,14 +141,13 @@ def test_amen_solve_uses_doerfler_adaptivity_through_solver_path():
             self.calls.append(dict(context))
             return super().__call__(S, **context)
 
-    tn.Tensor.manual_seed(0)
-    # Use a random full TTM built from cores so the solver must do SVD.
-    rng = np.random.RandomState(0)
+    # Use numpy RNG for ALL random data so the test is backend-independent.
+    rng = np.random.RandomState(42)
     cores = [tn.tensor(rng.randn(1, 2, 2, 3).astype(np.float64)),
              tn.tensor(rng.randn(3, 2, 2, 3).astype(np.float64)),
              tn.tensor(rng.randn(3, 2, 2, 1).astype(np.float64))]
     A = tt.TT(cores, shape=[(2, 2), (2, 2), (2, 2)])
-    x_true = tt.random([2, 2, 2], [1, 2, 2, 1], dtype=tn.float64)
+    x_true = tt.TT(rng.randn(2, 2, 2).astype(np.float64), eps=1e-14)
     b = A @ x_true
     rule = RecordingDoerfler(delta=0.1, rank_increase=1, max_ranks=[2, 4])
 
@@ -164,6 +163,6 @@ def test_amen_solve_uses_doerfler_adaptivity_through_solver_path():
         "The solver may be converging without any SVD truncation."
     )
     assert any('position' in call and 'current_rank' in call for call in rule.calls)
-    rel_err = np.linalg.norm(sol.full().numpy() - x_true.full().numpy()) / (np.linalg.norm(x_true.full().numpy()) + 1e-12)
+    rel_err = np.linalg.norm(tn.to_numpy(sol.full()) - tn.to_numpy(x_true.full())) / (np.linalg.norm(tn.to_numpy(x_true.full())) + 1e-12)
     assert rel_err < 1e-8
     assert max(sol.R) > 1

@@ -403,7 +403,7 @@ def cat(tensors, dim=0, eps=1e-12, rmax=sys.maxsize):
 def pad(tens, pad_width, value=0.0, eps=1e-12, rmax=sys.maxsize):
     if tens.is_ttm:
         raise NotImplementedError("pad is only implemented for TT tensors.")
-    full = tens.full().pad(pad_width, value=value)
+    full = tn.pad(tens.full(), pad_width, value=value)
     return tinytt._tt_base.TT(full, eps=eps, rmax=rmax)
 
 
