@@ -919,22 +919,22 @@ def _amen_solve_python(
 
                 if use_single_precision:
                     Op = _LinearOp(
-                        Phis[k].cast(tn.float32),
-                        Phis[k + 1].cast(tn.float32),
-                        A.cores[k].cast(tn.float32),
+                        tn.cast(Phis[k], tn.float32),
+                        tn.cast(Phis[k + 1], tn.float32),
+                        tn.cast(A.cores[k], tn.float32),
                         shape_now,
                         preconditioner,
                         band_diagonal,
                     )
                     eps_local = real_tol * norm_rhs
-                    drhs = Op.matvec(previous_solution.cast(tn.float32), False)
-                    drhs = rhs.cast(tn.float32) - drhs
+                    drhs = Op.matvec(tn.cast(previous_solution, tn.float32), False)
+                    drhs = tn.cast(rhs, tn.float32) - drhs
                     eps_local = eps_local / _scalar(tn.linalg.norm(drhs))
                     if local_solver == 1:
                         solution_now, flag, nit = gmres_restart(
                             Op,
                             drhs,
-                            previous_solution.cast(tn.float32) * 0,
+                            tn.cast(previous_solution, tn.float32) * 0,
                             rhs.shape[0],
                             local_iterations + 1,
                             eps_local,
@@ -944,7 +944,7 @@ def _amen_solve_python(
                         solution_now, flag, nit, _ = BiCGSTAB_reset(
                             Op,
                             drhs,
-                            previous_solution.cast(tn.float32) * 0,
+                            tn.cast(previous_solution, tn.float32) * 0,
                             eps_local,
                             local_iterations,
                         )
@@ -957,13 +957,13 @@ def _amen_solve_python(
                         )
                         solution_now = tn.reshape(solution_now, [-1, 1])
 
-                    solution_now = previous_solution + solution_now.cast(dtype)
+                    solution_now = previous_solution + tn.cast(solution_now, dtype)
                     res_old = (
                         _scalar(
                             tn.linalg.norm(
-                                Op.matvec(
-                                    previous_solution.cast(tn.float32), False
-                                ).cast(dtype)
+                                tn.cast(Op.matvec(
+                                    tn.cast(previous_solution, tn.float32), False
+                                ), dtype)
                                 - rhs
                             )
                         )
@@ -972,9 +972,7 @@ def _amen_solve_python(
                     res_new = (
                         _scalar(
                             tn.linalg.norm(
-                                Op.matvec(solution_now.cast(tn.float32), False).cast(
-                                    dtype
-                                )
+                                tn.cast(Op.matvec(tn.cast(solution_now, tn.float32), False), dtype)
                                 - rhs
                             )
                         )
@@ -1084,13 +1082,11 @@ def _amen_solve_python(
                             res = (
                                 _scalar(
                                     tn.linalg.norm(
-                                        Op.matvec(
-                                            solution.cast(
-                                                tn.float32
+                                        tn.cast(Op.matvec(
+                                            tn.cast(solution, tn.float32
                                                 if use_single_precision
-                                                else dtype
-                                            )
-                                        ).cast(dtype)
+                                                else dtype)
+                                        ), dtype)
                                         - rhs
                                     )
                                 )
@@ -1392,22 +1388,22 @@ def _als_solve_python(
 
                 if use_single_precision:
                     Op = _LinearOp(
-                        Phis[k].cast(tn.float32),
-                        Phis[k + 1].cast(tn.float32),
-                        A.cores[k].cast(tn.float32),
+                        tn.cast(Phis[k], tn.float32),
+                        tn.cast(Phis[k + 1], tn.float32),
+                        tn.cast(A.cores[k], tn.float32),
                         shape_now,
                         preconditioner,
                         band_diagonal,
                     )
                     eps_local = real_tol * norm_rhs
-                    drhs = Op.matvec(previous_solution.cast(tn.float32), False)
-                    drhs = rhs.cast(tn.float32) - drhs
+                    drhs = Op.matvec(tn.cast(previous_solution, tn.float32), False)
+                    drhs = tn.cast(rhs, tn.float32) - drhs
                     eps_local = eps_local / _scalar(tn.linalg.norm(drhs))
                     if local_solver == 1:
                         solution_now, flag, nit = gmres_restart(
                             Op,
                             drhs,
-                            previous_solution.cast(tn.float32) * 0,
+                            tn.cast(previous_solution, tn.float32) * 0,
                             rhs.shape[0],
                             local_iterations + 1,
                             eps_local,
@@ -1417,7 +1413,7 @@ def _als_solve_python(
                         solution_now, flag, nit, _ = BiCGSTAB_reset(
                             Op,
                             drhs,
-                            previous_solution.cast(tn.float32) * 0,
+                            tn.cast(previous_solution, tn.float32) * 0,
                             eps_local,
                             local_iterations,
                         )
@@ -1430,13 +1426,13 @@ def _als_solve_python(
                         )
                         solution_now = tn.reshape(solution_now, [-1, 1])
 
-                    solution_now = previous_solution + solution_now.cast(dtype)
+                    solution_now = previous_solution + tn.cast(solution_now, dtype)
                     res_old = (
                         _scalar(
                             tn.linalg.norm(
-                                Op.matvec(
-                                    previous_solution.cast(tn.float32), False
-                                ).cast(dtype)
+                                tn.cast(Op.matvec(
+                                    tn.cast(previous_solution, tn.float32), False
+                                ), dtype)
                                 - rhs
                             )
                         )
@@ -1445,9 +1441,7 @@ def _als_solve_python(
                     res_new = (
                         _scalar(
                             tn.linalg.norm(
-                                Op.matvec(solution_now.cast(tn.float32), False).cast(
-                                    dtype
-                                )
+                                tn.cast(Op.matvec(tn.cast(solution_now, tn.float32), False), dtype)
                                 - rhs
                             )
                         )
@@ -1551,13 +1545,11 @@ def _als_solve_python(
                             res = (
                                 _scalar(
                                     tn.linalg.norm(
-                                        Op.matvec(
-                                            solution.cast(
-                                                tn.float32
+                                        tn.cast(Op.matvec(
+                                            tn.cast(solution, tn.float32
                                                 if use_single_precision
-                                                else dtype
-                                            )
-                                        ).cast(dtype)
+                                                else dtype)
+                                        ), dtype)
                                         - rhs
                                     )
                                 )

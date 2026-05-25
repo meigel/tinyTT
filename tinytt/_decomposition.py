@@ -57,7 +57,7 @@ def _svd_numpy(mat):
 
 def _svd_tinygrad(mat):
     u, s, v = tn.linalg.svd(mat, full_matrices=False)
-    s = s.cast(v.dtype)
+    s = tn.cast(s, v.dtype)
     return u, s, v
 
 

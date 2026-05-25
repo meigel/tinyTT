@@ -107,7 +107,8 @@ USE_TINYJIT = os.getenv("TINYTT_TINYJIT", "0").lower() in ("1", "true", "yes")
 _jit_cache: dict[tuple, TinyJit] = {}
 
 
-def manual_seed(seed):
+def manual_seed(seed: int):
+    """Seed the backend's random number generator."""
     Tensor.manual_seed(seed)
 
 
@@ -275,12 +276,18 @@ def eye(n, m=None, dtype=None, device=None):
 def arange(start, stop=None, step=1, dtype=None, device=None):
     resolved = _resolve_device(device)
     target_dtype = coerce_dtype(dtype, resolved)
+    if target_dtype is None:
+        target_dtype = default_float_dtype(resolved)
+    if stop is None:
+        return _constant_tensor(Tensor.arange(start, dtype=target_dtype, device=resolved))
     return _constant_tensor(Tensor.arange(start, stop, step, dtype=target_dtype, device=resolved))
 
 
 def linspace(start, stop, steps, dtype=None, device=None):
     resolved = _resolve_device(device)
     target_dtype = coerce_dtype(dtype, resolved)
+    if target_dtype is None:
+        target_dtype = default_float_dtype(resolved)
     return _constant_tensor(Tensor.linspace(start, stop, steps, dtype=target_dtype, device=resolved))
 
 

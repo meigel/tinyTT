@@ -74,7 +74,8 @@ USE_TINYJIT = False
 _jit_cache: dict = {}
 
 
-def manual_seed(seed):
+def manual_seed(seed: int):
+    """Seed the backend's random number generator."""
     torch.manual_seed(seed)
 
 
@@ -383,6 +384,8 @@ def cos(x: torch.Tensor):
 # ---------------------------------------------------------------------------
 
 def where(condition, x, y):
+    if condition.dtype != torch.bool:
+        condition = condition.bool()
     return torch.where(condition, x, y)
 
 
@@ -446,6 +449,7 @@ def _backsolve(R: torch.Tensor, y: torch.Tensor):
 
 
 def solve(a: torch.Tensor, b: torch.Tensor):
+    """Solve the linear system ``a @ x = b`` (square ``a`` only)."""
     if not isinstance(a, torch.Tensor) or not isinstance(b, torch.Tensor):
         a_np = np.asarray(a)
         b_np = np.asarray(b)
@@ -456,16 +460,22 @@ def solve(a: torch.Tensor, b: torch.Tensor):
 
 
 class _Linalg:
+    """Namespace for linear-algebra operations on backend tensors."""
+
     def norm(self, x: torch.Tensor):
+        """Frobenius norm of a tensor."""
         return torch.linalg.norm(x)
 
     def qr(self, x: torch.Tensor):
+        """QR decomposition. Returns ``(Q, R)``."""
         return torch.linalg.qr(x)
 
     def svd(self, x: torch.Tensor, full_matrices: bool = False):
+        """Singular value decomposition. Returns ``(U, S, Vh)``."""
         return torch.linalg.svd(x, full_matrices=full_matrices)
 
     def solve(self, a: torch.Tensor, b: torch.Tensor):
+        """Solve linear system ``a @ x = b``."""
         return solve(a, b)
 
 
