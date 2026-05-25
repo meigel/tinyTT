@@ -7,6 +7,7 @@ multiple output modes survive QTT roundtrip.
 
 import numpy as np
 import tinytt as tt
+import tinytt._backend as tn
 
 
 def test_qtt_tt_2d_roundtrip():
@@ -14,7 +15,7 @@ def test_qtt_tt_2d_roundtrip():
     x = tt.random([4], 1)
     x_qtt = x.to_qtt(mode_size=2)
     x_back = x_qtt.qtt_to_tens(x.N)
-    rel_err = np.linalg.norm(x_back.full().numpy() - x.full().numpy()) / np.linalg.norm(x.full().numpy())
+    rel_err = np.linalg.norm(tn.to_numpy(x_back.full()) - tn.to_numpy(x.full())) / np.linalg.norm(tn.to_numpy(x.full()))
     assert rel_err < 1e-10, f"TT roundtrip rel_err: {rel_err:.3e}"
 
 
@@ -25,7 +26,7 @@ def test_qtt_tt_3d_roundtrip():
     x = tt.TT(full, eps=1e-12)
     x_qtt = x.to_qtt(mode_size=2)
     x_back = x_qtt.qtt_to_tens(x.N)  # original shape [4, 4, 4]
-    rel_err = np.linalg.norm(x_back.full().numpy() - full) / np.linalg.norm(full)
+    rel_err = np.linalg.norm(tn.to_numpy(x_back.full()) - full) / np.linalg.norm(full)
     assert rel_err < 1e-10, f"3D TT QTT roundtrip rel_err: {rel_err:.3e}"
 
 
@@ -39,5 +40,5 @@ def test_qtt_vector_valued_roundtrip():
     # Convert to QTT and back — qtt_to_tens expects original N
     x_qtt = x.to_qtt(mode_size=2)
     x_back = x_qtt.qtt_to_tens(x.N)
-    rel_err = np.linalg.norm(x_back.full().numpy() - full) / np.linalg.norm(full)
+    rel_err = np.linalg.norm(tn.to_numpy(x_back.full()) - full) / np.linalg.norm(full)
     assert rel_err < 1e-10, f"Vector-valued QTT roundtrip rel_err: {rel_err:.3e}"

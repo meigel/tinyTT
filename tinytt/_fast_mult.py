@@ -11,8 +11,8 @@ from tinytt.errors import InvalidArguments, ShapeMismatch
 
 def _rank_from_svd(s, eps):
     s_norm = tn.linalg.norm(s)
-    s_norm_val = float(s_norm.numpy().item()) if tn.is_tensor(s_norm) else float(s_norm)
-    r_now = rank_chop(s.numpy(), s_norm_val * eps)
+    s_norm_val = float(tn.to_numpy(s_norm).item()) if tn.is_tensor(s_norm) else float(s_norm)
+    r_now = rank_chop(tn.to_numpy(s), s_norm_val * eps)
     r_now = max(1, int(r_now))
     return r_now
 

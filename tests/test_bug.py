@@ -49,7 +49,7 @@ class TestBUG:
         assert len(evolved.R) == 4
 
         # Check that norm is finite and positive
-        norm_val = evolved.norm().numpy().item()
+        norm_val = tn.to_numpy(evolved.norm()).item()
         assert norm_val > 0
         assert np.isfinite(norm_val)
 
@@ -66,7 +66,7 @@ class TestBUG:
     def test_bug_full_step_runs_and_updates_state(self):
         H = build_ising_mpo(2, J=1.0, h=1.0)
         psi = tt.ones([2, 2])
-        old_full = psi.full().numpy().copy()
+        old_full = tn.to_numpy(psi.full()).copy()
 
         evolved = bug(psi, H, dt=0.01, threshold=1e-10, max_bond_dim=8, numiter_lanczos=10)
 
@@ -74,10 +74,10 @@ class TestBUG:
         assert psi.N == [2, 2]
         assert len(evolved.cores) == 2
         assert len(psi.cores) == 2
-        assert np.isfinite(evolved.norm().numpy().item())
-        assert np.isfinite(psi.norm().numpy().item())
-        assert np.linalg.norm(evolved.full().numpy() - old_full) > 0.0
-        np.testing.assert_allclose(psi.full().numpy(), evolved.full().numpy(), atol=1e-10)
+        assert np.isfinite(tn.to_numpy(evolved.norm()).item())
+        assert np.isfinite(tn.to_numpy(psi.norm()).item())
+        assert np.linalg.norm(tn.to_numpy(evolved.full()) - old_full) > 0.0
+        np.testing.assert_allclose(tn.to_numpy(psi.full()), tn.to_numpy(evolved.full()), atol=1e-10)
 
     @NEEDS_CLANG
     def test_bug_can_expand_internal_rank(self):

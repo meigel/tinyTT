@@ -175,10 +175,10 @@ def _krylov_exp(apply_fn, shape, vec, dt, krylov_dim, tol, complex_phase, dtype,
         xr = np.real(x)
         xi = np.imag(x)
         tr = tn.tensor(xr, dtype=dtype, device=device).reshape(shape)
-        yr = apply_fn(tr).numpy().reshape(-1)
+        yr = tn.to_numpy(apply_fn(tr)).reshape(-1)
         if np.any(xi):
             ti = tn.tensor(xi, dtype=dtype, device=device).reshape(shape)
-            yi = apply_fn(ti).numpy().reshape(-1)
+            yi = tn.to_numpy(apply_fn(ti)).reshape(-1)
             return yr + 1j * yi
         return yr
 
@@ -189,7 +189,7 @@ def _evolve_local(theta, apply_fn, dt, max_dense=256, krylov_dim=20, krylov_tol=
     vec = theta.reshape(-1)
     n = vec.numel()
     if n > max_dense:
-        vec_np = vec.numpy().reshape(-1)
+        vec_np = tn.to_numpy(vec).reshape(-1)
         out = _krylov_exp(
             apply_fn,
             theta.shape,
@@ -203,13 +203,13 @@ def _evolve_local(theta, apply_fn, dt, max_dense=256, krylov_dim=20, krylov_tol=
         )
         return tn.tensor(out, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
 
-    vec_np = vec.numpy().reshape(-1)
+    vec_np = tn.to_numpy(vec).reshape(-1)
     H = np.zeros((n, n), dtype=vec_np.dtype)
     for i in range(n):
         basis = np.zeros(n, dtype=vec_np.dtype)
         basis[i] = 1.0
         e = tn.tensor(basis, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
-        H[:, i] = apply_fn(e).numpy().reshape(-1)
+        H[:, i] = tn.to_numpy(apply_fn(e)).reshape(-1)
 
     w, V = np.linalg.eigh(H)
     w_shift = w - np.min(w)
@@ -222,7 +222,7 @@ def _evolve_local(theta, apply_fn, dt, max_dense=256, krylov_dim=20, krylov_tol=
 
 
 def _evolve_local_complex(theta_re, theta_im, apply_fn, dt, max_dense=256, krylov_dim=20, krylov_tol=1e-10):
-    vec = (theta_re.reshape(-1).numpy() + 1j * theta_im.reshape(-1).numpy()).astype(np.complex128)
+    vec = (tn.to_numpy(theta_re.reshape(-1)) + 1j * tn.to_numpy(theta_im.reshape(-1))).astype(np.complex128)
     n = vec.shape[0]
     if n > max_dense:
         def matvec(x):
@@ -231,7 +231,7 @@ def _evolve_local_complex(theta_re, theta_im, apply_fn, dt, max_dense=256, krylo
             tr = tn.tensor(xr, dtype=theta_re.dtype, device=theta_re.device).reshape(theta_re.shape)
             ti = tn.tensor(xi, dtype=theta_re.dtype, device=theta_re.device).reshape(theta_re.shape)
             yr, yi = apply_fn(tr, ti)
-            return yr.numpy().reshape(-1) + 1j * yi.numpy().reshape(-1)
+            return tn.to_numpy(yr).reshape(-1) + 1j * tn.to_numpy(yi).reshape(-1)
 
         out = _krylov_exp_matvec(matvec, vec, dt, krylov_dim, krylov_tol, True)
     else:
@@ -242,7 +242,7 @@ def _evolve_local_complex(theta_re, theta_im, apply_fn, dt, max_dense=256, krylo
             tr = tn.tensor(basis, dtype=theta_re.dtype, device=theta_re.device).reshape(theta_re.shape)
             ti = tn.zeros(theta_re.shape, dtype=theta_re.dtype, device=theta_re.device)
             yr, yi = apply_fn(tr, ti)
-            H[:, i] = yr.numpy().reshape(-1) + 1j * yi.numpy().reshape(-1)
+            H[:, i] = tn.to_numpy(yr).reshape(-1) + 1j * tn.to_numpy(yi).reshape(-1)
         w, V = np.linalg.eig(H)
         expw = np.exp(-1j * dt * w)
         out = V @ (expw * (np.linalg.solve(V, vec)))
@@ -326,7 +326,7 @@ def tdvp_imag_time(
                 left_dim, d1, d2, right_dim = theta.shape
                 theta_mat = tn.reshape(theta, [left_dim * d1, d2 * right_dim])
                 U, S, V = SVD(theta_mat)
-                s_np = S.numpy()
+                s_np = tn.to_numpy(S)
                 r = rank_chop(s_np, eps * float(np.linalg.norm(s_np)))
                 r = min(int(r), int(S.shape[0]), int(rmax[i + 1]))
                 r = max(1, r)
@@ -364,7 +364,7 @@ def tdvp_imag_time(
                 left_dim, d1, d2, right_dim = theta.shape
                 theta_mat = tn.reshape(theta, [left_dim * d1, d2 * right_dim])
                 U, S, V = SVD(theta_mat)
-                s_np = S.numpy()
+                s_np = tn.to_numpy(S)
                 r = rank_chop(s_np, eps * float(np.linalg.norm(s_np)))
                 r = min(int(r), int(S.shape[0]), int(rmax[i + 1]))
                 r = max(1, r)
@@ -379,7 +379,7 @@ def tdvp_imag_time(
                 R[i + 1] = _update_right_env(R[i + 2], psi.cores[i + 1], H.cores[i + 1])
 
         if normalize:
-            n = float(_tt_vector_fro_norm(psi.cores).numpy().item())
+            n = float(tn.to_numpy(_tt_vector_fro_norm(psi.cores)).item())
             if n > 0.0:
                 psi.cores[0] = psi.cores[0] / n
 
@@ -450,7 +450,7 @@ def tdvp_real_time(
             left_dim, d1, d2, right_dim = theta_re.shape
             theta_mat = tn.reshape(theta_re, [left_dim * d1, d2 * right_dim])
             U, S, V = SVD(theta_mat)
-            s_np = S.numpy()
+            s_np = tn.to_numpy(S)
             r = rank_chop(s_np, eps * float(np.linalg.norm(s_np)))
             r = min(int(r), int(S.shape[0]), int(rmax[i + 1]))
             r = max(1, r)
@@ -465,7 +465,7 @@ def tdvp_real_time(
             left_dim, d1, d2, right_dim = theta_im.shape
             theta_mat = tn.reshape(theta_im, [left_dim * d1, d2 * right_dim])
             U, S, V = SVD(theta_mat)
-            s_np = S.numpy()
+            s_np = tn.to_numpy(S)
             r = rank_chop(s_np, eps * float(np.linalg.norm(s_np)))
             r = min(int(r), int(S.shape[0]), int(rmax[i + 1]))
             r = max(1, r)
@@ -509,7 +509,7 @@ def tdvp_real_time(
             left_dim, d1, d2, right_dim = theta_re.shape
             theta_mat = tn.reshape(theta_re, [left_dim * d1, d2 * right_dim])
             U, S, V = SVD(theta_mat)
-            s_np = S.numpy()
+            s_np = tn.to_numpy(S)
             r = rank_chop(s_np, eps * float(np.linalg.norm(s_np)))
             r = min(int(r), int(S.shape[0]), int(rmax[i + 1]))
             r = max(1, r)
@@ -524,7 +524,7 @@ def tdvp_real_time(
             left_dim, d1, d2, right_dim = theta_im.shape
             theta_mat = tn.reshape(theta_im, [left_dim * d1, d2 * right_dim])
             U, S, V = SVD(theta_mat)
-            s_np = S.numpy()
+            s_np = tn.to_numpy(S)
             r = rank_chop(s_np, eps * float(np.linalg.norm(s_np)))
             r = min(int(r), int(S.shape[0]), int(rmax[i + 1]))
             r = max(1, r)

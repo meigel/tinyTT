@@ -144,7 +144,7 @@ class TT:
             )
             if dtype is not None or device is not None:
                 self.cores = [
-                    c.cast(dtype) if dtype is not None else c for c in self.cores
+                    tn.cast(c, dtype) if dtype is not None else c for c in self.cores
                 ]
                 if device is not None:
                     self.cores = [c.to(device) for c in self.cores]
@@ -157,7 +157,7 @@ class TT:
 
         if tn.is_tensor(source):
             if dtype is not None:
-                source = source.cast(dtype)
+                source = tn.cast(source, dtype)
             if device is not None and source.device != device:
                 source = source.to(device)
             if shape is None:
@@ -288,7 +288,7 @@ class TT:
         return fn(*self.cores)
 
     def numpy(self):
-        return self.full().numpy()
+        return tn.to_numpy(self.full())
 
     def norm(self):
         return tn.linalg.norm(self.full())
@@ -316,7 +316,7 @@ class TT:
     def _scalar_value(self, x):
         if isinstance(x, (int, float, complex)):
             return x
-        return tn.tensor(x).numpy().item()
+        return tn.to_numpy(tn.tensor(x)).item()
 
     def _scaled_first_core(self, scalar):
         cores_new = [c.clone() for c in self.cores]

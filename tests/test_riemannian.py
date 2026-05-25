@@ -60,16 +60,16 @@ def _tt_full(cores):
       middle: einsum('...i,ijk->...jk')
       last:   cores[-1][:, :, 0] -> (rd, nd), einsum('...i,ij->...j')
     """
-    c0 = cores[0].numpy()
+    c0 = tn.to_numpy(cores[0])
     tfull = c0[0, :, :] if c0.ndim == 3 else c0   # (n0, r1)
     d = len(cores)
     for i in range(1, d - 1):
-        tfull = np.einsum('...i,ijk->...jk', tfull, cores[i].numpy())
+        tfull = np.einsum('...i,ijk->...jk', tfull, tn.to_numpy(cores[i]))
     if d > 1:
-        last = cores[-1].numpy()
+        last = tn.to_numpy(cores[-1])
         tfull = np.einsum('...i,ij->...j', tfull, last[:, :, 0])
     else:
-        tfull = np.einsum('...i,ij->...j', tfull, cores[0].numpy()[:, :, 0])
+        tfull = np.einsum('...i,ij->...j', tfull, tn.to_numpy(cores[0])[:, :, 0])
     return tfull
 
 
@@ -274,7 +274,7 @@ class TestHorizontalProjection:
         zero_grads = [tn.zeros(c.shape, dtype=c.dtype, device=c.device) for c in cores]
         h = horizontal_projection(cores, zero_grads)
         for hk in h:
-            assert float(tn.linalg.norm(hk).numpy()) == 0.0
+            assert float(tn.to_numpy(tn.linalg.norm(hk))) == 0.0
 
     @NEEDS_CLANG
     def test_projection_reduces_gauge_component(self):
@@ -284,7 +284,7 @@ class TestHorizontalProjection:
         h = horizontal_projection(cores, grads)
 
         def norm2(tensors):
-            return sum(float((x.reshape(-1) * x.reshape(-1)).sum().numpy()) for x in tensors)
+            return sum(float(tn.to_numpy((x.reshape(-1) * x.reshape(-1)).sum())) for x in tensors)
 
         # The projected gradient norm should be ≤ the original (removing gauge)
         assert norm2(h) <= norm2(grads) * 1.1 + 1e-10, "Projection should not increase norm"
@@ -295,7 +295,7 @@ class TestHorizontalProjection:
         cores = _make_tt_cores(d=3, n=4, r=3, seed=55)
         grads = _make_tt_cores(d=3, n=4, r=3, seed=56)
         h = horizontal_projection(cores, grads)
-        total_norm = sum(float(tn.linalg.norm(hk).numpy()) for hk in h)
+        total_norm = sum(float(tn.to_numpy(tn.linalg.norm(hk))) for hk in h)
         assert total_norm > 0.0, "Projection of non-zero gradient should be non-zero"
 
     @NEEDS_CLANG
@@ -336,7 +336,7 @@ class TestQRRetraction:
         new_cores = qr_retraction(cores, direction, step_size=0.1)
         # cores should have changed
         diff = sum(
-            float(tn.linalg.norm(n - c).numpy().item())
+            float(tn.to_numpy(tn.linalg.norm(n - c)).item())
             for n, c in zip(new_cores, cores)
         )
         assert diff > 0.0, "Retraction did not change cores"
@@ -412,7 +412,7 @@ def _tt_dense_from_cores(cores):
     out = cores[0][0]
     for c in cores[1:]:
         out = tn.einsum('...i,ijk->...jk', out, c)
-    return out[..., 0].numpy()
+    return tn.to_numpy(out[..., 0])
 
 
 class TestTangentProject:

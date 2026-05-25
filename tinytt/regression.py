@@ -75,10 +75,10 @@ class ContinuityFitResult:
             ``(m, d)`` when ``d > 1``; ``(m,)`` when ``d == 1``.
         """
         if hasattr(x, 'numpy'):
-            x = x.numpy()
+            x = tn.to_numpy(x)
         x_t = tn.tensor(np.asarray(x, dtype=np.float64))
         cores_t = [tn.tensor(c) for c in self.cores]
-        return _evaluate(cores_t, self.bases, x_t).numpy()
+        return tn.to_numpy(_evaluate(cores_t, self.bases, x_t))
 
     def divergence(self, x):
         """Divergence of the fitted vector field at ``x``.
@@ -94,16 +94,16 @@ class ContinuityFitResult:
             ``(m,)`` — div(V) at each point.
         """
         if hasattr(x, 'numpy'):
-            x = x.numpy()
+            x = tn.to_numpy(x)
         x_t = tn.tensor(np.asarray(x, dtype=np.float64))
         cores_t = [tn.tensor(c) for c in self.cores]
-        return _divergence(cores_t, self.bases, x_t).numpy()
+        return tn.to_numpy(_divergence(cores_t, self.bases, x_t))
 
 
 def _to_numpy(x):
     """Convert a tinygrad tensor (or any array-like) to NumPy."""
     if hasattr(x, 'numpy'):
-        x = x.numpy()
+        x = tn.to_numpy(x)
     return np.asarray(x, dtype=np.float64)
 
 
@@ -164,7 +164,7 @@ def als_regression(X, Y, bases, ranks, sweeps=10, out_dim=1,
     phi_batch = []  # phi_batch[k] shape (B, n_k)
     for k in range(d):
         phis = bases[k](X[:, k])  # call the basis object (returns tensor)
-        phis_np = phis.numpy() if hasattr(phis, 'numpy') else np.asarray(phis)
+        phis_np = tn.to_numpy(phis) if hasattr(phis, 'numpy') else np.asarray(phis)
         phi_batch.append(np.asarray(phis_np, dtype=np.float64))
 
     # ---- ALS sweeps ----
@@ -294,7 +294,7 @@ def _determine_degree(basis):
     # fallback: evaluate at a dummy point
     test = basis(np.array([0.0]))
     if hasattr(test, 'numpy'):
-        test = test.numpy()
+        test = tn.to_numpy(test)
     return test.shape[-1]
 
 
@@ -552,10 +552,10 @@ def als_continuity_fit(X, Y, F_grad, bases, ranks=None, sweeps=5, eps=1e-9, verb
     grad_phi = []
     for k in range(d):
         pt = bases[k](X[:, k])
-        pn = pt.numpy() if hasattr(pt, 'numpy') else np.asarray(pt)
+        pn = tn.to_numpy(pt) if hasattr(pt, 'numpy') else np.asarray(pt)
         phi.append(np.asarray(pn, dtype=np.float64))
         gt = bases[k].grad(X[:, k])
-        gn = gt.numpy() if hasattr(gt, 'numpy') else np.asarray(gt)
+        gn = tn.to_numpy(gt) if hasattr(gt, 'numpy') else np.asarray(gt)
         grad_phi.append(np.asarray(gn, dtype=np.float64))
 
     # ---- ALS sweeps ----

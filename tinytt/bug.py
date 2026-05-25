@@ -32,7 +32,7 @@ def _project_site(L, R, W, ket):
 
 def _scalar(val):
     if tn.is_tensor(val):
-        return float(val.numpy().item())
+        return float(tn.to_numpy(val).item())
     return float(val)
 
 
@@ -63,29 +63,29 @@ def _evolve_local(theta, apply_fn, dt, max_dense=256, krylov_dim=20, krylov_tol=
     n = tn.numel(vec)
     
     if n > max_dense:
-        vec_np = vec.numpy().reshape(-1).astype(np.complex128)
+        vec_np = tn.to_numpy(vec).reshape(-1).astype(np.complex128)
 
         def matvec(x):
             xr = np.real(x)
             xi = np.imag(x)
             tr = tn.tensor(xr, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
-            yr = apply_fn(tr).numpy().reshape(-1)
+            yr = tn.to_numpy(apply_fn(tr)).reshape(-1)
             if np.any(xi):
                 ti = tn.tensor(xi, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
-                yi = apply_fn(ti).numpy().reshape(-1)
+                yi = tn.to_numpy(apply_fn(ti)).reshape(-1)
                 return yr + 1j * yi
             return yr
 
         out = _krylov_exp(matvec, vec_np, dt, krylov_dim, krylov_tol, False)
         return tn.tensor(out, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
 
-    vec_np = vec.numpy().reshape(-1).astype(np.complex128)
+    vec_np = tn.to_numpy(vec).reshape(-1).astype(np.complex128)
     H = np.zeros((n, n), dtype=np.complex128)
     for i in range(n):
         basis = np.zeros(n, dtype=np.complex128)
         basis[i] = 1.0
         e = tn.tensor(basis, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
-        H[:, i] = apply_fn(e).numpy().reshape(-1)
+        H[:, i] = tn.to_numpy(apply_fn(e)).reshape(-1)
 
     w, V = np.linalg.eigh(H)
     w_shift = w - np.min(w)

@@ -13,7 +13,7 @@ import tinytt._backend as tn
 def _scalar(t):
     """Extract a Python float from a scalar tensor."""
     if tn.is_tensor(t):
-        return float(t.numpy().item())
+        return float(tn.to_numpy(t).item())
     return float(t)
 
 

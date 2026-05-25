@@ -25,7 +25,7 @@ def _tt_vector(vector):
 
 
 def _dense(tt_vector):
-    return tt_vector.full().numpy().reshape(-1)
+    return tn.to_numpy(tt_vector.full()).reshape(-1)
 
 
 def test_forward_matches_manual_layer_composition():

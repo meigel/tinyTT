@@ -51,7 +51,7 @@ class TestCG:
 
         x = cg(matvec, b_tn, reg=0.0, tol=1e-12, maxiter=10)
         x_ref = np.linalg.solve(A_np, b_np)
-        np.testing.assert_allclose(x.numpy(), x_ref, atol=1e-8)
+        np.testing.assert_allclose(tn.to_numpy(x), x_ref, atol=1e-8)
 
     def test_on_identity(self):
         """CG should solve Ix = b in one iteration."""
@@ -63,7 +63,7 @@ class TestCG:
             return A_tn @ x
 
         x = cg(matvec, b_tn, reg=0.0, tol=1e-12, maxiter=5)
-        np.testing.assert_allclose(x.numpy(), b_tn.numpy(), atol=1e-8)
+        np.testing.assert_allclose(tn.to_numpy(x), tn.to_numpy(b_tn), atol=1e-8)
 
     @NEEDS_CLANG
     def test_on_random_spd(self):
@@ -78,7 +78,7 @@ class TestCG:
 
         x = cg(matvec, b_tn, reg=1e-6, tol=1e-6, maxiter=30)
         x_ref = np.linalg.solve(A_np + 1e-6 * np.eye(n), b_np)
-        np.testing.assert_allclose(x.numpy(), x_ref, atol=1e-5)
+        np.testing.assert_allclose(tn.to_numpy(x), x_ref, atol=1e-5)
 
     @NEEDS_CLANG
     def test_with_regularization(self):
@@ -100,7 +100,7 @@ class TestCG:
         x = cg(matvec, b_tn, reg=1e-3, tol=1e-6, maxiter=50)
         # Check residual
         r = b_tn - (A_tn @ x + 1e-3 * x)
-        res = float(tn.linalg.norm(r).numpy())
+        res = float(tn.to_numpy(tn.linalg.norm(r)))
         assert res < 1e-3, f"Residual too large: {res}"
 
     @NEEDS_CLANG
@@ -117,7 +117,7 @@ class TestCG:
 
         x = cg(matvec, b_tn, reg=1e-6, tol=1e-8, maxiter=30)
         x_ref = np.linalg.solve(A_np + 1e-6 * np.eye(n), b_np)
-        np.testing.assert_allclose(x.numpy(), x_ref, atol=1e-5)
+        np.testing.assert_allclose(tn.to_numpy(x), x_ref, atol=1e-5)
 
     def test_zero_rhs(self):
         """CG should return zero for zero RHS."""
@@ -129,7 +129,7 @@ class TestCG:
             return A_tn @ x
 
         x = cg(matvec, b_tn, reg=0.0, tol=1e-12, maxiter=5)
-        np.testing.assert_allclose(x.numpy(), np.zeros(n), atol=1e-10)
+        np.testing.assert_allclose(tn.to_numpy(x), np.zeros(n), atol=1e-10)
 
     def test_scalar_helper(self):
         assert abs(_scalar(tn.tensor(3.14, dtype=tn.float64)) - 3.14) < 1e-12

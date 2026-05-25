@@ -30,7 +30,7 @@ def apply_mask(cores, R, indices):
     for i in range(d):
         # Convert index column to Python list (tinygrad needs list for integer indexing)
         if tn.is_tensor(indices):
-            idx_col = [int(indices[j, i].numpy().item()) for j in range(len(indices))]
+            idx_col = [int(tn.to_numpy(indices[j, i]).item()) for j in range(len(indices))]
         else:
             idx_col = [int(indices[j, i]) for j in range(len(indices))]
         result = tn.einsum('ij,jik->ik', result, cores[i][:, idx_col, :])

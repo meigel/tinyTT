@@ -4,6 +4,7 @@ Tests for the AMEn solver and AMEn TTM–TTM multiplication.
 
 import numpy as np
 import tinytt as tt
+import tinytt._backend as tn
 
 
 def test_amen_solve_identity():
@@ -18,7 +19,7 @@ def test_amen_solve_identity():
 
     x = tt.solvers.amen_solve(a, b, nswp=4, eps=1e-12)
 
-    rel_res = (a @ x - b).norm().numpy().item() / b.norm().numpy().item()
+    rel_res = tn.to_numpy((a @ x - b).norm()).item() / tn.to_numpy(b.norm()).item()
     assert rel_res < 1e-8, f"AMEn identity solve rel_res = {rel_res:.2e}"
 
 
@@ -37,7 +38,7 @@ def test_amen_mm_identity():
     assert c.shape == [(2, 2), (2, 2), (2, 2)], f"Unexpected shape {c.shape}"
 
     # Since a is identity, a @ a = a, so c @ x_true ≈ x_true
-    diff_norm = (c @ x_true - x_true).norm().numpy().item()
+    diff_norm = tn.to_numpy((c @ x_true - x_true).norm()).item()
     assert diff_norm < 1e-6, f"AMEn MM identity check failed: ||C x - x|| = {diff_norm:.2e}"
 
 
@@ -54,5 +55,5 @@ def test_amen_solve_least_squares():
 
     x = tt.solvers.amen_solve(a, b, nswp=8, eps=1e-8)
 
-    rel_res = (a @ x - b).norm().numpy().item() / b.norm().numpy().item()
+    rel_res = tn.to_numpy((a @ x - b).norm()).item() / tn.to_numpy(b.norm()).item()
     assert rel_res < 1e-6, f"AMEn least-squares rel_res = {rel_res:.2e}"

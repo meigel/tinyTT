@@ -13,7 +13,7 @@ if not DEVICE or DEVICE.lower() in ("cpu", "clang", "llvm"):
 
 try:
     probe = tn.tensor([1.0], device=DEVICE)
-    probe.realize()
+    tn.realize(probe)
     DEVICE_RESOLVED = probe.device
 except Exception:
     pytest.skip("Requested TINYTT_DEVICE is unavailable", allow_module_level=True)
@@ -21,7 +21,7 @@ except Exception:
 def _supports_fp64():
     try:
         t = tn.tensor([1.0], dtype=tn.float64, device=DEVICE_RESOLVED)
-        (t + t).realize()
+        (tn.realize(t + t)
         return True
     except Exception:
         return False
@@ -42,7 +42,7 @@ def test_gpu_tt_basic_ops():
 
     z = x + y
     ref = full + np.ones_like(full)
-    assert np.allclose(z.full().numpy(), ref, atol=ATOL)
+    assert np.allclose(tn.to_numpy(z.full()), ref, atol=ATOL)
 
 
 def test_gpu_tt_matrix_matvec():
@@ -50,4 +50,4 @@ def test_gpu_tt_matrix_matvec():
     x = tt.random([2, 2, 2], [1, 2, 2, 1], device=DEVICE_RESOLVED, dtype=DTYPE)
     y = A @ x
 
-    assert np.allclose(y.full().numpy(), x.full().numpy(), atol=ATOL)
+    assert np.allclose(tn.to_numpy(y.full()), tn.to_numpy(x.full()), atol=ATOL)

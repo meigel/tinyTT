@@ -58,7 +58,7 @@ def train(ftt, x_train, y_train, x_test, y_test,
         # Gradient clipping: scale gradients if norm > threshold
         for c in ftt.cores:
             grad = c.grad
-            g_norm = float(tn.linalg.norm(grad.reshape(-1)).numpy())
+            g_norm = float(tn.to_numpy(tn.linalg.norm(grad.reshape(-1))))
             if g_norm > 2.0:
                 grad = grad * (2.0 / g_norm)
             c.assign(c.detach() - lr_step * grad)
@@ -67,13 +67,13 @@ def train(ftt, x_train, y_train, x_test, y_test,
     if verbose and (step + 1) % 100 == 0:
         pred_test = ftt.forward(phi_test)
         err = pred_test - tn.tensor(y_test)
-        test_mse = float((err ** 2).sum().numpy()) / y_test.shape[0]
-        y_norm = float((tn.tensor(y_test) ** 2).sum().numpy()) / y_test.shape[0]
+        test_mse = float(tn.to_numpy((err ** 2).sum())) / y_test.shape[0]
+        y_norm = float(tn.to_numpy((tn.tensor(y_test) ** 2).sum())) / y_test.shape[0]
         test_rel = np.sqrt(test_mse / max(y_norm, 1e-16))
-        print(f"  step {step + 1:4d}  train_mse = {float(loss.numpy()):.6f}"
+        print(f"  step {step + 1:4d}  train_mse = {float(tn.to_numpy(loss)):.6f}"
               f"  test_rel_err = {test_rel:.6f}")
 
-    pred_test = ftt.forward(phi_test).numpy()
+    pred_test = tn.to_numpy(ftt.forward(phi_test))
     err = pred_test - y_test
     test_mse = float((err ** 2).sum()) / y_test.shape[0]
     test_rel = np.sqrt(test_mse / max(float((y_test ** 2).sum()) / y_test.shape[0], 1e-16))
@@ -130,10 +130,10 @@ print(f"\n  Final test MSE (per component): {final_mse2 / 2:.6e}  |  rel_err: {f
 print(f"    x        sin(2πx)  pred_sin  cos(2πx)  pred_cos")
 x_dense = tn.tensor(np.linspace(-1, 1, 100, dtype=np.float64).reshape(-1, 1))
 phi_dense = legendre_features(x_dense, degree=degree, orthonormal=True)
-y_pred = ftt2.forward(phi_dense).numpy()
-y_true = np.column_stack([np.sin(2*np.pi*x_dense.numpy()),
-                           np.cos(2*np.pi*x_dense.numpy())])
+y_pred = tn.to_numpy(ftt2.forward(phi_dense))
+y_true = np.column_stack([np.sin(2*np.pi*tn.to_numpy(x_dense)),
+                           np.cos(2*np.pi*tn.to_numpy(x_dense))])
 for i in range(0, 100, 20):
-    xn = float(x_dense[i].numpy().item())
+    xn = float(tn.to_numpy(x_dense[i]).item())
     print(f"    {xn:+.3f}   {y_true[i,0]:+.4f}   {y_pred[i,0]:+.4f}   "
           f"{y_true[i,1]:+.4f}   {y_pred[i,1]:+.4f}")

@@ -18,6 +18,7 @@ Usage:
 
 import numpy as np
 import tinytt as tt
+import tinytt._backend as tn
 
 
 # ======================================================================
@@ -61,7 +62,7 @@ init_cores = [
 ]
 initial = tt.TT(init_cores)
 loss0_init = 0.5 * ((initial.full() - target_full) ** 2).sum()
-print(f"Initial loss     = {loss0_init.numpy().item():.12e}")
+print(f"Initial loss     = {tn.to_numpy(loss0_init).item():.12e}")
 print()
 
 # ======================================================================
@@ -82,7 +83,7 @@ print("--- Riemannian GD with Armijo line search ---")
 # Keep the parameters as a plain list of tensors (not a TT object) so that
 # Riemannian functions can operate on them directly.
 theta = [c.clone() for c in initial.cores]
-losses = [loss0_init.numpy().item()]
+losses = [tn.to_numpy(loss0_init).item()]
 
 for i in range(num_iters):
     # ── enable gradients on the current parameters ──
@@ -100,7 +101,7 @@ for i in range(num_iters):
     horiz_grads = tt.horizontal_projection(theta, euclidean_grads)
 
     # ── Armijo backtracking selects the step size automatically ──
-    loss0 = float(loss.numpy().item())
+    loss0 = float(tn.to_numpy(loss).item())
     gamma, theta, loss_val = tt.armijo_ls(
         loss_fn,
         theta,
@@ -123,7 +124,7 @@ print()
 # Summary
 # ======================================================================
 print("--- Summary ---")
-init_val = loss0_init.numpy().item()
+init_val = tn.to_numpy(loss0_init).item()
 print(f"  Initial loss                   : {init_val:.6e}")
 print(f"  Final loss (Armijo, {num_iters} steps) : {armijo_final:.6e}")
 print(f"  Loss reduced                   : {init_val / armijo_final:.2f}x")

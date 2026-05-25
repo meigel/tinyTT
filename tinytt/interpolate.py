@@ -13,7 +13,7 @@ from tinytt._decomposition import QR, SVD, rank_chop, lr_orthogonal, rl_orthogon
 
 def _to_numpy(x):
     if tn.is_tensor(x):
-        return x.numpy()
+        return tn.to_numpy(x)
     return np.asarray(x)
 
 
@@ -126,7 +126,7 @@ def function_interpolate(function, x, eps=1e-9, start_tens=None, nswp=20, kick=2
         idx_new = np.vstack((tmp[1].reshape((1, -1)), Idx[k + 1][:, tmp[0]]))
         Idx[k] = idx_new.copy()
 
-        Rm = _to_tensor_like(core.numpy()[Jk, :], core)
+        Rm = _to_tensor_like(tn.to_numpy(core)[Jk, :], core)
         core = _solve(Rm.T, core.T).T
         Rm = (Rm @ Rmat).T
         cores[k] = tn.reshape(core, (rnew, N[k], rank[k + 1]))
@@ -173,13 +173,13 @@ def function_interpolate(function, x, eps=1e-9, start_tens=None, nswp=20, kick=2
                 supercore = tn.reshape(function(core), (rank[k], N[k], N[k + 1], rank[k + 2]))
                 n_eval += core.shape[0]
 
-            supercore = tn.einsum('ij,jklm,mn->ikln', Ps[k], supercore.cast(dtype), Ps[k + 2])
+            supercore = tn.einsum('ij,jklm,mn->ikln', Ps[k], tn.cast(supercore, dtype), Ps[k + 2])
             rank[k] = supercore.shape[0]
             rank[k + 2] = supercore.shape[3]
             supercore = tn.reshape(supercore, (supercore.shape[0] * supercore.shape[1], -1))
 
             U, S, V = SVD(supercore)
-            rnew = rank_chop(S.numpy(), tn.linalg.norm(S).numpy() * eps / np.sqrt(d - 1)) + 1
+            rnew = rank_chop(tn.to_numpy(S), tn.to_numpy(tn.linalg.norm(S)) * eps / np.sqrt(d - 1)) + 1
             rnew = min(S.shape[0], rnew)
             rnew = min(rmax, rnew)
             rnew = int(rnew)
@@ -198,9 +198,9 @@ def function_interpolate(function, x, eps=1e-9, start_tens=None, nswp=20, kick=2
             super_prev = tn.einsum('ijk,kmn->ijmn', cores[k], cores[k + 1])
             super_prev = tn.einsum('ij,jklm,mn->ikln', Ps[k], super_prev, Ps[k + 2])
             err = tn.linalg.norm(supercore.flatten() - super_prev.flatten()) / tn.linalg.norm(supercore)
-            max_err = max(max_err, float(err.numpy()))
+            max_err = max(max_err, float(tn.to_numpy(err)))
             if verbose:
-                print(f'\t\trank updated {rank[k + 1]} -> {U.shape[1]}, local error {float(err.numpy()):e}')
+                print(f'\t\trank updated {rank[k + 1]} -> {U.shape[1]}, local error {float(tn.to_numpy(err)):e}')
             rank[k + 1] = U.shape[1]
 
             U = _solve(Ps[k], tn.reshape(U, (rank[k], -1)))
@@ -211,7 +211,7 @@ def function_interpolate(function, x, eps=1e-9, start_tens=None, nswp=20, kick=2
 
             Qmat, Rmat = QR(U)
             idx = _maxvol(Qmat)
-            Sub = _to_tensor_like(Qmat.numpy()[idx, :], Qmat)
+            Sub = _to_tensor_like(tn.to_numpy(Qmat)[idx, :], Qmat)
             core = _solve(Sub.T, Qmat.T).T
             core_next = Sub @ Rmat @ V
             cores[k] = tn.reshape(core, (rank[k], N[k], rank[k + 1]))
@@ -254,13 +254,13 @@ def function_interpolate(function, x, eps=1e-9, start_tens=None, nswp=20, kick=2
                 supercore = tn.reshape(function(core), (rank[k], N[k], N[k + 1], rank[k + 2]))
                 n_eval += core.shape[0]
 
-            supercore = tn.einsum('ij,jklm,mn->ikln', Ps[k], supercore.cast(dtype), Ps[k + 2])
+            supercore = tn.einsum('ij,jklm,mn->ikln', Ps[k], tn.cast(supercore, dtype), Ps[k + 2])
             rank[k] = supercore.shape[0]
             rank[k + 2] = supercore.shape[3]
             supercore = tn.reshape(supercore, (supercore.shape[0] * supercore.shape[1], -1))
 
             U, S, V = SVD(supercore)
-            rnew = rank_chop(S.numpy(), tn.linalg.norm(S).numpy() * eps / np.sqrt(d - 1)) + 1
+            rnew = rank_chop(tn.to_numpy(S), tn.to_numpy(tn.linalg.norm(S)) * eps / np.sqrt(d - 1)) + 1
             rnew = min(S.shape[0], rnew)
             rnew = min(rmax, rnew)
             rnew = int(rnew)
@@ -280,9 +280,9 @@ def function_interpolate(function, x, eps=1e-9, start_tens=None, nswp=20, kick=2
             super_prev = tn.einsum('ijk,kmn->ijmn', cores[k], cores[k + 1])
             super_prev = tn.einsum('ij,jklm,mn->ikln', Ps[k], super_prev, Ps[k + 2])
             err = tn.linalg.norm(supercore.flatten() - super_prev.flatten()) / tn.linalg.norm(supercore)
-            max_err = max(max_err, float(err.numpy()))
+            max_err = max(max_err, float(tn.to_numpy(err)))
             if verbose:
-                print(f'\t\trank updated {rank[k + 1]} -> {U.shape[1]}, local error {float(err.numpy()):e}')
+                print(f'\t\trank updated {rank[k + 1]} -> {U.shape[1]}, local error {float(tn.to_numpy(err)):e}')
             rank[k + 1] = U.shape[1]
 
             U = _solve(Ps[k], tn.reshape(U, (rank[k], -1)))
@@ -293,7 +293,7 @@ def function_interpolate(function, x, eps=1e-9, start_tens=None, nswp=20, kick=2
 
             Qmat, Rmat = QR(V.T)
             idx = _maxvol(Qmat)
-            Sub = _to_tensor_like(Qmat.numpy()[idx, :], Qmat)
+            Sub = _to_tensor_like(tn.to_numpy(Qmat)[idx, :], Qmat)
             core_next = _solve(Sub.T, Qmat.T)
             core = U @ (Sub @ Rmat).T
             cores[k] = tn.reshape(core, (rank[k], N[k], -1))
@@ -352,7 +352,7 @@ def dmrg_cross(function, N, eps=1e-9, nswp=10, x_start=None, kick=2, dtype=tn.fl
         idx_new = np.vstack((tmp[1].reshape((1, -1)), Idx[k + 1][:, tmp[0]]))
         Idx[k] = idx_new.copy()
 
-        Rm = _to_tensor_like(core.numpy()[Jk, :], core)
+        Rm = _to_tensor_like(tn.to_numpy(core)[Jk, :], core)
         core = _solve(Rm.T, core.T).T
         Rm = (Rm @ Rmat).T
         cores[k] = tn.reshape(core, (rnew, N[k], rank[k + 1]))
@@ -403,13 +403,13 @@ def dmrg_cross(function, N, eps=1e-9, nswp=10, x_start=None, kick=2, dtype=tn.fl
             supercore = tn.reshape(_evaluate_entries(eval_index), (rank[k], N[k], N[k + 1], rank[k + 2]))
             n_eval += eval_index.shape[0]
 
-            supercore = tn.einsum('ij,jklm,mn->ikln', Ps[k], supercore.cast(dtype), Ps[k + 2])
+            supercore = tn.einsum('ij,jklm,mn->ikln', Ps[k], tn.cast(supercore, dtype), Ps[k + 2])
             rank[k] = supercore.shape[0]
             rank[k + 2] = supercore.shape[3]
             supercore = tn.reshape(supercore, (supercore.shape[0] * supercore.shape[1], -1))
 
             U, S, V = SVD(supercore)
-            rnew = rank_chop(S.numpy(), tn.linalg.norm(S).numpy() * eps / np.sqrt(d - 1)) + 1
+            rnew = rank_chop(tn.to_numpy(S), tn.to_numpy(tn.linalg.norm(S)) * eps / np.sqrt(d - 1)) + 1
             rnew = min(S.shape[0], rnew)
             rnew = min(rmax, rnew)
             rnew = int(rnew)
@@ -428,9 +428,9 @@ def dmrg_cross(function, N, eps=1e-9, nswp=10, x_start=None, kick=2, dtype=tn.fl
             super_prev = tn.einsum('ijk,kmn->ijmn', cores[k], cores[k + 1])
             super_prev = tn.einsum('ij,jklm,mn->ikln', Ps[k], super_prev, Ps[k + 2])
             err = tn.linalg.norm(supercore.flatten() - super_prev.flatten()) / tn.linalg.norm(supercore)
-            max_err = max(max_err, float(err.numpy()))
+            max_err = max(max_err, float(tn.to_numpy(err)))
             if verbose:
-                print(f'\t\trank updated {rank[k + 1]} -> {U.shape[1]}, local error {float(err.numpy()):e}')
+                print(f'\t\trank updated {rank[k + 1]} -> {U.shape[1]}, local error {float(tn.to_numpy(err)):e}')
             rank[k + 1] = U.shape[1]
 
             U = _solve(Ps[k], tn.reshape(U, (rank[k], -1)))
@@ -441,7 +441,7 @@ def dmrg_cross(function, N, eps=1e-9, nswp=10, x_start=None, kick=2, dtype=tn.fl
 
             Qmat, Rmat = QR(U)
             idx = _maxvol(Qmat)
-            Sub = _to_tensor_like(Qmat.numpy()[idx, :], Qmat)
+            Sub = _to_tensor_like(tn.to_numpy(Qmat)[idx, :], Qmat)
             core = _solve(Sub.T, Qmat.T).T
             core_next = Sub @ Rmat @ V
             cores[k] = tn.reshape(core, (rank[k], N[k], rank[k + 1]))
@@ -474,13 +474,13 @@ def dmrg_cross(function, N, eps=1e-9, nswp=10, x_start=None, kick=2, dtype=tn.fl
             supercore = tn.reshape(_evaluate_entries(eval_index), (rank[k], N[k], N[k + 1], rank[k + 2]))
             n_eval += eval_index.shape[0]
 
-            supercore = tn.einsum('ij,jklm,mn->ikln', Ps[k], supercore.cast(dtype), Ps[k + 2])
+            supercore = tn.einsum('ij,jklm,mn->ikln', Ps[k], tn.cast(supercore, dtype), Ps[k + 2])
             rank[k] = supercore.shape[0]
             rank[k + 2] = supercore.shape[3]
             supercore = tn.reshape(supercore, (supercore.shape[0] * supercore.shape[1], -1))
 
             U, S, V = SVD(supercore)
-            rnew = rank_chop(S.numpy(), tn.linalg.norm(S).numpy() * eps / np.sqrt(d - 1)) + 1
+            rnew = rank_chop(tn.to_numpy(S), tn.to_numpy(tn.linalg.norm(S)) * eps / np.sqrt(d - 1)) + 1
             rnew = min(S.shape[0], rnew)
             rnew = min(rmax, rnew)
             rnew = int(rnew)
@@ -500,9 +500,9 @@ def dmrg_cross(function, N, eps=1e-9, nswp=10, x_start=None, kick=2, dtype=tn.fl
             super_prev = tn.einsum('ijk,kmn->ijmn', cores[k], cores[k + 1])
             super_prev = tn.einsum('ij,jklm,mn->ikln', Ps[k], super_prev, Ps[k + 2])
             err = tn.linalg.norm(supercore.flatten() - super_prev.flatten()) / tn.linalg.norm(supercore)
-            max_err = max(max_err, float(err.numpy()))
+            max_err = max(max_err, float(tn.to_numpy(err)))
             if verbose:
-                print(f'\t\trank updated {rank[k + 1]} -> {U.shape[1]}, local error {float(err.numpy()):e}')
+                print(f'\t\trank updated {rank[k + 1]} -> {U.shape[1]}, local error {float(tn.to_numpy(err)):e}')
             rank[k + 1] = U.shape[1]
 
             U = _solve(Ps[k], tn.reshape(U, (rank[k], -1)))
@@ -513,7 +513,7 @@ def dmrg_cross(function, N, eps=1e-9, nswp=10, x_start=None, kick=2, dtype=tn.fl
 
             Qmat, Rmat = QR(V.T)
             idx = _maxvol(Qmat)
-            Sub = _to_tensor_like(Qmat.numpy()[idx, :], Qmat)
+            Sub = _to_tensor_like(tn.to_numpy(Qmat)[idx, :], Qmat)
             core_next = _solve(Sub.T, Qmat.T)
             core = U @ (Sub @ Rmat).T
             cores[k] = tn.reshape(core, (rank[k], N[k], -1))

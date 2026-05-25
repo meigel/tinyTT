@@ -62,7 +62,7 @@ class TestGMRES:
         x, converged, iters = gmres_restart(
             op, b_tn, x0_tn, N, max_iterations=5, threshold=1e-10
         )
-        np.testing.assert_allclose(x.numpy(), b_np, atol=1e-8)
+        np.testing.assert_allclose(tn.to_numpy(x), b_np, atol=1e-8)
         assert converged
 
     def test_diagonal_system(self):
@@ -79,7 +79,7 @@ class TestGMRES:
             op, b_tn, x0_tn, N, max_iterations=20, threshold=1e-10
         )
         x_ref = np.linalg.solve(A_np, b_np)
-        np.testing.assert_allclose(x.numpy(), x_ref, atol=1e-8)
+        np.testing.assert_allclose(tn.to_numpy(x), x_ref, atol=1e-8)
         assert converged
 
     def test_zero_rhs(self):
@@ -93,7 +93,7 @@ class TestGMRES:
         x, converged, iters = gmres(
             op, b_tn, x0_tn, N, max_iterations=5, threshold=1e-10
         )
-        np.testing.assert_allclose(x.numpy(), np.zeros(N), atol=1e-10)
+        np.testing.assert_allclose(tn.to_numpy(x), np.zeros(N), atol=1e-10)
         assert converged
         assert iters == 0
 
@@ -112,7 +112,7 @@ class TestGMRES:
         )
         assert converged, f"GMRES restart did not converge after {iters} iterations"
         r = b_tn - op.matvec(x)
-        res = float(tn.linalg.norm(r).numpy())
+        res = float(tn.to_numpy(tn.linalg.norm(r)))
         assert res < 1e-6, f"Residual too large: {res}"
 
     def test_early_convergence(self):
@@ -133,7 +133,7 @@ class TestGMRES:
         )
         assert converged
         assert iters == 0
-        np.testing.assert_allclose(x.numpy(), x0_np, atol=1e-10)
+        np.testing.assert_allclose(tn.to_numpy(x), x0_np, atol=1e-10)
 
     @NEEDS_CLANG
     def test_gmres_restart_wrapper(self):

@@ -63,7 +63,7 @@ def _accepted_context(signature, context):
 
 
 def _singular_values_numpy(S: tn.Tensor) -> np.ndarray:
-    return np.abs(S.numpy())
+    return np.abs(tn.to_numpy(S))
 
 
 def _doerfler_cutoff(sigma: np.ndarray, delta: float) -> int | None:
@@ -92,7 +92,7 @@ class Threshold:
     def __call__(self, S: tn.Tensor, **context) -> int:
         _ = context
         S_sq = S**2
-        S_np = S_sq.numpy()
+        S_np = tn.to_numpy(S_sq)
         total_norm_sq = float(S_np.sum())
         if total_norm_sq == 0.0:
             return 1
@@ -117,7 +117,7 @@ class Doerfler:
     def __call__(self, S: tn.Tensor, **context) -> int:
         _ = context
         S_sq = S**2
-        S_np = S_sq.numpy()
+        S_np = tn.to_numpy(S_sq)
         total_var = float(S_np.sum())
         if total_var == 0.0:
             return 1

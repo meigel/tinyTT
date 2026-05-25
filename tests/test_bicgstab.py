@@ -58,7 +58,7 @@ class TestBiCGSTAB:
         x_n, flag, nit, relres = BiCGSTAB_reset(Op, b_tn, x0_tn, eps=1e-12, nmax=10)
 
         assert flag, f"BiCGSTAB did not converge (nit={nit}, relres={relres})"
-        np.testing.assert_allclose(x_n.numpy(), b_tn.numpy(), atol=1e-8)
+        np.testing.assert_allclose(tn.to_numpy(x_n), tn.to_numpy(b_tn), atol=1e-8)
 
     def test_diagonal_system(self):
         """BiCGSTAB should solve a diagonal system."""
@@ -74,7 +74,7 @@ class TestBiCGSTAB:
 
         assert flag, f"BiCGSTAB did not converge (nit={nit}, relres={relres})"
         x_ref = np.linalg.solve(A_np, b_np)
-        np.testing.assert_allclose(x_n.numpy(), x_ref, atol=1e-8)
+        np.testing.assert_allclose(tn.to_numpy(x_n), x_ref, atol=1e-8)
 
     @NEEDS_CLANG
     def test_random_spd(self):
@@ -102,7 +102,7 @@ class TestBiCGSTAB:
         x_n, flag, nit, relres = BiCGSTAB_reset(Op, rhs_tn, x0_tn, eps=1e-12, nmax=10)
 
         assert flag, f"BiCGSTAB did not converge (nit={nit}, relres={relres})"
-        np.testing.assert_allclose(x_n.numpy(), np.zeros(n), atol=1e-8)
+        np.testing.assert_allclose(tn.to_numpy(x_n), np.zeros(n), atol=1e-8)
 
     def test_scalar_helper(self):
         """Test _scalar helper used by BiCGSTAB."""

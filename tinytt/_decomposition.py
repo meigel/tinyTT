@@ -12,7 +12,7 @@ from tinytt.truncation import apply_truncation_rule
 
 def _scalar(val):
     if tn.is_tensor(val):
-        return float(val.numpy().item())
+        return float(tn.to_numpy(val).item())
     return float(val)
 
 
@@ -47,7 +47,7 @@ def _device_is_cpu(device):
 
 
 def _svd_numpy(mat):
-    u, s, v = np.linalg.svd(mat.numpy(), full_matrices=False)
+    u, s, v = np.linalg.svd(tn.to_numpy(mat), full_matrices=False)
     return (
         tn.tensor(u, dtype=mat.dtype, device=mat.device),
         tn.tensor(s, dtype=mat.dtype, device=mat.device),
@@ -92,7 +92,7 @@ def SVD(mat):
                 try:
                     return _svd_numpy(mat)
                 except Exception:
-                    mat_cpu = mat.numpy()
+                    mat_cpu = tn.to_numpy(mat)
                     u_cpu, s_cpu, v_cpu = np.linalg.svd(mat_cpu, full_matrices=False)
                     return (
                         tn.tensor(u_cpu, dtype=mat.dtype, device=mat.device),
@@ -383,7 +383,7 @@ def _rank_chop_tinygrad(s, eps):
     # Convert to numpy to avoid __bool__ on Tensor in comparisons
     # Build tail energy from the smallest SV upward, matching numpy's:
     #   sc = np.cumsum(np.abs(s[::-1]) ** 2)[::-1]; R = np.argmax(sc < eps**2)
-    s_sq_np = (s * s).numpy()
+    s_sq_np = tn.to_numpy(s * s)
     tail_energy = 0.0
     for r in range(n - 1, -1, -1):
         tail_energy += float(s_sq_np[r])
@@ -466,7 +466,7 @@ def to_tt(A, N=None, eps=1e-14, rmax=100, is_sparse=False):
     # ── GPU safety: copy to CPU, decompose in numpy, copy cores back ──────
     is_gpu = tn.is_tensor(A) and not _device_is_cpu(A.device)
     if is_gpu:
-        A_np = A.numpy()
+        A_np = tn.to_numpy(A)
         rmax_list = rmax if isinstance(rmax, list) else [1] + (d - 1) * [rmax] + [1]
         cores_np, r = _to_tt_np(A_np, N, eps, rmax_list)
         device = A.device

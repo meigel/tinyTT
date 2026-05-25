@@ -25,7 +25,7 @@ from tinytt._functional import (
 
 
 def _np(t):
-    return t.numpy() if tn.is_tensor(t) else np.asarray(t)
+    return tn.to_numpy(t) if tn.is_tensor(t) else np.asarray(t)
 
 
 @pytest.fixture
@@ -246,8 +246,8 @@ class TestEvaluate:
         y = evaluate([core], bases, x)
         # Numpy reference using monomial basis
         phi_np = np.column_stack([x_np ** j for j in range(4)])
-        ref = phi_np @ core.numpy().reshape(-1)
-        np.testing.assert_allclose(y.numpy(), ref, atol=1e-12)
+        ref = phi_np @ tn.to_numpy(core).reshape(-1)
+        np.testing.assert_allclose(tn.to_numpy(y), ref, atol=1e-12)
 
 
 class TestGradient:

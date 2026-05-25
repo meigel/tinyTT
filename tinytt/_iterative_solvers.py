@@ -10,7 +10,7 @@ import tinytt._backend as tn
 
 def _scalar(val):
     if tn.is_tensor(val):
-        return float(val.numpy().item())
+        return float(tn.to_numpy(val).item())
     return float(val)
 
 

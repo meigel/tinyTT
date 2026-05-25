@@ -136,7 +136,7 @@ class TestArmijoLS:
             c.grad = None
 
         # Direction = gradient (descent direction is -grad)
-        loss_before = float(loss.numpy())
+        loss_before = float(tn.to_numpy(loss))
         gamma, x_new, loss_new = armijo_ls(
             loss_fn, cores, grads,
             grad=grads,

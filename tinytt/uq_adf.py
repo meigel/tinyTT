@@ -48,7 +48,7 @@ def _to_tensor(data, dtype, device):
 def _to_device_dtype(tensor, device, dtype):
     out = tensor
     if dtype is not None and out.dtype != dtype:
-        out = out.cast(dtype)
+        out = tn.cast(out, dtype)
     if device is not None and out.device != device:
         out = out.to(device)
     return out
@@ -173,14 +173,14 @@ def _calc_right_stack(cores, positions):
     # Initialise from the rightmost core: meas_cmp has trailing dim 1.
     core = cores[d - 1]
     core_sh = core.permute(1, 0, 2)                                  # (mode, r_l, 1)
-    R = tn.einsum('jm,mlr->jlr', positions[d - 1], core_sh)[:, :, 0].realize()
+    R = tn.realize(tn.einsum('jm,mlr->jlr', positions[d - 1], core_sh)[:, :, 0])
     right_stack[d - 1] = R
 
     for k in range(d - 2, 0, -1):
         core = cores[k]
         core_sh = core.permute(1, 0, 2)                              # (mode, r_l, r_r)
-        tmp = tn.einsum('jm,mlr->jlr', positions[k], core_sh).realize()
-        right_stack[k] = tn.einsum('jlr,jr->jl', tmp, right_stack[k + 1]).realize()
+        tmp = tn.realize(tn.einsum('jm,mlr->jlr', positions[k], core_sh))
+        right_stack[k] = tn.realize(tn.einsum('jlr,jr->jl', tmp, right_stack[k + 1]))
 
     return right_stack
 
@@ -208,7 +208,7 @@ def _calc_left_stack(core_pos, cores, positions, solutions_batched, left_is_stac
 
     core = cores[core_pos]
     core_sh = core.permute(1, 0, 2)                                   # (mode, r_l, r_r)
-    meas_cmp = tn.einsum('jm,mlr->jlr', positions[core_pos], core_sh).realize()
+    meas_cmp = tn.realize(tn.einsum('jm,mlr->jlr', positions[core_pos], core_sh))
     # Make a second copy so the scheduler doesn't reuse the same buffer twice
     # in the upcoming Gram product.
     meas_cmp_t = meas_cmp.clone()
@@ -249,26 +249,26 @@ def _calc_delta(core_pos, cores, positions, solutions_batched,
 
     if core_pos == 0:
         core0_2d = core.reshape(mode, r_right)
-        pred = tn.einsum('mr,jr->jm', core0_2d, right_stack[1]).realize()
-        res = (pred - solutions_batched).realize()
-        dyad = tn.einsum('jm,jr->jmr', res, right_stack[1]).realize()
+        pred = tn.realize(tn.einsum('mr,jr->jm', core0_2d, right_stack[1]))
+        res = tn.realize(pred - solutions_batched)
+        dyad = tn.realize(tn.einsum('jm,jr->jmr', res, right_stack[1]))
         return dyad.sum(0).reshape(1, mode, r_right)
 
     core_sh = core.permute(1, 0, 2)                                   # (mode, r_l, r_r)
-    meas_cmp = tn.einsum('jm,mlr->jlr', positions[core_pos], core_sh).realize()
+    meas_cmp = tn.realize(tn.einsum('jm,mlr->jlr', positions[core_pos], core_sh))
 
     if core_pos < d - 1:
-        is_part = tn.einsum('jlr,jr->jl', meas_cmp, right_stack[core_pos + 1]).realize()
-        dyadic_part = tn.einsum('jm,jr->jmr', positions[core_pos], right_stack[core_pos + 1]).realize()
+        is_part = tn.realize(tn.einsum('jlr,jr->jl', meas_cmp, right_stack[core_pos + 1]))
+        dyadic_part = tn.realize(tn.einsum('jm,jr->jmr', positions[core_pos], right_stack[core_pos + 1]))
     else:
-        is_part = meas_cmp[:, :, 0].realize()                         # (n, r_l)
-        dyadic_part = positions[core_pos].unsqueeze(2).realize()      # (n, mode, 1)
+        is_part = tn.realize(meas_cmp[:, :, 0])                         # (n, r_l)
+        dyadic_part = tn.realize(positions[core_pos].unsqueeze(2))      # (n, mode, 1)
 
     if core_pos > 1:
-        is_part = tn.einsum('jlm,jm->jl', left_is_stack[core_pos - 1], is_part).realize()
+        is_part = tn.realize(tn.einsum('jlm,jm->jl', left_is_stack[core_pos - 1], is_part))
 
-    diff = (is_part - left_ought_stack[core_pos - 1]).realize()
-    return tn.einsum('jl,jmr->lmr', diff, dyadic_part).realize()
+    diff = tn.realize(is_part - left_ought_stack[core_pos - 1])
+    return tn.realize(tn.einsum('jl,jmr->lmr', diff, dyadic_part))
 
 
 def _calc_norm_a_projgrad(delta, core_pos, positions, right_stack, left_is_stack):
@@ -281,16 +281,16 @@ def _calc_norm_a_projgrad(delta, core_pos, positions, right_stack, left_is_stack
         mode = delta.shape[1]
         r1 = delta.shape[2]
         delta_2d = delta.reshape(mode, r1)
-        tmp = tn.einsum('mr,jr->jm', delta_2d, right_stack[1]).realize()
+        tmp = tn.realize(tn.einsum('mr,jr->jm', delta_2d, right_stack[1]))
         tmp_b = tmp.clone()
         return tn.sqrt((tmp * tmp_b).sum())
 
     delta_sh = delta.permute(1, 0, 2)                                 # (mode, r_l, r_r)
     delta_meas = tn.einsum('jm,mlr->jlr', positions[core_pos], delta_sh)  # (n, r_l, r_r)
     if core_pos < d - 1:
-        right_part = tn.einsum('jlr,jr->jl', delta_meas, right_stack[core_pos + 1]).realize()
+        right_part = tn.realize(tn.einsum('jlr,jr->jl', delta_meas, right_stack[core_pos + 1]))
     else:
-        right_part = delta_meas[:, :, 0].realize()                    # (n, r_l)
+        right_part = tn.realize(delta_meas[:, :, 0])                    # (n, r_l)
 
     right_part_b = right_part.clone()
     if core_pos > 1:
@@ -364,13 +364,13 @@ def _als_update_core(core_pos, cores, positions, right_stack, left_mats_batch,
     for _ in range(int(cg_maxit)):
         ap = matvec(p)
         denom = _dot(p, ap)
-        if float(denom.numpy()) == 0.0:
+        if float(tn.to_numpy(denom)) == 0.0:
             break
         alpha = rs_old / denom
         x = x + alpha * p
         r = r - alpha * ap
         rs_new = _dot(r, r)
-        if tol > 0.0 and float(rs_new.numpy()) <= (tol * tol) * float(rs0.numpy()):
+        if tol > 0.0 and float(tn.to_numpy(rs_new)) <= (tol * tol) * float(tn.to_numpy(rs0)):
             break
         p = r + (rs_new / rs_old) * p
         rs_old = rs_new
@@ -539,10 +539,10 @@ def uq_adf(measurements, dimensions, basis, targeteps=1e-8, maxitr=1000, device=
                 residual = _calc_residual_norm(cores[0], right_stack, solutions_batched)
                 rel_res = residual / solutions_norm
                 if callback is not None:
-                    callback(iteration, float(rel_res.numpy()), cores, ranks)
-                if targeteps and float(rel_res.numpy()) <= targeteps:
+                    callback(iteration, float(tn.to_numpy(rel_res)), cores, ranks)
+                if targeteps and float(tn.to_numpy(rel_res)) <= targeteps:
                     return tinytt.TT(cores)
-                residuals.append(float(rel_res.numpy()))
+                residuals.append(float(tn.to_numpy(rel_res)))
                 if len(residuals) >= rank_window:
                     stagnation = residuals[-1] / residuals[-rank_window] > 0.99
                     if stagnation and adapt_rank:
@@ -585,13 +585,13 @@ def uq_adf(measurements, dimensions, basis, targeteps=1e-8, maxitr=1000, device=
                     left_mats_batch = _update_left_mats(left_mats_batch, cores[core_pos], positions, core_pos)
                 continue
 
-            delta = _calc_delta(core_pos, cores, positions, solutions_batched, right_stack, left_is_stack, left_ought_stack).realize()
-            norm_a_proj = _calc_norm_a_projgrad(delta, core_pos, positions, right_stack, left_is_stack).realize()
+            delta = tn.realize(_calc_delta(core_pos, cores, positions, solutions_batched, right_stack, left_is_stack, left_ought_stack))
+            norm_a_proj = tn.realize(_calc_norm_a_projgrad(delta, core_pos, positions, right_stack, left_is_stack))
             delta_b = delta.clone()
             py_r = (delta * delta_b).sum()
 
             denom = norm_a_proj * norm_a_proj.clone()
-            if float(denom.numpy()) > 0.0:
+            if float(tn.to_numpy(denom)) > 0.0:
                 step = py_r / denom
                 cores[core_pos] = cores[core_pos] - step * delta
 
@@ -630,7 +630,7 @@ def evaluate(result, y, basis, orthonormal=False):
     orthonormal : bool
         Must match the value used during fitting.
     """
-    cores = [c.numpy() for c in result.cores]
+    cores = [tn.to_numpy(c) for c in result.cores]
     if len(y) != len(cores) - 1:
         raise ValueError(
             f"y has length {len(y)} but the model expects {len(cores) - 1} stochastic dims."
@@ -640,12 +640,12 @@ def evaluate(result, y, basis, orthonormal=False):
         core = cores[dim]
         degree = core.shape[1]
         # _basis_matrix expects a 1-d tensor of x values.
-        basis_row = _basis_matrix(
+        basis_row = tn.to_numpy(_basis_matrix(
             tn.tensor(np.asarray([float(yi)], dtype=np.float64), dtype=tn.float64),
             degree,
             basis,
             orthonormal,
-        ).numpy()[0]                          # shape (degree,)
+        ))[0]                          # shape (degree,)
         tmp = np.tensordot(core, basis_row, axes=([1], [0]))
         value = value @ tmp
     value = np.squeeze(value)

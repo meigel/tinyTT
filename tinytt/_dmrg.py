@@ -77,10 +77,10 @@ def dmrg_matvec_python(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4
                 W = tn.conj(W_prev)
 
             b = tn.linalg.norm(W)
-            b_val = float(b.numpy().item()) if tn.is_tensor(b) else float(b)
+            b_val = float(tn.to_numpy(b).item()) if tn.is_tensor(b) else float(b)
             if b_val != 0.0:
                 a = tn.linalg.norm(W - tn.conj(W_prev))
-                delta_cores[k] = float(a.numpy().item()) / b_val
+                delta_cores[k] = float(tn.to_numpy(a).item()) / b_val
             else:
                 delta_cores[k] = 0.0
 
@@ -91,7 +91,7 @@ def dmrg_matvec_python(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4
                 r_enlarge[k] = max(1, r_enlarge[k] - 1)
 
             U, S, V = SVD(tn.reshape(W, [W.shape[0] * W.shape[1], -1]))
-            r_new = rank_chop(S.numpy(), b_val * eps / (d ** (0.5 if last else 1.5)))
+            r_new = rank_chop(tn.to_numpy(S), b_val * eps / (d ** (0.5 if last else 1.5)))
             if not last:
                 r_new += r_enlarge[k]
             r_new = min([r_new, S.shape[0], rmax[k + 1]])
@@ -201,10 +201,10 @@ def dmrg_hadamard_python(z, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank
                 W = tn.conj(W_prev)
 
             b = tn.linalg.norm(W)
-            b_val = float(b.numpy().item()) if tn.is_tensor(b) else float(b)
+            b_val = float(tn.to_numpy(b).item()) if tn.is_tensor(b) else float(b)
             if b_val != 0.0:
                 a = tn.linalg.norm(W - tn.conj(W_prev))
-                delta_cores[k] = float(a.numpy().item()) / b_val
+                delta_cores[k] = float(tn.to_numpy(a).item()) / b_val
             else:
                 delta_cores[k] = 0.0
 
@@ -215,7 +215,7 @@ def dmrg_hadamard_python(z, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank
                 r_enlarge[k] = max(1, r_enlarge[k] - 1)
 
             U, S, V = SVD(tn.reshape(W, [W.shape[0] * W.shape[1], -1]))
-            r_new = rank_chop(S.numpy(), b_val * eps / (d ** (0.5 if last else 1.5)))
+            r_new = rank_chop(tn.to_numpy(S), b_val * eps / (d ** (0.5 if last else 1.5)))
             if not last:
                 r_new += r_enlarge[k]
             r_new = min([r_new, S.shape[0], rmax[k + 1]])

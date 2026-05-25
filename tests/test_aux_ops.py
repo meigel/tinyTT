@@ -42,7 +42,7 @@ class TestAuxOps:
         indices = tn.tensor(np.array([[0, 0, 0], [1, 0, 1], [0, 1, 1]]).astype(np.int32))
         vals = apply_mask(t.cores, t.R, indices)
         expected = np.array([full[0, 0, 0], full[1, 0, 1], full[0, 1, 1]])
-        np.testing.assert_allclose(vals.numpy(), expected, atol=1e-10)
+        np.testing.assert_allclose(tn.to_numpy(vals), expected, atol=1e-10)
 
     @NEEDS_CLANG
     def test_dense_matvec_ttm_full(self):
@@ -51,10 +51,10 @@ class TestAuxOps:
         x = tn.tensor(rng.standard_normal((2, 3)).astype(np.float64))
         y = dense_matvec(a.cores, x)
         # Since a is the identity TTM, y should equal x
-        np.testing.assert_allclose(y.numpy(), x.numpy(), atol=1e-10)
+        np.testing.assert_allclose(tn.to_numpy(y), tn.to_numpy(x), atol=1e-10)
         # Also verify via TT round-trip: a @ TT(x) -> full
-        ref = (a @ tt.TT(x, eps=1e-12)).full().numpy()
-        np.testing.assert_allclose(y.numpy(), ref, atol=1e-8)
+        ref = tn.to_numpy((a @ tt.TT(x, eps=1e-12)).full())
+        np.testing.assert_allclose(tn.to_numpy(y), ref, atol=1e-8)
 
     @NEEDS_CLANG
     def test_dense_matvec_broadcast(self):
@@ -69,7 +69,7 @@ class TestAuxOps:
         for b in range(2):
             expected = dense_matvec(a.cores, tn.tensor(x_np[b]))
             np.testing.assert_allclose(
-                y.numpy()[b], expected.numpy(), atol=1e-10
+                tn.to_numpy(y)[b], tn.to_numpy(expected), atol=1e-10
             )
 
     @NEEDS_CLANG
@@ -81,12 +81,12 @@ class TestAuxOps:
         y = tt.random([2, 3], [1, 2, 1])
         result = bilinear_form_aux(x.cores, A.cores, y.cores, d)
         # Reference: dense evaluation
-        x_full = x.full().numpy()                      # (2, 3)
-        A_full = A.full().numpy()                      # (2, 3, 2, 3)
-        y_full = y.full().numpy()                      # (2, 3)
+        x_full = tn.to_numpy(x.full())                      # (2, 3)
+        A_full = tn.to_numpy(A.full())                      # (2, 3, 2, 3)
+        y_full = tn.to_numpy(y.full())                      # (2, 3)
         n_total = int(np.prod(x.shape))                # 6
         A_mat = A_full.reshape(n_total, n_total)       # (6, 6)
         ref = x_full.ravel() @ A_mat @ y_full.ravel()  # scalar
         np.testing.assert_allclose(
-            result.numpy(), np.array(ref), atol=1e-10
+            tn.to_numpy(result), np.array(ref), atol=1e-10
         )

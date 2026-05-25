@@ -35,7 +35,7 @@ print(f"  TT ranks:            {A.R}")
 
 # ---- Standard TT solve (reference) ----
 x_tt = tt.solvers.amen_solve(A, b, nswp=2, eps=1e-6, verbose=False, kickrank=1)
-res_tt = float((A @ x_tt - b).norm().numpy()) / float(b.norm().numpy())
+res_tt = float(tn.to_numpy((A @ x_tt - b).norm())) / float(tn.to_numpy(b.norm()))
 print(f"  TT-AMEn rel_res:     {res_tt:.2e}")
 
 # ---- QTT conversion and solve ----
@@ -55,8 +55,8 @@ x_sol_qtt = tt.solvers.amen_solve(
 # original_shape is the shape the TT had before QTT conversion: [n, n] for a 2D grid.
 x_sol = x_sol_qtt.qtt_to_tens(original_shape=[n, n])
 
-res_qtt = float((A @ x_sol - b).norm().numpy()) / float(b.norm().numpy())
-match = float((x_sol - x_tt).norm().numpy()) / float(x_tt.norm().numpy())
+res_qtt = float(tn.to_numpy((A @ x_sol - b).norm())) / float(tn.to_numpy(b.norm()))
+match = float(tn.to_numpy((x_sol - x_tt).norm())) / float(tn.to_numpy(x_tt.norm()))
 
 print(f"  QTT-AMEn rel_res:   {res_qtt:.2e}")
 print(f"  QTT vs TT diff:     {match:.2e}")

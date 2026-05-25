@@ -2,6 +2,7 @@ import numpy as np
 
 import tinytt as tt
 from tinytt.tdvp import build_ising_mpo, tdvp_imag_time
+import tinytt._backend as tn
 
 
 def main():
@@ -13,11 +14,11 @@ def main():
     H = build_ising_mpo(L, J=J, h=h, device="CPU")
     psi = tt.random([2] * L, [1, 2, 2, 2, 1], device="CPU")
 
-    energy = tt.dot(psi, H @ psi).numpy().item()
+    energy = tn.to_numpy(tt.dot(psi, H @ psi)).item()
     print("Initial energy:", energy)
 
     psi = tdvp_imag_time(psi, H, dt=dt, nswp=2, eps=1e-10, rmax=16, max_dense=128)
-    energy = tt.dot(psi, H @ psi).numpy().item()
+    energy = tn.to_numpy(tt.dot(psi, H @ psi)).item()
     print("Post TDVP energy:", energy)
 
 

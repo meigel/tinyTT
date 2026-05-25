@@ -62,7 +62,7 @@ class TestDecompositionInternals:
             tfull = tn.einsum("...i,ijk->...jk", tfull, cores[i])
         tfull = tn.einsum("...i,ij->...j", tfull, cores[-1][:, :, 0])
 
-        assert np.allclose(tfull.numpy(), arr, atol=1e-10)
+        assert np.allclose(tn.to_numpy(tfull), arr, atol=1e-10)
 
     @NEEDS_CLANG
     def test_lr_rl_orthogonal(self):
@@ -86,9 +86,9 @@ class TestDecompositionInternals:
             tfull_rl = tn.einsum("...i,ijk->...jk", tfull_rl, cores_rl[i])
         tfull_rl = tn.einsum("...i,ij->...j", tfull_rl, cores_rl[-1][:, :, 0])
 
-        expected = t.full().numpy()
-        assert np.allclose(tfull_lr.numpy(), expected, atol=1e-10)
-        assert np.allclose(tfull_rl.numpy(), expected, atol=1e-10)
+        expected = tn.to_numpy(t.full())
+        assert np.allclose(tn.to_numpy(tfull_lr), expected, atol=1e-10)
+        assert np.allclose(tn.to_numpy(tfull_rl), expected, atol=1e-10)
 
     @NEEDS_CLANG
     def test_mat_to_tt_identity(self):
@@ -115,7 +115,7 @@ class TestDecompositionInternals:
         tfull = tn.permute(tfull, perm)
         # tfull shape: (m0, m1, n0, n1, ...)
 
-        assert np.allclose(tfull.numpy(), full, atol=1e-10)
+        assert np.allclose(tn.to_numpy(tfull), full, atol=1e-10)
 
     @NEEDS_CLANG
     def test_mat_to_tt_accepts_scipy_sparse_matrix(self):
@@ -125,7 +125,7 @@ class TestDecompositionInternals:
         A_tt = tt.TT(A_sparse, shape=[(2, 2), (2, 2)], eps=1e-12, rmax=8)
 
         assert A_tt.is_ttm
-        assert np.allclose(A_tt.full().numpy().reshape(4, 4), A_sparse.toarray(), atol=1e-10)
+        assert np.allclose(tn.to_numpy(A_tt.full()).reshape(4, 4), A_sparse.toarray(), atol=1e-10)
 
     @NEEDS_CLANG
     def test_round_tt_basic(self):
@@ -141,5 +141,5 @@ class TestDecompositionInternals:
             tfull = tn.einsum("...i,ijk->...jk", tfull, cores_rounded[i])
         tfull = tn.einsum("...i,ij->...j", tfull, cores_rounded[-1][:, :, 0])
 
-        expected = t.full().numpy()
-        assert np.allclose(tfull.numpy(), expected, atol=1e-10)
+        expected = tn.to_numpy(t.full())
+        assert np.allclose(tn.to_numpy(tfull), expected, atol=1e-10)

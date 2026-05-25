@@ -104,24 +104,24 @@ class TestSVD:
             assert s.shape == (4,)
             assert v.shape == (4, 4)
 
-            reconstructed = u.numpy() @ np.diag(s.numpy()) @ v.numpy()
-            assert np.allclose(reconstructed, mat.numpy(), atol=1e-10)
+            reconstructed = tn.to_numpy(u) @ np.diag(tn.to_numpy(s)) @ tn.to_numpy(v)
+            assert np.allclose(reconstructed, tn.to_numpy(mat), atol=1e-10)
 
     @NEEDS_CLANG
     def test_svd_wide_matrix(self):
         mat = tn.tensor(np.random.rand(3, 8).astype(np.float64))
         u, s, v = SVD(mat)
         assert s.shape == (3,)
-        reconstructed = u.numpy() @ np.diag(s.numpy()) @ v.numpy()
-        assert np.allclose(reconstructed, mat.numpy(), atol=1e-10)
+        reconstructed = tn.to_numpy(u) @ np.diag(tn.to_numpy(s)) @ tn.to_numpy(v)
+        assert np.allclose(reconstructed, tn.to_numpy(mat), atol=1e-10)
 
     @NEEDS_CLANG
     def test_svd_tall_matrix(self):
         mat = tn.tensor(np.random.rand(8, 3).astype(np.float64))
         u, s, v = SVD(mat)
         assert s.shape == (3,)
-        reconstructed = u.numpy() @ np.diag(s.numpy()) @ v.numpy()
-        assert np.allclose(reconstructed, mat.numpy(), atol=1e-10)
+        reconstructed = tn.to_numpy(u) @ np.diag(tn.to_numpy(s)) @ tn.to_numpy(v)
+        assert np.allclose(reconstructed, tn.to_numpy(mat), atol=1e-10)
 
 
 class TestScalarHelper:

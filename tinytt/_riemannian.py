@@ -90,7 +90,7 @@ def _qr_move_lr(cores: list, pos: int, preserve_rank: bool = False) -> list:
         # Absorb R (padded to full rank) into the next core
         import numpy as np
         r_np = np.zeros((r_right, r_right), dtype=np.float64)
-        r_np[:k, :] = r[:k, :].numpy()
+        r_np[:k, :] = tn.to_numpy(r[:k, :])
         r_pad = tn.tensor(r_np, dtype=core.dtype, device=core.device)
         nxt = cores[pos + 1]
         cores[pos + 1] = tn.einsum('ab,bcd->acd', r_pad, nxt)
@@ -165,7 +165,7 @@ def _qr_move_rl(cores: list, pos: int, preserve_rank: bool = False) -> list:
         # (create via numpy to avoid tinygrad setitem contiguity issues)
         import numpy as np
         r_np = np.zeros((r_left, r_left), dtype=np.float64)
-        r_np[:k, :] = r[:k, :].numpy()
+        r_np[:k, :] = tn.to_numpy(r[:k, :])
         r_pad = tn.tensor(r_np, dtype=core.dtype, device=core.device)
         prv = cores[pos - 1]
         cores[pos - 1] = tn.einsum('abc,cd->abd', prv, r_pad)
@@ -437,7 +437,7 @@ def check_left_orthogonal(core: tn.Tensor, tol: float = 1e-10) -> bool:
     ident = tn.eye(r_right, dtype=core.dtype, device=core.device)
     qtq = mat.T @ mat
     diff = tn.linalg.norm(qtq - ident)
-    return float(diff.numpy().item()) < tol
+    return float(tn.to_numpy(diff).item()) < tol
 
 
 def check_right_orthogonal(core: tn.Tensor, tol: float = 1e-10) -> bool:
@@ -461,7 +461,7 @@ def check_right_orthogonal(core: tn.Tensor, tol: float = 1e-10) -> bool:
     ident = tn.eye(r_left, dtype=core.dtype, device=core.device)
     qqt = mat @ mat.T
     diff = tn.linalg.norm(qqt - ident)
-    return float(diff.numpy().item()) < tol
+    return float(tn.to_numpy(diff).item()) < tol
 
 
 # ---------------------------------------------------------------------------
@@ -501,7 +501,7 @@ def _build_left_env_z(x_cores, z_cores, k, dtype, device):
     L = tn.ones((1, 1), dtype=dtype, device=device)
     for i in range(k):
         # L[a,b] -> Lp[c,d] = sum_{a,b,n} L[a,b] * x[a,n,c] * z[b,n,d]
-        L = tn.einsum('ab,anc,bnd->cd', L, x_cores[i], z_cores[i]).realize()
+        L = tn.realize(tn.einsum('ab,anc,bnd->cd', L, x_cores[i], z_cores[i]))
     return L
 
 
@@ -510,7 +510,7 @@ def _build_right_env_z(x_cores, z_cores, k, dtype, device):
     d = len(x_cores)
     R = tn.ones((1, 1), dtype=dtype, device=device)
     for i in range(d - 1, k, -1):
-        R = tn.einsum('ab,cna,dnb->cd', R, x_cores[i], z_cores[i]).realize()
+        R = tn.realize(tn.einsum('ab,cna,dnb->cd', R, x_cores[i], z_cores[i]))
     return R
 
 
@@ -589,7 +589,7 @@ def tangent_project(cores: list, Z) -> list:
         L = _build_left_env_z(xc, z_cores, k, dtype, device)         # (rx_L, rz_L)
         R = _build_right_env_z(xc, z_cores, k, dtype, device)        # (rx_R, rz_R)
         # δG_k[a, n, c] = sum_{b, b'} L[a, b] * Z_k[b, n, b'] * R[c, b']
-        delta = tn.einsum('ab,bnd,cd->anc', L, z_cores[k], R).realize()
+        delta = tn.realize(tn.einsum('ab,bnd,cd->anc', L, z_cores[k], R))
 
         # Gauge: for k < d-1 force δG_k's left unfolding to be orthogonal to
         # G_k's column space. xc[k] in mixed-canonical form carries the norm
@@ -600,7 +600,7 @@ def tangent_project(cores: list, Z) -> list:
             G_left = tn.reshape(G_k, [rL * n, rR])
             Q, _ = tn.linalg.qr(G_left)
             delta_left = tn.reshape(delta, [rL * n, rR])
-            delta_left = (delta_left - Q @ (Q.transpose(0, 1) @ delta_left)).realize()
+            delta_left = tn.realize(delta_left - Q @ (Q.transpose(0, 1) @ delta_left))
             delta = tn.reshape(delta_left, [rL, n, rR])
 
         summand = [c.clone() for c in xc]

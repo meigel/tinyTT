@@ -70,7 +70,7 @@ def solve_heat_equation_2d(
     u_tt = tt.TT(tn.tensor(u_dense, dtype=tn.float64), eps=1e-10, rmax=max_rank)
     
     # Compute residual
-    u_full = u_tt.full().numpy()
+    u_full = tn.to_numpy(u_tt.full())
     res_vec = b - u_full
     residual = np.linalg.norm(res_vec) / np.linalg.norm(b)
     
@@ -169,7 +169,7 @@ def solve_heat_equation_qtt(
         verbose=False,
     ).round(eps=eps, rmax=max_rank)
 
-    rel_residual = ((L_qtt @ u_tt - b_qtt).norm() / b_qtt.norm()).numpy().item()
+    rel_residual = (tn.to_numpy((L_qtt @ u_tt - b_qtt).norm() / b_qtt.norm()).item()
     
     if verbose:
         print(f"Solution ranks: {u_tt.R}")
@@ -186,17 +186,17 @@ if __name__ == "__main__":
     # Test with small grid
     print("\n--- Method 1: Dense → TT (16x16) ---")
     u1 = solve_heat_equation_2d(n=16, max_rank=8)
-    u1_full = u1.full().numpy()
+    u1_full = tn.to_numpy(u1.full())
     print(f"Solution range: [{u1_full.min():.4f}, {u1_full.max():.4f}]")
     
     print("\n--- Method 2: Pure QTT (4x4) ---")
     u2 = solve_heat_equation_qtt(n=4, mode_size=2, max_rank=8, nswp=4)
-    u2_full = u2.full().numpy()
+    u2_full = tn.to_numpy(u2.full())
     print(f"Solution range: [{u2_full.min():.4f}, {u2_full.max():.4f}]")
     
     print("\n--- Method 3: QTT with 4x4 stricter rank cap ---")
     u3 = solve_heat_equation_qtt(n=4, mode_size=2, max_rank=4, nswp=4)
-    u3_full = u3.full().numpy()
+    u3_full = tn.to_numpy(u3.full())
     print(f"Solution range: [{u3_full.min():.4f}, {u3_full.max():.4f}]")
     
     print("\nAll tests passed!")

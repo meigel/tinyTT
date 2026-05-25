@@ -40,9 +40,9 @@ class TestFastMult:
         a = tt.random([2, 3, 4], [1, 2, 2, 1])
         b = tt.random([2, 3, 4], [1, 2, 2, 1])
 
-        ref = a.full().numpy() * b.full().numpy()
+        ref = tn.to_numpy(a.full()) * tn.to_numpy(b.full())
         c = fast_hadamard(a, b)
-        np.testing.assert_allclose(c.full().numpy(), ref, atol=1e-8)
+        np.testing.assert_allclose(tn.to_numpy(c.full()), ref, atol=1e-8)
 
     @NEEDS_CLANG
     def test_fast_mv_ttm_tt(self):
@@ -51,8 +51,8 @@ class TestFastMult:
         b = tt.random([2, 3], [1, 2, 1])   # TT  vector shape [2,3]
 
         c = fast_mv(a, b)
-        ref = (a @ b).full().numpy()
-        np.testing.assert_allclose(c.full().numpy(), ref, atol=1e-10)
+        ref = tn.to_numpy((a @ b).full())
+        np.testing.assert_allclose(tn.to_numpy(c.full()), ref, atol=1e-10)
 
     @NEEDS_CLANG
     def test_fast_mm_ttm_ttm(self):
@@ -67,8 +67,8 @@ class TestFastMult:
         c = fast_mm(a, b)
         x = tt.random([2, 3], [1, 2, 1])
 
-        via_c = (c @ x).full().numpy()
-        via_seq = (a @ (b @ x)).full().numpy()
+        via_c = tn.to_numpy((c @ x).full())
+        via_seq = tn.to_numpy((a @ (b @ x)).full())
         np.testing.assert_allclose(via_c, via_seq, atol=1e-10)
 
     @NEEDS_CLANG
@@ -76,11 +76,11 @@ class TestFastMult:
         """Swapping two consecutive cores should preserve the tensor values
         (up to mode transposition for a 2-core TT)."""
         a = tt.random([2, 3], [1, 2, 1])
-        original_full = a.full().numpy()             # shape [2, 3]
+        original_full = tn.to_numpy(a.full())             # shape [2, 3]
 
         c0, c1 = swap_cores(a.cores[0], a.cores[1], 1e-12)
         b = tt.TT([c0, c1])
-        swapped_full = b.full().numpy()              # shape [3, 2]
+        swapped_full = tn.to_numpy(b.full())              # shape [3, 2]
 
         # For a 2-core TT the modes are swapped, so the transpose should
         # match the original up to SVD truncation.

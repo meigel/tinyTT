@@ -17,7 +17,7 @@ from tinytt.truncation import apply_truncation_rule
 
 def _scalar(val):
     if tn.is_tensor(val):
-        return float(val.numpy().item())
+        return float(tn.to_numpy(val).item())
     return float(val)
 
 
@@ -36,7 +36,7 @@ def _invert(x):
     try:
         return tn.linalg.solve(x, eye)
     except Exception:
-        inv_np = np.linalg.inv(x.numpy())
+        inv_np = np.linalg.inv(tn.to_numpy(x))
         return tn.tensor(inv_np, dtype=x.dtype, device=x.device)
 
 
@@ -376,8 +376,8 @@ def _amen_mm_python(
                     )
                 else:
                     r = rank_chop(
-                        s.numpy(),
-                        (norm_solution * eps / (d ** (0.5 if last else 1.5))).numpy(),
+                        tn.to_numpy(s),
+                        tn.to_numpy(norm_solution * eps / (d ** (0.5 if last else 1.5))),
                     )
                 r = min([r, tn.numel(s), rmax[k + 1]])
                 r = int(r)

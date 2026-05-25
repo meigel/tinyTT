@@ -1,5 +1,6 @@
 import numpy as np
 import tinytt as tt
+import tinytt._backend as tn
 
 rng = np.random.RandomState(10)
 N = [2, 2, 2]
@@ -21,7 +22,7 @@ x_als = tt.solvers.als_solve(
 
 
 def rel_residual(x):
-    return (A @ x - b).norm().numpy().item() / b.norm().numpy().item()
+    return tn.to_numpy((A @ x - b).norm()).item() / tn.to_numpy(b.norm()).item()
 
 
 print("initial residual:", rel_residual(tt.ones(N)))

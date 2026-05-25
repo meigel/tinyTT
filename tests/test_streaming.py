@@ -26,7 +26,7 @@ def test_streaming_tt_full_update():
     
     # Check approximation error
     diff = tt_stream.full() - A_full
-    error = tn.linalg.norm(diff).numpy() / tn.linalg.norm(A_full).numpy()
+    error = tn.to_numpy(tn.linalg.norm(diff)) / tn.to_numpy(tn.linalg.norm(A_full))
     print(f"Full update relative error: {error}")
     # Randomized error for exact rank match should be small, but maybe not 1e-10
     assert error < 1e-1
@@ -44,7 +44,7 @@ def test_streaming_tt_incremental_update():
     for i in range(shape[-1]):
         # Slice i along axis 2 (last axis)
         # We need to extract the slice as a 2D array [3, 4]
-        slice_data = A_full.numpy()[:, :, i]
+        slice_data = tn.to_numpy(A_full)[:, :, i]
         stt.update(slice_data, index=i, axis=-1)
     
     tt_stream = stt.finalize()
@@ -52,13 +52,13 @@ def test_streaming_tt_incremental_update():
     # Since A_full is random (rank 5), and we use rank 2, 
     # we expect some approximation error.
     diff = tt_stream.full() - A_full
-    error = tn.linalg.norm(diff).numpy() / tn.linalg.norm(A_full).numpy()
+    error = tn.to_numpy(tn.linalg.norm(diff)) / tn.to_numpy(tn.linalg.norm(A_full))
     print(f"Incremental update relative error: {error}")
     
     # Standard TT-SVD for comparison
     tt_svd = tt.TT(A_full, rmax=2)
     diff_svd = tt_svd.full() - A_full
-    error_svd = tn.linalg.norm(diff_svd).numpy() / tn.linalg.norm(A_full).numpy()
+    error_svd = tn.to_numpy(tn.linalg.norm(diff_svd)) / tn.to_numpy(tn.linalg.norm(A_full))
     print(f"SVD relative error: {error_svd}")
     
     # Randomized error should be comparable to SVD error

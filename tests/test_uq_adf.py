@@ -51,7 +51,7 @@ def _basis_vals(x, degree, basis):
 
 def _eval_tt_scalar(cores, y, basis):
     if tn.is_tensor(cores[0]):
-        cores = [c.numpy() for c in cores]
+        cores = [tn.to_numpy(c) for c in cores]
     val = np.asarray(cores[0][0, 0, :], dtype=float)
     for dim, yi in enumerate(y, start=1):
         core = cores[dim]
@@ -85,7 +85,7 @@ def test_uq_adf_constant_legendre():
         orthonormal=ORTHONORMAL,
     )
 
-    cores = [c.numpy() for c in res.cores]
+    cores = [tn.to_numpy(c) for c in res.cores]
     for _ in range(10):
         y = rng.uniform(-1.0, 1.0, size=M)
         pred = _eval_tt_scalar(cores, y, uq.PolynomBasis.Legendre)
@@ -119,7 +119,7 @@ def test_uq_adf_linear_legendre():
         orthonormal=ORTHONORMAL,
     )
 
-    cores = [c.numpy() for c in res.cores]
+    cores = [tn.to_numpy(c) for c in res.cores]
     errs = []
     for _ in range(30):
         y = rng.uniform(-1.0, 1.0, size=M)
@@ -155,7 +155,7 @@ def test_uq_adf_linear_hermite():
         orthonormal=ORTHONORMAL,
     )
 
-    cores = [c.numpy() for c in res.cores]
+    cores = [tn.to_numpy(c) for c in res.cores]
     eval_samples = [rng.normal(0.0, 1.0, size=M) for _ in range(40)]
     mean_val = float(np.mean([f(y) for y in eval_samples]))
     errs = []
@@ -197,7 +197,7 @@ def test_uq_adf_noisy_measurements():
         orthonormal=ORTHONORMAL,
     )
 
-    cores = [c.numpy() for c in res.cores]
+    cores = [tn.to_numpy(c) for c in res.cores]
     errs = []
     for _ in range(20):
         y = rng.uniform(-1.0, 1.0, size=M)

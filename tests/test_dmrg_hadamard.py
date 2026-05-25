@@ -44,9 +44,9 @@ class TestDMRGHadamard:
         y = tt.random(shape, ranks)
 
         z = dmrg_hadamard(x, y, nswp=10, eps=1e-8, rmax=16)
-        z_ref = x.full().numpy() * y.full().numpy()
+        z_ref = tn.to_numpy(x.full()) * tn.to_numpy(y.full())
 
-        assert np.allclose(z.full().numpy(), z_ref, atol=1e-5), \
+        assert np.allclose(tn.to_numpy(z.full()), z_ref, atol=1e-5), \
             "DMRG Hadamard product does not match dense reference"
 
     @NEEDS_CLANG
@@ -55,7 +55,7 @@ class TestDMRGHadamard:
         x = tt.ones([2, 3])
 
         z = dmrg_hadamard(x, x, nswp=5, eps=1e-10, rmax=8)
-        result = z.full().numpy()
+        result = tn.to_numpy(z.full())
 
         assert np.allclose(result, 1.0, atol=1e-5), \
             "Hadamard of ones with itself should be all ones"

@@ -26,7 +26,7 @@ print("=" * 60)
 #   - M modes  = [2, 2] represent a 4-element output vector
 # Applied to a basis vector e_k (TT of shape 2×4) it extracts the k-th column.
 A = tt.random([(2, 2), (2, 4)], [1, 2, 1])
-A_full_mat = A.full().numpy().reshape(4, 8)
+A_full_mat = tn.to_numpy(A.full()).reshape(4, 8)
 print(f"  TTM shape: M={A.M}, N={A.N}")
 print(f"  Full matrix: {A_full_mat.shape}")
 print(f"  A @ e_0 = {A_full_mat[:, 0]}")
@@ -35,7 +35,7 @@ print(f"  A @ e_3 = {A_full_mat[:, 3]}")
 # Verify via TT matvec — extract e_3 and multiply
 e3 = tt.TT(np.eye(8, dtype=np.float64)[3, :].reshape(2, 4),
            shape=[2, 4], eps=1e-15)
-v3 = (A @ e3).full().numpy().ravel()
+v3 = tn.to_numpy((A @ e3).full()).ravel()
 print(f"  (A @ e3) via TT matvec:  {v3.round(4)}")
 print(f"  Match: {np.allclose(v3, A_full_mat[:, 3])}")
 print()
@@ -81,7 +81,7 @@ for step in range(500):
     lr_step = 0.05 * (0.8 ** (step // 80))
     for c in A_hat.cores:
         grad = c.grad
-        g_norm = float(tn.linalg.norm(grad.reshape(-1)).numpy())
+        g_norm = float(tn.to_numpy(tn.linalg.norm(grad.reshape(-1))))
         if g_norm > 1.0:
             grad = grad * (1.0 / g_norm)
         c.assign(c.detach() - lr_step * grad)
@@ -90,13 +90,13 @@ for step in range(500):
         c.grad = None
 
     if (step + 1) % 100 == 0:
-        mse = float(loss_val.numpy()) / (4 * 8)
-        rel_err = float((loss_val / (target ** 2).sum()).numpy()) ** 0.5
+        mse = float(tn.to_numpy(loss_val)) / (4 * 8)
+        rel_err = float((tn.to_numpy(loss_val / (target ** 2).sum())) ** 0.5
         print(f"    step {step + 1:3d}  MSE = {mse:.3e}  rel_err = {rel_err:.3e}")
 
 # Verify learned map
 print(f"\n  Learned columns vs truth (tolerance 1e-2):")
-A_learned = A_hat.full().numpy().reshape(4, 8)
+A_learned = tn.to_numpy(A_hat.full()).reshape(4, 8)
 ok = True
 for k_idx in range(n_in):
     v_pred = A_learned[:, k_idx]

@@ -25,7 +25,7 @@ from tinytt.regression import (
 
 
 def _np(t):
-    return t.numpy() if tn.is_tensor(t) else np.asarray(t)
+    return tn.to_numpy(t) if tn.is_tensor(t) else np.asarray(t)
 
 
 # ======================================================================
@@ -68,21 +68,21 @@ class TestContinuityFit:
         bases = [LegendreFeatures(degree=3)]
         core = tn.tensor(rng.randn(1, 4, 1).astype(np.float64))
         x = tn.tensor(np.linspace(-0.85, 0.85, 51)[:, None], dtype=tn.float64)
-        f_grad = tn.tensor((0.4 + 0.3 * x.numpy()[:, 0])[:, None], dtype=tn.float64)
+        f_grad = tn.tensor((0.4 + 0.3 * tn.to_numpy(x)[:, 0])[:, None], dtype=tn.float64)
 
         V_true = evaluate([core], bases, x)
         phi_grad = bases[0].grad(x[:, 0])
         state_grad = tn.einsum('bm,rmp->brp', phi_grad, core)
         dV_dx = state_grad[:, 0, 0]
-        y = f_grad.numpy()[:, 0] * V_true.numpy() + dV_dx.numpy()
+        y = tn.to_numpy(f_grad)[:, 0] * tn.to_numpy(V_true) + tn.to_numpy(dV_dx)
 
         fitted = als_continuity_fit(x, y, f_grad, bases, sweeps=8)
         pred_val = fitted(x)
-        pred_res = (f_grad.numpy()[:, 0] * pred_val + fitted.divergence(x))
+        pred_res = (tn.to_numpy(f_grad)[:, 0] * pred_val + fitted.divergence(x))
 
         assert isinstance(fitted, ContinuityFitResult)
-        rel_err_v = np.linalg.norm(pred_val - V_true.numpy()) / (
-            np.linalg.norm(V_true.numpy()) + 1e-12)
+        rel_err_v = np.linalg.norm(pred_val - tn.to_numpy(V_true)) / (
+            np.linalg.norm(tn.to_numpy(V_true)) + 1e-12)
         rel_err_r = np.linalg.norm(pred_res - y) / (
             np.linalg.norm(y) + 1e-12)
         assert rel_err_v < 5e-3, f"V recovery: {rel_err_v}"
@@ -98,18 +98,18 @@ class TestContinuityFit:
                               np.linspace(-0.7, 0.7, 8), indexing='ij')
         x = tn.tensor(np.column_stack([x0.ravel(), x1.ravel()]), dtype=tn.float64)
         f_grad = tn.tensor(np.column_stack([
-            0.4 + 0.2 * x.numpy()[:, 0],
-            -0.3 + 0.1 * x.numpy()[:, 1],
+            0.4 + 0.2 * tn.to_numpy(x)[:, 0],
+            -0.3 + 0.1 * tn.to_numpy(x)[:, 1],
         ]), dtype=tn.float64)
 
         # Target: <F_grad, V> + div(V) computed analytically
         V = evaluate([c0, c1], bases, x)
         div_V = divergence_fn([c0, c1], bases, x)
-        y = (f_grad.numpy() * V.numpy()).sum(axis=1) + div_V.numpy()
+        y = (tn.to_numpy(f_grad) * tn.to_numpy(V)).sum(axis=1) + tn.to_numpy(div_V)
 
         fitted = als_continuity_fit(x, y, f_grad, bases, ranks=[1], sweeps=12)
         pred_val = fitted(x)
-        pred_res = (f_grad.numpy() * pred_val).sum(axis=1) + fitted.divergence(x)
+        pred_res = (tn.to_numpy(f_grad) * pred_val).sum(axis=1) + fitted.divergence(x)
 
         assert pred_val.shape == (x.shape[0], 2)
         rel_err = np.linalg.norm(pred_res - y) / (np.linalg.norm(y) + 1e-12)
@@ -127,14 +127,14 @@ class TestContinuityFit:
         phi_grad = bases[0].grad(x[:, 0])
         state_grad = tn.einsum('bm,rmp->brp', phi_grad, core)
         dV_dx = state_grad[:, 0, 0]
-        y = 0.5 * V_true.numpy().ravel() + dV_dx.numpy()
+        y = 0.5 * tn.to_numpy(V_true).ravel() + tn.to_numpy(dV_dx)
 
         fitted = als_continuity_fit(x, y, f_grad, bases, sweeps=10)
 
         # In 1D, div(V) = dV/dx. Verify.
         pred_val = fitted(x)
         # Finite-difference check
-        dx = x.numpy()[1, 0] - x.numpy()[0, 0]
+        dx = tn.to_numpy(x)[1, 0] - tn.to_numpy(x)[0, 0]
         fd_div = np.gradient(pred_val, dx)
         fit_div = fitted.divergence(x)
         rel_err = np.linalg.norm(fd_div - fit_div) / (np.linalg.norm(fd_div) + 1e-12)
@@ -146,7 +146,7 @@ class TestContinuityFit:
         rng = np.random.RandomState(0)
         x = tn.tensor(np.linspace(-0.5, 0.5, 10)[:, None], dtype=tn.float64)
         f_grad = tn.tensor(np.ones((10, 1)), dtype=tn.float64)
-        y = tn.tensor(np.sin(x.numpy()[:, 0]), dtype=tn.float64)
+        y = tn.tensor(np.sin(tn.to_numpy(x)[:, 0]), dtype=tn.float64)
 
         fitted = als_continuity_fit(x, y, f_grad, bases, sweeps=2)
         assert hasattr(fitted, 'cores')
@@ -165,10 +165,10 @@ class TestContinuityFit:
         f_grad_np = np.ones((20, 1))
 
         # Build target using numpy
-        phi_np = bases[0](x_np[:, 0]).numpy()
+        phi_np = tn.to_numpy(bases[0](x_np[:, 0]))
         V_np = (phi_np @ core_np.reshape(-1))  # shape (20,)
         # Grad of Legendre basis
-        phi_grad_np = bases[0].grad(x_np[:, 0]).numpy()
+        phi_grad_np = tn.to_numpy(bases[0].grad(x_np[:, 0]))
         dV_dx_np = (phi_grad_np @ core_np.reshape(-1))
         y_np = f_grad_np[:, 0] * V_np + dV_dx_np
 

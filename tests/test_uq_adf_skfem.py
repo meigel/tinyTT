@@ -21,7 +21,7 @@ def _legendre_vals(x, degree):
 
 
 def _eval_tt(cores, y):
-    cores_np = [c.numpy() if tn.is_tensor(c) else c for c in cores]
+    cores_np = [tn.to_numpy(c) if tn.is_tensor(c) else c for c in cores]
     val = np.asarray(cores_np[0][0, :, :], dtype=float)
     for dim, yi in enumerate(y, start=1):
         core = cores_np[dim]
@@ -178,7 +178,7 @@ def test_uq_adf_darcy_log_normal_skfem():
         callback=_callback,
     )
 
-    cores = [c.numpy() for c in tt.cores]
+    cores = [tn.to_numpy(c) for c in tt.cores]
     print(f"[uq_adf_skfem] training finished, elapsed {time.monotonic() - start:.1f}s")
     train_errs = []
     for yvec, ref in train[:5]:

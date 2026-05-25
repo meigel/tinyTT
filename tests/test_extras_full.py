@@ -45,8 +45,8 @@ class TestExtrasFull:
         Xs = tt.meshgrid([v0, v1])
         assert len(Xs) == 2
         np_X, np_Y = np.meshgrid([1, 2, 3], [10, 20], indexing='ij')
-        np.testing.assert_allclose(Xs[0].full().numpy(), np_X, atol=1e-12)
-        np.testing.assert_allclose(Xs[1].full().numpy(), np_Y, atol=1e-12)
+        np.testing.assert_allclose(tn.to_numpy(Xs[0].full()), np_X, atol=1e-12)
+        np.testing.assert_allclose(tn.to_numpy(Xs[1].full()), np_Y, atol=1e-12)
 
     def test_diag_tt_to_ttm(self):
         """Diagonal of TT vector produces TTM with matching M,N and d@x == x²."""
@@ -55,8 +55,8 @@ class TestExtrasFull:
         assert d.is_ttm is True
         assert d.N == [3, 4]
         assert d.M == [3, 4]
-        y = (d @ x).full().numpy()
-        expected = x.full().numpy() ** 2
+        y = tn.to_numpy((d @ x).full())
+        expected = tn.to_numpy(x.full()) ** 2
         np.testing.assert_allclose(y, expected, atol=1e-12)
 
     def test_diag_ttm_to_tt(self):
@@ -64,7 +64,7 @@ class TestExtrasFull:
         d = tt.diag(tt.eye([3, 4]))
         assert d.is_ttm is False
         assert d.N == [3, 4]
-        np.testing.assert_allclose(d.full().numpy(), np.ones((3, 4)), atol=1e-12)
+        np.testing.assert_allclose(tn.to_numpy(d.full()), np.ones((3, 4)), atol=1e-12)
 
     @NEEDS_CLANG
     def test_permute_simple(self):
@@ -73,7 +73,7 @@ class TestExtrasFull:
         t = tt.TT(full, eps=1e-12)
         p = tt.permute(t, [2, 0, 1])
         expected = np.transpose(full, [2, 0, 1])
-        np.testing.assert_allclose(p.full().numpy(), expected, atol=1e-10)
+        np.testing.assert_allclose(tn.to_numpy(p.full()), expected, atol=1e-10)
 
     @NEEDS_CLANG
     def test_cat_simple(self):
@@ -81,8 +81,8 @@ class TestExtrasFull:
         a = tt.ones([2, 3])
         b = tt.ones([4, 3])
         c = tt.cat([a, b], dim=0)
-        assert c.full().numpy().shape == (6, 3)
-        np.testing.assert_allclose(c.full().numpy(), np.ones((6, 3)), atol=1e-12)
+        assert tn.to_numpy(c.full()).shape == (6, 3)
+        np.testing.assert_allclose(tn.to_numpy(c.full()), np.ones((6, 3)), atol=1e-12)
 
     @NEEDS_CLANG
     def test_pad_simple(self):
@@ -92,7 +92,7 @@ class TestExtrasFull:
         expected = np.pad(
             np.ones((2, 3)), [(1, 1), (0, 0)], mode='constant', constant_values=0.0
         )
-        np.testing.assert_allclose(p.full().numpy(), expected, atol=1e-12)
+        np.testing.assert_allclose(tn.to_numpy(p.full()), expected, atol=1e-12)
 
     def test_rank1tt(self):
         """Create rank-1 TT from vectors (outer product)."""
@@ -101,7 +101,7 @@ class TestExtrasFull:
         assert t.N == [3, 5]
         assert t.R == [1, 1, 1]
         expected = np.outer([1., 2., 3.], [4., 5., 6., 7., 8.])
-        np.testing.assert_allclose(t.full().numpy(), expected, atol=1e-12)
+        np.testing.assert_allclose(tn.to_numpy(t.full()), expected, atol=1e-12)
 
     def test_numel(self):
         """Count storage elements (sum of per-core elements) in a TT tensor."""

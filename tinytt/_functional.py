@@ -16,7 +16,7 @@ import tinytt._backend as tn
 def _as_numpy(x):
     """Convert a tinygrad tensor (or any array-like) to a NumPy array."""
     if hasattr(x, 'numpy'):
-        x = x.numpy()
+        x = tn.to_numpy(x)
     return np.asarray(x, dtype=np.float64)
 
 
@@ -109,7 +109,7 @@ def legendre_features(X, degree: int, orthonormal: bool = True, device=None, dty
     if dtype is None:
         dtype = tn.float64
     if tn.is_tensor(X):
-        X_np = X.numpy()
+        X_np = tn.to_numpy(X)
     else:
         X_np = np.asarray(X, dtype=np.float64)
 
@@ -149,7 +149,7 @@ def hermite_features(X, degree: int, orthonormal: bool = True, device=None, dtyp
     if dtype is None:
         dtype = tn.float64
     if tn.is_tensor(X):
-        X_np = X.numpy()
+        X_np = tn.to_numpy(X)
     else:
         X_np = np.asarray(X, dtype=np.float64)
 
@@ -390,7 +390,7 @@ class HermiteFeatures:
         Tensor of shape ``(m, n_features)``.
         """
         vals = self.__call__(x)
-        vals_np = vals.numpy() if tn.is_tensor(vals) else np.asarray(vals)
+        vals_np = tn.to_numpy(vals) if tn.is_tensor(vals) else np.asarray(vals)
         nb = self.n_features
         dP = np.zeros_like(vals_np)
         for n in range(1, nb):
@@ -413,7 +413,7 @@ class HermiteFeatures:
         Tensor of shape ``(m, n_features)``.
         """
         vals = self.__call__(x)
-        vals_np = vals.numpy() if tn.is_tensor(vals) else np.asarray(vals)
+        vals_np = tn.to_numpy(vals) if tn.is_tensor(vals) else np.asarray(vals)
         nb = self.n_features
         ddP = np.zeros_like(vals_np)
         for n in range(2, nb):

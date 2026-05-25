@@ -84,10 +84,10 @@ def test_uq_adf_darcy_fast():
     print(f"  [{time.perf_counter()-t0:.0f}s] UQ-ADF done, ranks: {res.R}")
 
     # ---- evaluation ----
-    cores = [c.numpy() for c in res.cores]
+    cores = [tn.to_numpy(c) for c in res.cores]
     train_errs = []
     for yvec, ref in zip(meas.randomVectors[:5], meas.solutions[:5]):
-        ref_np = ref.numpy() if hasattr(ref, 'numpy') else ref
+        ref_np = tn.to_numpy(ref) if hasattr(ref, 'numpy') else ref
         val = np.asarray(cores[0][0, :, :], dtype=float)
         for dim, yi in enumerate(yvec, start=1):
             basis_vals = np.array([np.polynomial.legendre.legval(yi, [0]*k+[1]) for k in range(cores[dim].shape[1])])

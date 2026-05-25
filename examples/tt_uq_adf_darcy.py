@@ -23,6 +23,7 @@ import numpy as np
 
 from tinytt._backend import float64, tensor
 from tinytt import uq_adf as uq
+import tinytt._backend as tn
 
 # ---------------------------------------------------------------------------
 # FEM solver for one parametric sample
@@ -177,7 +178,7 @@ print(f"  Core shapes:    {[c.shape for c in res.cores]}", flush=True)
 # ---------------------------------------------------------------------------
 def eval_tt(cores, y):
     """Evaluate the TT surrogate at a single parameter point y."""
-    cores_np = [c.numpy() if hasattr(c, 'numpy') else c for c in cores]
+    cores_np = [tn.to_numpy(c) if hasattr(c, 'numpy') else c for c in cores]
     val = np.asarray(cores_np[0][0, :, :], dtype=float)   # (289, r1)
     for dim, yi in enumerate(y, start=1):
         core = cores_np[dim]                                 # (r, poly_dim, r')
@@ -191,12 +192,12 @@ def eval_tt(cores, y):
 
 
 print(f"\n  Evaluating surrogate accuracy ...", flush=True)
-cores = [c.numpy() for c in res.cores]
+cores = [tn.to_numpy(c) for c in res.cores]
 
 # Training error (first 5)
 train_errs = []
 for yvec, ref in zip(meas.randomVectors[:5], meas.solutions[:5]):
-    ref_np = ref.numpy() if hasattr(ref, 'numpy') else ref
+    ref_np = tn.to_numpy(ref) if hasattr(ref, 'numpy') else ref
     pred = eval_tt(cores, yvec)
     train_errs.append(np.linalg.norm(pred - ref_np) / np.linalg.norm(ref_np))
 print(f"    Training rel_err (avg of 5): {float(np.mean(train_errs)):.3e}", flush=True)

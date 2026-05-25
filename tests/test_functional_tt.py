@@ -23,7 +23,7 @@ from tinytt.functional_tt import FunctionalTT, random_ftt
 # ======================================================================
 
 def _np(t):
-    return t.numpy() if tn.is_tensor(t) else np.asarray(t)
+    return tn.to_numpy(t) if tn.is_tensor(t) else np.asarray(t)
 
 
 def _make_random_ftt_cores(d, ns, ranks, seed=0, scale=0.5):

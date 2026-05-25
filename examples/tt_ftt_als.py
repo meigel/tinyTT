@@ -60,7 +60,7 @@ X_test = np.linspace(-1, 1, 200, dtype=np.float64).reshape(-1, 1)
 Y_true = np.sin(2 * np.pi * X_test.ravel()).astype(np.float64)
 
 cores_t = [tn.tensor(c) for c in result.cores]
-Y_pred = evaluate(cores_t, bases, tn.tensor(X_test)).numpy().ravel()
+Y_pred = tn.to_numpy(evaluate(cores_t, bases, tn.tensor(X_test))).ravel()
 
 rel_err = float(np.linalg.norm(Y_pred - Y_true)) / float(np.linalg.norm(Y_true))
 print(f"  Test rel_error: {rel_err:.2e}")
@@ -81,7 +81,7 @@ result2 = als_regression(
 print(f"\n  Final MSE: {result2.loss_history[-1]:.2e}")
 
 cores_t2 = [tn.tensor(c) for c in result2.cores]
-Y_pred2 = evaluate(cores_t2, bases, tn.tensor(X_test)).numpy()
+Y_pred2 = tn.to_numpy(evaluate(cores_t2, bases, tn.tensor(X_test)))
 
 Y_true2 = np.column_stack([
     np.sin(2 * np.pi * X_test.ravel()),

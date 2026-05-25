@@ -56,7 +56,7 @@ y = f(x)
 
 # Manual reference: T2 @ (T1 @ x)
 y_ref = T2 @ (T1 @ x)
-err = float((y - y_ref).norm().numpy()) / float(y_ref.norm().numpy())
+err = float(tn.to_numpy((y - y_ref).norm())) / float(tn.to_numpy(y_ref.norm()))
 print(f"\n  Forward error (vs manual compose): {err:.2e}")
 
 # -----------------------------------------------------------------------

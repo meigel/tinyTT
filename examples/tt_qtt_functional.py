@@ -11,6 +11,7 @@ Usage:  PYTHONPATH=. python examples/tt_qtt_functional.py
 
 import numpy as np
 import tinytt as tt
+import tinytt._backend as tn
 
 
 print("=" * 60)
@@ -32,7 +33,7 @@ print(f"  Target function on {n}×{n} grid")
 # ---------------------------------------------------------------------------
 t_full = tt.TT(F, eps=1e-8)
 print(f"  Standard TT ranks:       {t_full.R}")
-recon = t_full.full().numpy()
+recon = tn.to_numpy(t_full.full())
 rel_err_tt = np.linalg.norm(recon - F) / np.linalg.norm(F)
 print(f"  TT reconstruction rel_err: {rel_err_tt:.3e}")
 
@@ -45,7 +46,7 @@ print(f"  QTT ranks (mode_size={mode_size}): {t_qtt.R}")
 
 # Reconstruct via qtt_to_tens
 t_qtt_back = t_qtt.qtt_to_tens([n, n])
-recon_qtt = t_qtt_back.full().numpy()
+recon_qtt = tn.to_numpy(t_qtt_back.full())
 rel_err_qtt = np.linalg.norm(recon_qtt - F) / np.linalg.norm(F)
 print(f"  QTT reconstruction rel_err: {rel_err_qtt:.3e}")
 
@@ -55,7 +56,7 @@ print(f"  QTT reconstruction rel_err: {rel_err_qtt:.3e}")
 for eps in [1e-3, 1e-6]:
     t_qtt_rounded = t_qtt.round(eps=eps)
     t_back = t_qtt_rounded.qtt_to_tens([n, n])
-    recon_rnd = t_back.full().numpy()
+    recon_rnd = tn.to_numpy(t_back.full())
     rel = np.linalg.norm(recon_rnd - F) / np.linalg.norm(F)
     print(f"  QTT round eps={eps:.0e}:  ranks={t_qtt_rounded.R}  rel_err={rel:.3e}")
 
@@ -78,7 +79,7 @@ print(f"  Vector QTT ranks:       {t_vec_qtt.R}")
 # Verify roundtrip
 # qtt_to_tens needs the full original shape (including output dim)
 t_vec_back = t_vec_qtt.qtt_to_tens([n, n, 2])
-recon_vec = t_vec_back.full().numpy()
+recon_vec = tn.to_numpy(t_vec_back.full())
 rel_err_vec = np.linalg.norm(recon_vec - F_vec) / np.linalg.norm(F_vec)
 print(f"  Vector QTT rel_err:     {rel_err_vec:.3e}")
 
