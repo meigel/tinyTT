@@ -562,6 +562,8 @@ class TestHighDimRegression:
     The target is a ``f: R⁴ → R²`` with one quadratic cross‑term (x₀·x₁)
     and one quadratic self‑term (x₃²), plus linear terms.  This provides
     a non‑trivial test of the {1, x} basis and Adam training.
+
+    The relative RMSE must be < 1% (paper‑quality regression).
     """
 
     def _target_fn(self, x):
@@ -579,10 +581,9 @@ class TestHighDimRegression:
         return basis_fn
 
     def test_vector_valued_regression(self):
-        """Train a CTT (2 layers, 6‑dim lift) on 300 samples of f: R⁴ → R².
+        """Train 2‑layer CTT on 500 samples of f: R⁴ → R².
 
-        Expects the test MSE to drop well below the initial value after
-        ~800 Adam steps.
+        The best relative RMSE over 2000 Adam steps must be < 1 %.
         """
         from tinygrad import Tensor
         from tinygrad.nn.optim import Adam
@@ -590,7 +591,7 @@ class TestHighDimRegression:
         Tensor.training = True
 
         d, do, p = 4, 2, 6
-        n_train, n_test = 300, 200
+        n_train, n_test = 500, 300
 
         # ── training data ──
         rng = np.random.default_rng(42)
@@ -604,13 +605,15 @@ class TestHighDimRegression:
         x_test = tn.tensor(x_te_np)
         y_test = tn.tensor(y_te_np)
 
+        y_std = y_te_np.std()  # for relative error
+
         basis_fn = self._make_basis()
         model = random_ctt(
             width=p, n_layers=2,
             basis_fn=basis_fn,
             lift=pad_lift(d=d, p=p),
             retraction=projection_retraction(do),
-            ranks=[3] * p,
+            ranks=[5] * p,
             basis_size=2,
             seed=123,
         )
@@ -620,16 +623,16 @@ class TestHighDimRegression:
             ((model.forward(x_test) - y_test) ** 2).mean()
         ))
 
-        optimizer = Adam(model.params, lr=0.008)
+        optimizer = Adam(model.params, lr=0.005)
 
         best_test = float("inf")
-        for step in range(1000):
+        for step in range(2000):
             y_pred = model.forward(x_train)
             loss = ((y_pred - y_train) ** 2).mean()
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            if step % 200 == 0:
+            if step % 400 == 0 or step == 1999:
                 tv = float(tn.to_numpy(
                     ((model.forward(x_test) - y_test) ** 2).mean()
                 ))
@@ -643,15 +646,15 @@ class TestHighDimRegression:
         ))
         best_test = min(best_test, final_test)
 
+        best_rel = np.sqrt(best_test) / y_std
+
         # ── assertions ──
-        # 1. train loss must have dropped substantially
+        # 1. relative error < 1%
+        assert best_rel < 0.01, \
+            f"Best relative RMSE too high: {best_rel*100:.3f}% (target <1%)"
+        # 2. train loss must have dropped substantially
         assert final_train < initial * 0.5, \
             f"Train loss did not reduce: {initial:.4f} → {final_train:.4f}"
-        # 2. absolute thresholds
-        assert final_train < 0.25, \
-            f"Final train loss too high: {final_train:.6f}"
-        assert best_test < 0.35, \
-            f"Test loss too high (best={best_test:.4f})"
         # 3. not catastrophic overfit
         ratio = final_test / max(final_train, 1e-12)
         assert ratio < 5.0, \
