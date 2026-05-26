@@ -40,17 +40,45 @@ from tinytt.functional_tt import FunctionalTT, random_ftt
 # ======================================================================
 
 class CTTLayer:
-    """Single CTT layer ``y ← y + ψ(y)``.
+    """Single CTT residual layer :math:`y \\leftarrow y + \\psi(y)`.
 
-    The map ``ψ`` is a :class:`~tinytt.FunctionalTT` with output dimension
-    equal to its number of feature dimensions (the *width* ``p``).  This
-    enforces that ``ψ`` maps :math:`\\mathbb{R}^p \\to \\mathbb{R}^p`.
+    The map :math:`\\psi : \\mathbb{R}^p \\to \\mathbb{R}^p` is a **functional
+    tensor** stored in the TT format.  For a state :math:`y \\in \\mathbb{R}^p`
+    and a univariate basis :math:`\\Phi = \\{\\phi_1, \\dots, \\phi_n\\}`,
+
+    .. math::
+
+        \\psi(y)_j = \\sum_{i_1,\\dots,i_p} \\psi(j,i_1,\\dots,i_p)
+                     \\phi_{i_1}(y_1)\\,\\cdots\\,\\phi_{i_p}(y_p),
+
+    where :math:`\\psi(j,i_1,\\dots,i_p)` is the coefficient tensor in TT
+    format with **p+1** modes:
+
+    .. math::
+
+        \\psi(j,i_1,\\dots,i_p) =
+        G_1[j,:]\\,G_2[:,i_1,:]\\,G_3[:,i_2,:]\\,\\cdots\\,G_{p+1}[:,i_p,:].
+
+    The TT cores :math:`G_1,\\dots,G_{p+1}` follow the
+    :class:`~tinytt.FunctionalTT` convention:
+
+    +------------+---------------------+----------------------------------+
+    | Core       | Shape               | Maps                             |
+    +============+=====================+==================================+
+    | ``G₁``     | ``(1, p, r₁)``      | output index ``j``               |
+    +------------+---------------------+----------------------------------+
+    | ``G_{k+1}``| ``(r_k, n, r_{k+1})``| state coordinate ``y_k`` (k≥1)   |
+    +------------+---------------------+----------------------------------+
+    | ``G_{p+1}``| ``(r_p, n, 1)``     | last state coordinate ``y_p``    |
+    +------------+---------------------+----------------------------------+
+
+    The output dimension ``p`` and the number of feature dimensions ``d`` of
+    the underlying :class:`~tinytt.FunctionalTT` must be equal (``n0 = d = p``).
 
     Parameters
     ----------
     psi : FunctionalTT
-        Must satisfy ``psi.n0 == psi.d`` (output dim == number of feature
-        dimensions).  This common value is the *width* ``p``.
+        The functional tensor :math:`\\psi`.  Must satisfy ``psi.n0 == psi.d``.
     """
 
     def __init__(self, psi: FunctionalTT):
@@ -190,11 +218,32 @@ class CTTLayer:
 # ======================================================================
 
 class CompositionalTT:
-    """Compositional Tensor Train.
+    """Compositional Tensor Train — :math:`v(x) = R \\circ (\\operatorname{Id} + \\psi_L) \\circ \\cdots
+    \\circ (\\operatorname{Id} + \\psi_1) \\circ L(x)`.
+
+    Represents a function :math:`v: \\mathbb{R}^d \\to \\mathbb{R}^{d_o}` as
+    the composition of :math:`L` residual layers sandwiching a *lift* and
+    a *retraction* (Definition 3.1, arXiv:2512.18059):
+
+    1. **Lift** :math:`L: \\mathbb{R}^d \\to \\mathbb{R}^p` embeds the
+       low‑dimensional input into the *lifted space* of width :math:`p \\ge d`.
+    2. Each layer applies :math:`y \\leftarrow y + \\psi_\\ell(y)` where
+       :math:`\\psi_\\ell: \\mathbb{R}^p \\to \\mathbb{R}^p` is a functional
+       tensor in TT format evaluated with the **shared univariate basis**
+       :math:`\\Phi = \\{\\phi_1,\\dots,\\phi_n\\}`.
+    3. **Retraction** :math:`R: \\mathbb{R}^p \\to \\mathbb{R}^{d_o}` projects
+       the final state to the output space.
+
+    The sequence can be written as the discrete-time flow
 
     .. math::
-        v(x) = R \\circ (\\operatorname{Id} + \\psi_L) \\circ \\cdots
-               \\circ (\\operatorname{Id} + \\psi_1) \\circ L(x)
+        y_0 = L(x), \\qquad
+        y_{k+1} = y_k + \\psi_{k+1}(y_k), \\quad
+        v(x) = R(y_L).
+
+    This is a residual (ODE‑inspired) architecture: each layer learns a
+    *change* to the state rather than a full transformation, which
+    facilitates gradient flow during training.
 
     Parameters
     ----------

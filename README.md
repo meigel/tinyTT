@@ -31,7 +31,7 @@ separated module:
 |---|---|---|
 | **TT** | `tinytt/` (core) | Standard TT-tensor / TT-matrix with full solver suite |
 | **QTT** | `TT.to_qtt()` | Quantized TT for high-dimensional problems |
-| **CTT (Compositional TT)** | `tinytt/compositional.py` | Deep composition of multiple TT-matrix layers |
+| **CTT (Compositional TT)** | `tinytt/compositional.py` | Residual functional-TT composition with lift & retraction (arXiv:2512.18059) |
 | **FTT** | `tinytt/functional_tt.py` | Functional TT: basis-driven regression model |
 | **Streaming TT** | `tinytt/streaming.py` | One-pass randomised TT (STTA) for streaming data |
 
@@ -110,23 +110,75 @@ operator compression.  Sparse FEM scaling for parametric Darcy does not require
 QTT as the first step: use sparse FEM matrices for the physical solves, then
 fit the parametric map with UQ-ADF or TT surrogates.
 
-### 5. CTT (Compositional TT)
+### 5. CTT (Compositional TT — residual functional-TT architecture)
 
-Chains multiple TT-matrix layers as ``f(x) = (T_L ∘ … ∘ T_1)(x)`` — a deep
-TT analogous to a neural network where each weight matrix is a TT-matrix.
+Defined in [arXiv:2512.18059](https://arxiv.org/abs/2512.18059), a CTT
+represents a function as a composition of **residual functional-TT layers**:
+
+$$v(x) = R \circ (\operatorname{Id} + \psi_L) \circ \cdots
+         \circ (\operatorname{Id} + \psi_1) \circ L(x)$$
+
+where:
+
+- **Lift** $L: \mathbb{R}^d \to \mathbb{R}^p$ embeds the input in a
+  lifted space of width $p \ge d$.
+- Each layer applies $y \leftarrow y + \psi_\ell(y)$, where
+  $\psi_\ell$ is a *functional tensor* in TT format evaluated via a
+  **univariate basis** $\Phi = \{\phi_1,\dots,\phi_n\}$:
+
+  $$\psi_\ell(y)_j =
+    \sum_{i_1,\dots,i_p} \psi_\ell(j,i_1,\dots,i_p)
+    \phi_{i_1}(y_1)\cdots\phi_{i_p}(y_p).$$
+
+- **Retraction** $R: \mathbb{R}^p \to \mathbb{R}^{d_o}$ projects the
+  final state to the output.
+
+The $\psi$ coefficient tensors are stored in TT format with
+$p+1$ cores (output mode + $p$ feature modes).  Shared basis
+$\Phi$ across all layers enables efficient polynomial representations.
 
 ```python
-from tinytt.compositional import CompositionalTT
+from tinytt.compositional import (
+    CTTLayer, CompositionalTT, random_ctt,
+    pad_lift, prepend_lift,
+    projection_retraction, first_coord_retraction,
+)
+from tinytt._functional import LegendreFeatures
 
-# Compose two TTMs: 16 → 8 → 16
-f = CompositionalTT([T1, T2])
-y = f(x)                     # forward pass
-outs = f.layer_outputs(x)    # all intermediate representations
+# Basis: Φ(x) = [1, x] (affine)
+basis = LegendreFeatures(degree=1)
+
+# Build a 2-layer CTT: R⁴ → R³ (lift width p=6)
+d, do, p = 4, 3, 6
+lift = pad_lift(d, p)
+retraction = projection_retraction(do)
+
+f = random_ctt(width=p, n_layers=2, basis_fn=basis,
+               lift=lift, retraction=retraction,
+               ranks=[4]*p, basis_size=2)
+
+y = f(x)                     # forward pass, shape (..., do)
+outs = f.layer_outputs(x)    # [x, L(x), h1, h2, R(h2)]
+
+# Gradient tracking and training
+f.watch()
+optimizer = Adam(f.params, lr=0.01)
+# ... training loop: forward → loss.backward() → optimizer.step()
+
+# TT‑SVD compression (Section 3.5)
+f_compressed = f.round(eps=0.1)   # reduces ranks with bounded error
+
+# Clone, transfer, detach
+g = f.clone()
+f.to("CPU")
+f.detach()
 ```
 
-Supports ``.clone()``, ``.to(device)``, ``.round(eps)``, and
-``.detach()``.  Each layer is a ``TT`` instance and can be accessed
-individually via ``f.layers[i]``.
+Key differences from the older "stack-of-TT-matrices" approach:
+- **Residual** connection ``y + ψ(y)`` (not ``T @ y``) — ODE-flow inspired
+- **Functional basis** Φ enables polynomial/trigonometric feature maps
+- **Explicit lift/retraction** decouple input/output dimensions from width
+- **Fixed width p** across all layers simplifies the architecture
 
 Example: `examples/tt_compositional.py`
 
@@ -255,6 +307,7 @@ tinytt/                    # main library
 ├── _linesearch.py         # Armijo line search
 ├── _functional.py         # Legendre/Hermite/Monomial basis functions
 ├── functional_tt.py       # FunctionalTT class
+├── compositional.py       # CompositionalTT + CTTLayer (residual CTT)
 ├── regression.py          # ALS regression + continuity fit
 ├── uq_adf.py              # UQ-ADF surrogate construction
 ├── interpolate.py         # TT-cross, maxvol
