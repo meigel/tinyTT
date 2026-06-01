@@ -8,6 +8,7 @@ Tests the CTT architecture:
 
 from __future__ import annotations
 
+import os
 import sys
 import numpy as np
 import pytest
@@ -25,6 +26,12 @@ from tinytt.compositional import (
 )
 from tinytt.functional_tt import FunctionalTT, random_ftt
 from tinytt.errors import InvalidArguments, ShapeMismatch
+
+# Skip tests that import from tinygrad directly when using a different backend
+_needs_tinygrad = pytest.mark.skipif(
+    "tinygrad" not in os.environ.get("TINYTT_BACKEND", "tinygrad"),
+    reason="Test requires tinygrad backend (imports tinygrad.nn.optim)"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +132,7 @@ class TestCTTLayer:
     def test_to(self):
         layer = CTTLayer(_zero_psi(width=2))
         layer.to("CPU")
-        assert layer.psi.cores[0].device == "CPU"
+        assert str(layer.psi.cores[0].device).lower() == "cpu"
 
     def test_validation(self):
         with pytest.raises(InvalidArguments):
@@ -397,6 +404,7 @@ class TestAutograd:
 # Adam training test
 # =========================================================================
 
+@_needs_tinygrad
 class TestAdamTraining:
     """End‑to‑end training of a CompositionalTT with Adam."""
 
@@ -559,6 +567,7 @@ class TestCompression:
 # High‑dimensional vector‑valued regression test
 # =========================================================================
 
+@_needs_tinygrad
 class TestHighDimRegression:
     """Train a CompositionalTT to regress a vector‑valued polynomial.
 

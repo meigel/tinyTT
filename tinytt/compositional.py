@@ -154,7 +154,8 @@ class CTTLayer:
 
     def to(self, device: str) -> CTTLayer:
         """Move all cores to *device*."""
-        self._psi.cores = [c.to(device) for c in self._psi.cores]
+        mapped = tn.map_device(device)
+        self._psi.cores = [c.to(mapped) for c in self._psi.cores]
         return self
 
     def detach(self) -> CTTLayer:

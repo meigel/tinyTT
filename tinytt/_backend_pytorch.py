@@ -62,11 +62,41 @@ __all__ = [
     "realize",
     "linalg",
     "tnf",
+    "dtypes",
+    "map_device",
 ]
 
 Tensor = torch.Tensor
 float32 = torch.float32
 float64 = torch.float64
+
+
+class _Dtypes:
+    """Dtype namespace matching tinygrad's dtypes interface."""
+    int64 = torch.int64
+    int32 = torch.int32
+    float32 = torch.float32
+    float64 = torch.float64
+
+
+dtypes = _Dtypes()
+
+# Polyfill tinygrad-style instance methods on torch.Tensor so code that
+# writes x.cat(y, dim=0) or x.stack(*ys, dim=0) or S.diag() works unchanged.
+if not hasattr(torch.Tensor, "cat"):
+    def _tensor_cat(self, *args, dim=0):
+        return torch.cat((self,) + args, dim=dim)
+    torch.Tensor.cat = _tensor_cat
+
+if not hasattr(torch.Tensor, "stack"):
+    def _tensor_stack(self, *args, dim=0):
+        return torch.stack((self,) + args, dim=dim)
+    torch.Tensor.stack = _tensor_stack
+
+if not hasattr(torch.Tensor, "diag"):
+    def _tensor_diag(self):
+        return torch.diag(self)
+    torch.Tensor.diag = _tensor_diag
 
 _FORCE_FP32 = os.getenv("TINYTT_FORCE_FP32", "0").lower() in ("1", "true", "yes")
 _FP64_SUPPORT_CACHE: dict[str, bool] = {}
@@ -111,6 +141,11 @@ def _is_cpu_device(device) -> bool:
         return True
     d = str(device).lower()
     return d.startswith("cpu") or d in ("clang", "llvm", "")
+
+
+def map_device(raw: str | None) -> str:
+    """Normalize a device string to PyTorch's expected format (lowercase)."""
+    return _map_device(raw)
 
 
 def supports_fp64(device=None) -> bool:

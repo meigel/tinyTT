@@ -57,6 +57,8 @@ class TT:
     def __init__(
         self, source, shape=None, eps=1e-10, rmax=sys.maxsize, device=None, dtype=None
     ):
+        if device is not None:
+            device = tn.map_device(device)
         if source is None:
             self.cores = []
             self.__M = []

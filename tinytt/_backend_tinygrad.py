@@ -26,6 +26,7 @@ __all__ = [
     "default_float_dtype",
     "default_device",
     "coerce_dtype",
+    "map_device",
     # tensor predicates
     "is_tensor",
     # tensor constructors
@@ -216,6 +217,11 @@ def _normalize_device(device):
 def _resolve_device(device):
     resolved = device if device is not None else default_device()
     return _normalize_device(resolved)
+
+
+def map_device(raw: str | None) -> str | None:
+    """Normalize a device string. For tinygrad, mostly passes through but lowercases GPU-relevant bits."""
+    return _normalize_device(raw) if raw else raw
 
 
 def is_tensor(x) -> bool:
