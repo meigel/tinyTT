@@ -98,6 +98,16 @@ if not hasattr(torch.Tensor, "diag"):
         return torch.diag(self)
     torch.Tensor.diag = _tensor_diag
 
+if not hasattr(torch.Tensor, "assign"):
+    def _tensor_assign(self, value):
+        self.data = value.data if isinstance(value, torch.Tensor) else value
+    torch.Tensor.assign = _tensor_assign
+
+if not hasattr(torch.Tensor, "manual_seed"):
+    def _tensor_manual_seed(seed: int):
+        torch.manual_seed(seed)
+    torch.Tensor.manual_seed = staticmethod(_tensor_manual_seed)
+
 _FORCE_FP32 = os.getenv("TINYTT_FORCE_FP32", "0").lower() in ("1", "true", "yes")
 _FP64_SUPPORT_CACHE: dict[str, bool] = {}
 USE_TINYJIT = False
