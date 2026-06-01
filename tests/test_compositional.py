@@ -27,11 +27,24 @@ from tinytt.compositional import (
 from tinytt.functional_tt import FunctionalTT, random_ftt
 from tinytt.errors import InvalidArguments, ShapeMismatch
 
-# Skip tests that import from tinygrad directly when using a different backend
-_needs_tinygrad = pytest.mark.skipif(
-    "tinygrad" not in os.environ.get("TINYTT_BACKEND", "tinygrad"),
-    reason="Test requires tinygrad backend (imports tinygrad.nn.optim)"
-)
+# Backend-agnostic Adam optimizer helper
+if os.environ.get("TINYTT_BACKEND", "tinygrad").lower() == "pytorch":
+    import torch.optim as _optim
+
+    def _make_adam(params, lr=0.1):
+        return _optim.Adam(params, lr=lr)
+
+    def _enable_training():
+        pass  # PyTorch enables grad tracking by default on requires_grad tensors
+else:
+    from tinygrad.nn.optim import Adam as _Adam
+
+    def _make_adam(params, lr=0.1):
+        return _Adam(params, lr=lr)
+
+    def _enable_training():
+        from tinygrad import Tensor
+        Tensor.training = True
 
 
 # ---------------------------------------------------------------------------
@@ -404,7 +417,6 @@ class TestAutograd:
 # Adam training test
 # =========================================================================
 
-@_needs_tinygrad
 class TestAdamTraining:
     """End‑to‑end training of a CompositionalTT with Adam."""
 
@@ -421,15 +433,11 @@ class TestAdamTraining:
                                 retraction=first_coord_retraction())
 
     def _make_optimizer(self, model, lr=0.1):
-        from tinygrad.nn.optim import Adam
-        return Adam(model.params, lr=lr)
+        return _make_adam(model.params, lr=lr)
 
     def test_adam_can_learn_constant_offset(self):
         """A randomly‑initialised CTT can learn a target constant‑ψ CTT via Adam."""
-        from tinygrad import Tensor
-        from tinygrad.nn.optim import Adam
-
-        Tensor.training = True  # required by tinygrad optimizers
+        _enable_training()
 
         # ── target ──
         target = self._target_ctt()
@@ -449,7 +457,7 @@ class TestAdamTraining:
                             basis_size=1, seed=0)
         model.watch()
 
-        optimizer = Adam(model.params, lr=0.3)
+        optimizer = _make_adam(model.params, lr=0.3)
 
         # ── training loop ──
         losses = []
@@ -567,7 +575,6 @@ class TestCompression:
 # High‑dimensional vector‑valued regression test
 # =========================================================================
 
-@_needs_tinygrad
 class TestHighDimRegression:
     """Train a CompositionalTT to regress a vector‑valued polynomial.
 
@@ -597,10 +604,7 @@ class TestHighDimRegression:
 
         The best relative RMSE over 2000 Adam steps must be < 1 %.
         """
-        from tinygrad import Tensor
-        from tinygrad.nn.optim import Adam
-
-        Tensor.training = True
+        _enable_training()
 
         d, do, p = 4, 2, 6
         n_train, n_test = 500, 300
@@ -635,7 +639,7 @@ class TestHighDimRegression:
             ((model.forward(x_test) - y_test) ** 2).mean()
         ))
 
-        optimizer = Adam(model.params, lr=0.005)
+        optimizer = _make_adam(model.params, lr=0.005)
 
         best_test = float("inf")
         for step in range(2000):
