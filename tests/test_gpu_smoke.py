@@ -19,10 +19,9 @@ except Exception:
     pytest.skip("Requested TINYTT_DEVICE is unavailable", allow_module_level=True)
 
 def _supports_fp64():
+    """Check if the resolved device supports float64, using the backend's probe."""
     try:
-        t = tn.tensor([1.0], dtype=tn.float64, device=DEVICE_RESOLVED)
-        tn.realize(t + t)
-        return True
+        return tn.supports_fp64(DEVICE_RESOLVED)
     except Exception:
         return False
 
