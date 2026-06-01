@@ -51,6 +51,7 @@ def unwatch(tens):
     """Disable gradient tracking on all cores of a TT tensor."""
     for c in tens.cores:
         c.requires_grad_(False)
+        c.grad = None
 
 
 def grad(val, tens, core_indices=None):

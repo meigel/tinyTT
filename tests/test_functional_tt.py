@@ -364,9 +364,10 @@ class TestEuclideanGrads:
         assert all(c.grad is not None for c in ftt.cores)
 
         ftt.unwatch()
-        # After unwatch, requires_grad is False and grads are None
+        # After unwatch, grads are cleared
         assert all(c.grad is None for c in ftt.cores)
-        assert not any(c.requires_grad for c in ftt.cores)
+        if hasattr(ftt.cores[0], "requires_grad"):
+            assert not any(c.requires_grad for c in ftt.cores)
 
 
 # ======================================================================

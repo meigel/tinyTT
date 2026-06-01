@@ -21,7 +21,7 @@ except Exception:
 def _supports_fp64():
     try:
         t = tn.tensor([1.0], dtype=tn.float64, device=DEVICE_RESOLVED)
-        (tn.realize(t + t)
+        tn.realize(t + t)
         return True
     except Exception:
         return False

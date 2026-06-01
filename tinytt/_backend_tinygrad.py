@@ -18,6 +18,7 @@ __all__ = [
     # jit
     "maybe_jit",
     # dtype constants
+    "dtypes",
     "float32",
     "float64",
     # dtype / device helpers
@@ -102,6 +103,15 @@ if _TINYTT_DEVICE_ENV and _TINYTT_DEVICE_ENV.upper().startswith("GPU") and not _
     os.environ.pop("GPU", None)
 
 from tinygrad import Tensor, dtypes, TinyJit
+
+# tinygrad v0.13+ removed requires_grad_. Since tinygrad doesn't have
+# per-tensor gradient tracking flags (all tensors participate in the
+# computation graph), we add a no-op polyfill so existing tinyTT code
+# that calls .requires_grad_(True/False) works transparently.
+if not hasattr(Tensor, "requires_grad_"):
+    def _requires_grad(self, val: bool = True):
+        return self
+    Tensor.requires_grad_ = _requires_grad
 
 USE_TINYJIT = os.getenv("TINYTT_TINYJIT", "0").lower() in ("1", "true", "yes")
 _jit_cache: dict[tuple, TinyJit] = {}
@@ -214,7 +224,8 @@ def is_tensor(x) -> bool:
 
 def _constant_tensor(x: Tensor) -> Tensor:
     """tinyTT tensors are constants unless callers explicitly enable autograd."""
-    x.requires_grad_(False)
+    if hasattr(x, "requires_grad_"):
+        x.requires_grad_(False)
     return x
 
 
