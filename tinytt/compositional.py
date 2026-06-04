@@ -499,7 +499,7 @@ def random_ctt(
     lift,
     retraction=None,
     ranks=None,
-    basis_size: int = 2,
+    basis_size: int | None = None,
     dtype=None,
     device=None,
     scale: float = 0.1,
@@ -522,8 +522,10 @@ def random_ctt(
     ranks : list of int or None
         TT ranks of each layer's ``ψ`` (same ranks for every layer).
         Length must be ``width``.  If ``None``, all ranks default to 2.
-    basis_size : int
-        Number of basis functions ``n``.
+    basis_size : int or None
+        Number of basis functions ``n``. If None, auto-detected from
+        ``basis_fn`` by probing at x=0.0 (uses ``basis_fn.n_features``
+        attribute if available, otherwise evaluates the basis).
     dtype : optional
     device : optional
     scale : float
@@ -540,6 +542,19 @@ def random_ctt(
         raise InvalidArguments(
             f"ranks must have length width={width}, got {len(ranks)}."
         )
+
+    # Auto-detect basis_size from the basis function
+    if basis_size is None:
+        if hasattr(basis_fn, 'n_features'):
+            basis_size = basis_fn.n_features
+        else:
+            import tinytt._backend as tn
+            probe = tn.tensor([0.0])
+            test = basis_fn(probe)
+            if hasattr(test, 'shape'):
+                basis_size = test.shape[-1]
+            else:
+                basis_size = test.shape[-1] if hasattr(test, 'shape') else 2
 
     feature_dims = [basis_size] * width
 

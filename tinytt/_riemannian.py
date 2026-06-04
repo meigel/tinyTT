@@ -31,6 +31,28 @@ import tinytt._backend as tn
 from tinytt._decomposition import round_tt
 
 
+def _coerce_to_tensor(cores, inplace=False):
+    """Convert numpy arrays to backend tensors, leave tensors unchanged.
+
+    Parameters
+    ----------
+    cores : list
+        TT cores, either backend tensors or numpy arrays.
+    inplace : bool
+        If True and cores are already tensors, clone them.
+
+    Returns
+    -------
+    list
+        Backend tensor cores.
+    """
+    if not cores:
+        return cores
+    if hasattr(cores[0], 'clone'):
+        return [c.clone() for c in cores] if not inplace else cores
+    return [tn.tensor(c) for c in cores]
+
+
 # ---------------------------------------------------------------------------
 # single-step QR gauge moves
 # ---------------------------------------------------------------------------
@@ -195,7 +217,7 @@ def left_orthogonalize(cores: list, inplace: bool = False) -> list:
 
     Parameters
     ----------
-    cores : list of tensors
+    cores : list of tensors or numpy arrays
         TT cores, each shape (rk, nk, r_{k+1}).
     inplace : bool
         If True, modify the input list in place; otherwise a shallow copy
@@ -206,6 +228,7 @@ def left_orthogonalize(cores: list, inplace: bool = False) -> list:
     list
         Orthogonalised cores.
     """
+    cores = _coerce_to_tensor(cores, inplace)
     if not inplace:
         cores = [c.clone() for c in cores]
     d = len(cores)
@@ -225,7 +248,7 @@ def right_orthogonalize(cores: list, inplace: bool = False) -> list:
 
     Parameters
     ----------
-    cores : list of tensors
+    cores : list of tensors or numpy arrays
         TT cores, each shape (rk, nk, r_{k+1}).
     inplace : bool
         If True, modify the input list in place; otherwise a shallow copy
@@ -236,6 +259,7 @@ def right_orthogonalize(cores: list, inplace: bool = False) -> list:
     list
         Orthogonalised cores.
     """
+    cores = _coerce_to_tensor(cores, inplace)
     if not inplace:
         cores = [c.clone() for c in cores]
     d = len(cores)
@@ -256,7 +280,7 @@ def mixed_canonical(cores: list, k: int, inplace: bool = False) -> list:
 
     Parameters
     ----------
-    cores : list of tensors
+    cores : list of tensors or numpy arrays
         TT cores, each shape (rk, nk, r_{k+1}).
     k : int
         Position of the orthogonality centre, ``0 <= k < d``.
@@ -268,6 +292,7 @@ def mixed_canonical(cores: list, k: int, inplace: bool = False) -> list:
     list
         The cores in mixed-canonical form.
     """
+    cores = _coerce_to_tensor(cores, inplace)
     d = len(cores)
     if not 0 <= k < d:
         raise ValueError(f"k must be in [0, {d - 1}], got {k}.")
@@ -300,9 +325,9 @@ def horizontal_projection(cores: list, grad_cores: list) -> list:
 
     Parameters
     ----------
-    cores : list of tensors
+    cores : list of tensors or numpy arrays
         Current TT cores (used to determine the gauge).
-    grad_cores : list of tensors
+    grad_cores : list of tensors or numpy arrays
         Euclidean gradients, one per core, same shapes as *cores*.
 
     Returns
@@ -310,6 +335,8 @@ def horizontal_projection(cores: list, grad_cores: list) -> list:
     list
         Projected gradients (same shapes as *grad_cores*).
     """
+    cores = _coerce_to_tensor(cores, False)
+    grad_cores = _coerce_to_tensor(grad_cores, False)
     d = len(cores)
     if len(grad_cores) != d:
         raise ValueError(
@@ -392,9 +419,9 @@ def qr_retraction(cores: list, direction: list, step_size: float) -> list:
 
     Parameters
     ----------
-    cores : list of tensors
+    cores : list of tensors or numpy arrays
         Current TT cores.
-    direction : list of tensors
+    direction : list of tensors or numpy arrays
         Tangent direction (same shapes as *cores*).
     step_size : float
         Step length.
@@ -405,6 +432,8 @@ def qr_retraction(cores: list, direction: list, step_size: float) -> list:
         New cores on the manifold (left-orthogonalised via QR sweep,
         with original ranks preserved).
     """
+    cores = _coerce_to_tensor(cores, False)
+    direction = _coerce_to_tensor(direction, False)
     new_cores = [c - step_size * z for c, z in zip(cores, direction)]
     d = len(new_cores)
     for pos in range(d - 1):

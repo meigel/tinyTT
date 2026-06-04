@@ -81,7 +81,14 @@ import tinytt._functional as functional
 from . import truncation
 from . import streaming
 from .streaming import StreamingTT, streaming_tt
-from .compositional import CompositionalTT
+from .compositional import (
+    CompositionalTT, CTTLayer,
+    random_ctt,
+    pad_lift,
+    prepend_lift,
+    projection_retraction,
+    first_coord_retraction,
+)
 
 __all__ = [
     'TT',
@@ -143,4 +150,10 @@ __all__ = [
     'StreamingTT',
     'streaming_tt',
     'CompositionalTT',
+    'CTTLayer',
+    'random_ctt',
+    'pad_lift',
+    'prepend_lift',
+    'projection_retraction',
+    'first_coord_retraction',
 ]
