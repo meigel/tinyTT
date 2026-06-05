@@ -165,6 +165,47 @@ class FunctionalTT:
                 c.grad = None
 
     # ------------------------------------------------------------------
+    # Analytic integral
+    # ------------------------------------------------------------------
+
+    def integrate(self, basis):
+        """Analytic integral over [-1, 1]^d.
+
+        ∫_[-1,1]^d f(x) dx = TT(∫ φ(x₁) dx₁, ..., ∫ φ(x_d) dx_d)
+
+        Uses 2-point Gauss-Legendre quadrature to compute ∫ φ_i for
+        each basis function.
+
+        Parameters
+        ----------
+        basis : callable
+            Basis function with attribute ``n_features``.
+
+        Returns
+        -------
+        float
+            Analytic integral.
+        """
+        import numpy as np
+        d = self.d
+        bdim = self.cores[1].shape[1] if d > 0 else self.cores[0].shape[2]
+
+        # 2-point Gauss-Legendre on [-1, 1]: weights = 1, nodes = ±1/√3
+        x_gq = np.array([-1.0 / np.sqrt(3.0), 1.0 / np.sqrt(3.0)])
+        phi_gq = tn.to_numpy(basis(tn.tensor(x_gq, dtype=tn.float64)))
+        phi_int = phi_gq.sum(axis=0)                 # (bdim,) — ∫ φ_i dx
+
+        phi_1d = tn.tensor(phi_int.reshape(1, bdim), dtype=tn.float64)
+
+        Ad = self.cores[d]
+        R = tn.einsum('mb,ab->ma', phi_1d, Ad.squeeze(2))
+        for k in range(d - 1, 0, -1):
+            Ak = self.cores[k]
+            R = tn.einsum('mb,abc,mc->ma', phi_1d, Ak, R)
+        result = tn.einsum('ma,na->mn', R, self.cores[0].squeeze(0))
+        return float(tn.to_numpy(result)[0, 0])
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
@@ -174,7 +215,7 @@ class FunctionalTT:
 
 
 def random_ftt(n0: int, feature_dims: list, ranks: list, dtype=None, device=None,
-               scale=0.1, seed=None):
+               scale=None, seed=None):
     """
     Create a random FunctionalTT with tinyTT 3D core convention.
 
@@ -189,8 +230,10 @@ def random_ftt(n0: int, feature_dims: list, ranks: list, dtype=None, device=None
         Length must equal len(feature_dims).
     dtype : optional
     device : optional
-    scale : float
+    scale : float or None
         Standard deviation of the random normal initialisation.
+        If None, computed as ``1 / sqrt(max(rank) * min(feature_dims))``
+        to keep the TT contraction variance O(1) regardless of rank.
     seed : int or None
         Random seed for reproducibility.
     """
@@ -198,6 +241,12 @@ def random_ftt(n0: int, feature_dims: list, ranks: list, dtype=None, device=None
         dtype = tn.float64
     d = len(feature_dims)
     assert len(ranks) == d, "Need d ranks for d feature dims"
+
+    # Auto-scale to keep TT contraction variance O(1)
+    if scale is None:
+        max_r = max(ranks)
+        min_nk = min(feature_dims) if feature_dims else 1
+        scale = 1.0 / np.sqrt(max_r * max(min_nk, 1))
 
     rng = np.random.default_rng(seed)
 
