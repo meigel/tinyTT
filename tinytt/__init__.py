@@ -70,6 +70,7 @@ from ._linesearch import armijo_ls
 from ._functional import (
     monomial_features, legendre_features, hermite_features,
     LegendreFeatures, HermiteFeatures, MonomialFeatures,
+    DifferentiableHermiteBasis,
 )
 from .functional_tt import FunctionalTT, random_ftt
 from . import regression

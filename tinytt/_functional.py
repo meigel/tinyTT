@@ -508,6 +508,151 @@ class MonomialFeatures:
 
 
 # ---------------------------------------------------------------------------
+# Differentiable basis classes — pure tensor operations for all backends.
+# Unlike the numpy-based classes above, these keep the computation in the
+# autograd graph for the active backend (PyTorch, tinygrad, etc.), enabling
+# gradient flow through feature maps.
+#
+# The trade-off: explicit (non-recurrence) formulas for degrees ≤ 4.
+# For higher degrees we fall back to the Hermite recurrence:
+#     He_{n+1}(x) = x·He_n(x) - n·He_{n-1}(x)
+# ---------------------------------------------------------------------------
+
+
+class DifferentiableHermiteBasis:
+    """Probabilist Hermite polynomials via pure tensor operations.
+
+    Evaluates ``(He_0(x), ..., He_{order}(x))`` using only backend-agnostic
+    tensor operations (``tn.*``).  The computation stays in the autograd
+    graph, enabling gradients to flow through the feature map.
+
+    For degree ≤ 4 we use closed-form formulas (fast path).  For degree > 4
+    we use the Hermite recurrence.
+
+    Parameters
+    ----------
+    degree : int
+        Maximum polynomial order (≥ 0).  Number of features = *degree* + 1.
+    orthonormal : bool
+        If True, scale so that E_{x∼N(0,1)}[ϕ_j·ϕ_k] = δ_{jk}.
+        Scaling uses sqrt(k!) factors.
+    device, dtype : optional
+    """
+
+    def __init__(self, degree: int, orthonormal: bool = True,
+                 device=None, dtype=None):
+        self.degree = degree
+        self.n_features = degree + 1
+        self.orthonormal = orthonormal
+        self._device = device
+        self._dtype = dtype if dtype is not None else tn.float64
+        nb = self.n_features
+        if self.orthonormal and nb > 0:
+            # Precompute 1/sqrt(k!) for each monomial order k = 0..degree
+            import math
+            self._scale = np.array(
+                [1.0 / math.sqrt(math.factorial(k)) for k in range(nb)],
+                dtype=np.float64)
+        else:
+            self._scale = np.ones(max(nb, 1), dtype=np.float64)
+
+    def __call__(self, x):
+        """Evaluate basis at one or more points.
+
+        Parameters
+        ----------
+        x : ndarray | Tensor
+            Scalar or shape ``(m,)``.
+
+        Returns
+        -------
+        Tensor of shape ``(m, n_features)``, differentiable w.r.t. *x*.
+        """
+        if not tn.is_tensor(x):
+            x = tn.tensor(np.asarray(x, dtype=np.float64),
+                          dtype=self._dtype, device=self._device)
+        # Ensure x is 1-D
+        if len(x.shape) == 0:
+            x = x.reshape(1)
+        m = x.shape[0]
+        nb = self.n_features
+
+        scale_t = tn.tensor(self._scale, dtype=self._dtype, device=self._device)
+
+        if nb <= 0:
+            return tn.zeros((m, 0), dtype=self._dtype, device=self._device)
+
+        cols = []
+
+        if nb >= 1:
+            cols.append(tn.ones((m, 1), dtype=self._dtype, device=self._device))
+        if nb >= 2:
+            cols.append(x.reshape(m, 1))
+        if nb >= 3:
+            # He₂(x) = x² - 1
+            p2 = x ** 2 - 1.0
+            cols.append(p2.reshape(m, 1))
+        if nb >= 4:
+            # He₃(x) = x³ - 3x
+            p3 = x ** 3 - 3.0 * x
+            cols.append(p3.reshape(m, 1))
+        if nb >= 5:
+            # He₄(x) = x⁴ - 6x² + 3
+            p4 = x ** 4 - 6.0 * x ** 2 + 3.0
+            cols.append(p4.reshape(m, 1))
+        if nb > 5:
+            # Higher degrees via recurrence: He_{n+1} = x·He_n - n·He_{n-1}
+            # We have computed up to He₄ (cols indices 0-4).
+            # prev2 = cols[-2] = He₃, prev1 = cols[-1] = He₄
+            prev2 = cols[-2].reshape(m)  # He_{n-1}
+            prev1 = cols[-1].reshape(m)  # He_n
+            for n in range(4, nb - 1):   # compute He_{n+1} for n=4..nb-2
+                next_val = x * prev1 - float(n) * prev2
+                cols.append(next_val.reshape(m, 1))
+                prev2, prev1 = prev1, next_val
+
+        phi = tn.cat(cols, dim=1)  # (m, nb)
+        phi = phi * scale_t.reshape(1, nb)
+        return phi
+
+    def grad(self, x):
+        """Derivative ``d/dx`` of each basis function.
+
+        Uses He'_n(x) = n·He_{n-1}(x).
+        """
+        vals = self.__call__(x)
+        nb = self.n_features
+        if tn.is_tensor(vals):
+            vals_np = tn.to_numpy(vals)
+        else:
+            vals_np = np.asarray(vals)
+        dP = np.zeros_like(vals_np)
+        # He'_n(x) = n·He_{n-1}(x)
+        # After scaling: dP[n] = n * (scale[n] / scale[n-1]) * vals[:, n-1]
+        for n in range(1, nb):
+            coeff = float(n) * float(self._scale[n] / self._scale[n - 1])
+            dP[:, n] = coeff * vals_np[:, n - 1]
+        return tn.tensor(dP, dtype=self._dtype, device=self._device)
+
+    def laplace(self, x):
+        """Second derivative ``d²/dx²`` of each basis function.
+
+        Uses He''_n(x) = n·(n-1)·He_{n-2}(x).
+        """
+        vals = self.__call__(x)
+        if tn.is_tensor(vals):
+            vals_np = tn.to_numpy(vals)
+        else:
+            vals_np = np.asarray(vals)
+        nb = self.n_features
+        ddP = np.zeros_like(vals_np)
+        for n in range(2, nb):
+            coeff = float(n * (n - 1)) * float(self._scale[n] / self._scale[n - 2])
+            ddP[:, n] = coeff * vals_np[:, n - 2]
+        return tn.tensor(ddP, dtype=self._dtype, device=self._device)
+
+
+# ---------------------------------------------------------------------------
 # Free functions for Functional TT evaluation and differential operators
 # ---------------------------------------------------------------------------
 # These work with main's TT core convention:
