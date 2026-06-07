@@ -151,13 +151,19 @@ def als_regression(X, Y, bases, ranks, sweeps=10, out_dim=1,
     R = [out_dim] + list(ranks) + [1]
     n_features = [_determine_degree(b) for b in bases]
 
-    # ---- initialise cores ----
+    # ---- initialise cores with variance-preserving scale ----
+    # Per-step TT contraction variance ≈ rank × nk × scale².
+    # For stable forward propagation through d steps, set scale² = 1 / (max_rank × max_nk)
+    # so the variance ratio per step ≈ 1 regardless of depth.
     rng = np.random.default_rng(seed)
+    max_rank = max(R)
+    max_nk = max(n_features) if n_features else 1
+    init_scale = 1.0 / np.sqrt(max_rank * max_nk)
     cores = []
     for k in range(d):
         rl, rr = R[k], R[k + 1]
         nk = n_features[k]
-        core = 0.05 * rng.standard_normal((rl, nk, rr))
+        core = init_scale * rng.standard_normal((rl, nk, rr))
         cores.append(core)
 
     # ---- pre-evaluate bases at all sample points ----
