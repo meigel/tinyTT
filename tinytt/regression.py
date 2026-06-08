@@ -198,25 +198,26 @@ def als_regression(X, Y, bases, ranks, sweeps=10, out_dim=1,
                     R_env = np.einsum('ij,ikj->ik', R_env, Aj)
 
             # ---- solve for core k ----
-            # Design matrix: A[b, idx] = L[b, a] * phi[b, m] * R_env[b, c]
-            # where idx indexes (a, m, c) in Fortran order
+            # Design matrix via vectorized einsum (avoids triple Python loop)
+            # A_mat[b, (a,m,c)] = L[b,a] * phi_k[b,m] * R_env[b,c]
             n_cols = rl * nk * rr
-            A_mat = np.zeros((B, n_cols), dtype=np.float64)
-            idx = 0
-            for a in range(rl):
-                for m in range(nk):
-                    for c in range(rr):
-                        A_mat[:, idx] = L[:, a] * phi_k[:, m] * R_env[:, c]
-                        idx += 1
+            A_mat = np.einsum('ba,bm,bc->bamc', L, phi_k, R_env).reshape(B, -1)
 
             # Solve min ||A @ x - Y||^2
-            # Use the normal equations: (A^T A) x = A^T Y
+            # Scaled normal equations for better conditioning
             ATA = A_mat.T @ A_mat                # (n_cols, n_cols)
             ATb = A_mat.T @ Y                    # (n_cols, out_dim)
 
             # Regularise for stability
             reg = tol * np.trace(ATA) * np.eye(n_cols)
-            x = np.linalg.solve(ATA + reg, ATb)  # (n_cols, out_dim)
+            # Scaled solve: avoid ill-conditioning from mixed scales.
+            # Clip to prevent overflow from near-zero columns in pathological
+            # initialisations (real data produces well-behaved scales).
+            scale = np.sqrt(np.maximum(np.diag(ATA), 1e-100))
+            scaled_ATA = ATA / scale[:, None] / scale[None, :]
+            scaled_ATb = ATb / scale[:, None]
+            scaled_x = np.linalg.solve(scaled_ATA + reg, scaled_ATb)
+            x = scaled_x / scale[:, None]
 
             # Reshape back into core
             cores[k] = x.reshape(rl, nk, rr, out_dim)
@@ -248,23 +249,23 @@ def als_regression(X, Y, bases, ranks, sweeps=10, out_dim=1,
 
             # ---- solve for core k ----
             n_cols = rl * nk * rr
-            A_mat = np.zeros((B, n_cols), dtype=np.float64)
-            idx = 0
-            for a in range(rl):
-                for m in range(nk):
-                    for c in range(rr):
-                        A_mat[:, idx] = L[:, a] * phi_k[:, m] * R_env[:, c]
-                        idx += 1
+            A_mat = np.einsum('ba,bm,bc->bamc', L, phi_k, R_env).reshape(B, -1)
 
             ATA = A_mat.T @ A_mat
             ATb = A_mat.T @ Y
+
             reg = tol * np.trace(ATA) * np.eye(n_cols)
-            x = np.linalg.solve(ATA + reg, ATb)
+            # Scaled solve: avoid ill-conditioning from mixed scales.
+            # Clip to prevent overflow from near-zero columns.
+            scale = np.sqrt(np.maximum(np.diag(ATA), 1e-100))
+            scaled_ATA = ATA / scale[:, None] / scale[None, :]
+            scaled_ATb = ATb / scale[:, None]
+            scaled_x = np.linalg.solve(scaled_ATA + reg, scaled_ATb)
+            x = scaled_x / scale[:, None]
 
             cores[k] = x.reshape(rl, nk, rr, out_dim)
             if out_dim == 1:
                 cores[k] = cores[k].reshape(rl, nk, rr)
-
             # ---- update right environment for next (leftward) core ----
             if k > 0:
                 Ak = _contract_core(cores[k], phi_k)
