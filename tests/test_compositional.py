@@ -570,6 +570,24 @@ class TestCompression:
         # output should be finite (not a hard equality, just structural validity)
         assert np.isfinite(tn.to_numpy(out_after)).all()
 
+    def test_round_with_data(self):
+        """Test data-driven covariance-weighted compositional rounding."""
+        rng = np.random.default_rng(42)
+        x_np = rng.normal(size=(10, 2)).astype(np.float64)
+        x = tn.tensor(x_np)
+
+        # build a CTT
+        ctt = random_ctt(width=3, n_layers=2, basis_fn=_lin_basis,
+                          lift=pad_lift(d=2, p=3),
+                          ranks=[4, 4, 4], basis_size=2, seed=7)
+
+        # round with data
+        ctt_rounded = ctt.round(eps=0.5, rmax=sys.maxsize, X_data=x)
+
+        # check that it evaluates successfully and produces finite outputs
+        out_after = ctt_rounded.forward(x)
+        assert np.isfinite(tn.to_numpy(out_after)).all()
+
 
 # =========================================================================
 # High‑dimensional vector‑valued regression test

@@ -372,11 +372,12 @@ class CompositionalTT:
             lyr.to(device)
         return self
 
-    def round(self, eps: float = 1e-12, rmax=sys.maxsize) -> CompositionalTT:
+    def round(self, eps: float = 1e-12, rmax=sys.maxsize, X_data=None) -> CompositionalTT:
         """Round (compress) every layer's ``ψ`` via TT‑SVD.
 
-        Each layer's coefficient tensor is rounded independently using
-        :func:`tinytt._decomposition.round_tt`.
+        If X_data is provided, uses a marginal feature-covariance weighting
+        heuristic. This does not generally minimize the empirical output error,
+        because cross-coordinate feature correlations are not represented.
 
         Parameters
         ----------
@@ -384,14 +385,67 @@ class CompositionalTT:
             Desired relative Frobenius‑norm accuracy per layer.
         rmax : int or list
             Maximum allowed TT rank (broadcast to all layers).
+        X_data : Tensor or ndarray, optional
+            Data points for computing covariance weighting.
 
         Returns
         -------
         CompositionalTT
             A new model with compressed layers.
         """
-        rounded = [lyr.round(eps, rmax) for lyr in self.layers]
-        return CompositionalTT(rounded, self.basis_fn, self.lift, self.retraction)
+        if X_data is None:
+            rounded = [lyr.round(eps, rmax) for lyr in self.layers]
+            return CompositionalTT(rounded, self.basis_fn, self.lift, self.retraction)
+
+        # Sweep layers using activations from the already-rounded prefix.
+        rounded_layers = []
+        B = float(X_data.shape[0])
+        y = self.lift(self._prepare_input(X_data))
+
+        for lyr in self.layers:
+            p = lyr.width
+
+            # Evaluate features ϕ(y_j) for each coordinate j
+            phi_list = [self.basis_fn(y[:, j]) for j in range(p)]
+
+            # Compute Gram/covariance matrix for each coordinate
+            W_list = []
+            W_inv_list = []
+            for j in range(p):
+                C_j = (phi_list[j].transpose(0, 1) @ phi_list[j]) / B
+                # Regularize
+                C_j = C_j + 1e-8 * tn.eye(int(C_j.shape[0]), dtype=C_j.dtype, device=C_j.device)
+
+                # Compute matrix square root via SVD
+                U, S, V = tn.linalg.svd(C_j)
+                W_j = U @ tn.diag(tn.sqrt(S)) @ V.transpose(0, 1)
+                W_inv_j = V @ tn.diag(1.0 / tn.sqrt(S)) @ U.transpose(0, 1)
+                W_list.append(W_j)
+                W_inv_list.append(W_inv_j)
+
+            # Transform coefficient cores G_{j+1} of psi
+            cores_trans = [c.clone() for c in lyr.psi.cores]
+            for j in range(p):
+                cores_trans[j + 1] = tn.einsum('ab,lbr->lar', W_list[j], cores_trans[j + 1])
+
+            # Perform standard independent SVD rounding on the weighted cores
+            ranks = list(lyr.psi.ranks)
+            if not isinstance(rmax, list):
+                rmax_lyr = [1] + p * [rmax] + [1]
+            else:
+                rmax_lyr = rmax
+
+            rounded_cores, _ = round_tt(cores_trans, ranks, eps, rmax_lyr, is_ttm=False)
+
+            # Transform rounded cores back by applying W_inv_j
+            for j in range(p):
+                rounded_cores[j + 1] = tn.einsum('ab,lbr->lar', W_inv_list[j], rounded_cores[j + 1])
+
+            rounded_layer = CTTLayer(FunctionalTT(rounded_cores))
+            rounded_layers.append(rounded_layer)
+            y = rounded_layer.forward(y, self.basis_fn)
+
+        return CompositionalTT(rounded_layers, self.basis_fn, self.lift, self.retraction)
 
     @property
     def params(self) -> list[tn.Tensor]:

@@ -486,3 +486,103 @@ class TestSVDRetraction:
         for c in retracted:
             assert c.shape[0] <= 3
             assert c.shape[2] <= 3
+
+
+class TestRankAdmissibilityAndProcrustes:
+    @NEEDS_CLANG
+    def test_qr_move_lr_rejects_impossible_rank(self):
+        # Create cores where r_left * n < r_right to force rank preservation padding
+        # e.g., r_left = 2, n = 2, r_right = 5.
+        # Here r_left * n = 4 < 5.
+        rng = np.random.default_rng(123)
+        c0 = tn.tensor(rng.standard_normal((1, 2, 2)))
+        c1 = tn.tensor(rng.standard_normal((2, 2, 5)))
+        c2 = tn.tensor(rng.standard_normal((5, 2, 1)))
+        cores = [c0, c1, c2]
+
+        with pytest.raises(ValueError, match="inadmissible TT rank"):
+            _qr_move_lr(cores, pos=1, preserve_rank=True)
+
+    @NEEDS_CLANG
+    def test_qr_move_rl_rejects_impossible_rank(self):
+        # Create cores where r_left > n * r_right to force rank preservation padding
+        # e.g., r_left = 5, n = 2, r_right = 2.
+        # Here n * r_right = 4 < 5.
+        rng = np.random.default_rng(124)
+        c0 = tn.tensor(rng.standard_normal((1, 2, 5)))
+        c1 = tn.tensor(rng.standard_normal((5, 2, 2)))
+        c2 = tn.tensor(rng.standard_normal((2, 2, 1)))
+        cores = [c0, c1, c2]
+
+        with pytest.raises(ValueError, match="inadmissible TT rank"):
+            _qr_move_rl(cores, pos=1, preserve_rank=True)
+
+    @NEEDS_CLANG
+    def test_gauge_align_cores_preserves_tensor(self):
+        from tinytt._riemannian import gauge_align_cores
+
+        # Build two identical tensors with different gauges (by applying random orthogonal matrices)
+        rng = np.random.default_rng(42)
+        cores_ref = _make_tt_cores(d=3, n=3, r=2, seed=1)
+
+        # Apply random orthogonal gauge transformation to cores_ref to get cores
+        # We need an orthogonal matrix U of shape (2, 2)
+        U_np, _, _ = np.linalg.svd(rng.standard_normal((2, 2)))
+        U = tn.tensor(U_np, dtype=cores_ref[0].dtype, device=cores_ref[0].device)
+
+        cores = [cores_ref[0].clone(), cores_ref[1].clone(), cores_ref[2].clone()]
+        # apply transformation at interface 1
+        cores[0] = tn.einsum('lna,ab->lnb', cores[0], U)
+        cores[1] = tn.einsum('ba,anr->bnr', U, cores[1])
+
+        # Align cores to cores_ref
+        cores_aligned = gauge_align_cores(cores_ref, cores)
+
+        # They should represent the exact same dense tensor
+        dense_ref = _tt_dense_from_cores(cores_ref)
+        dense_aligned = _tt_dense_from_cores(cores_aligned)
+        np.testing.assert_allclose(dense_ref, dense_aligned, rtol=1e-5, atol=1e-5)
+
+        # After alignment, the cores should be close to the reference cores
+        for c_ref, c_al in zip(cores_ref, cores_aligned):
+            np.testing.assert_allclose(tn.to_numpy(c_ref), tn.to_numpy(c_al), rtol=1e-4, atol=1e-4)
+
+    @NEEDS_CLANG
+    def test_gauge_align_rank_three_nonsymmetric_gauges(self):
+        from tinytt._riemannian import gauge_align_cores
+
+        rng = np.random.default_rng(91)
+        cores_ref = _make_tt_cores(d=4, n=4, r=3, seed=5)
+        cores = [c.clone() for c in cores_ref]
+        for k in range(len(cores) - 1):
+            gauge_np, _ = np.linalg.qr(rng.standard_normal((3, 3)))
+            gauge = tn.tensor(
+                gauge_np,
+                dtype=cores[k].dtype,
+                device=cores[k].device,
+            )
+            cores[k] = tn.einsum('lna,ab->lnb', cores[k], gauge)
+            cores[k + 1] = tn.einsum('ba,anr->bnr', gauge, cores[k + 1])
+
+        aligned = gauge_align_cores(cores_ref, cores)
+        np.testing.assert_allclose(
+            _tt_dense_from_cores(aligned),
+            _tt_dense_from_cores(cores_ref),
+            rtol=1e-5,
+            atol=1e-5,
+        )
+        for ref, core in zip(cores_ref, aligned):
+            np.testing.assert_allclose(
+                tn.to_numpy(ref),
+                tn.to_numpy(core),
+                rtol=1e-4,
+                atol=1e-4,
+            )
+
+    @NEEDS_CLANG
+    def test_gauge_align_validates_shapes(self):
+        from tinytt._riemannian import gauge_align_cores
+
+        cores = _make_tt_cores(d=3, n=3, r=2, seed=2)
+        with pytest.raises(ValueError, match="same number"):
+            gauge_align_cores(cores, cores[:-1])

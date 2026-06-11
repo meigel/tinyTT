@@ -61,16 +61,65 @@ def _svd_tinygrad(mat):
     return u, s, v
 
 
-def SVD(mat):
+def randomized_svd(
+    mat,
+    k: int,
+    oversampling: int = 5,
+    n_iter: int = 1,
+    seed: int | None = None,
+):
+    """Compute a reproducible approximate rank-k SVD by randomized range finding."""
+    m_dim, n_dim = mat.shape
+    max_rank = min(m_dim, n_dim)
+    if not 0 < k <= max_rank:
+        raise ValueError(f"k must lie in [1, {max_rank}]")
+    if oversampling < 0:
+        raise ValueError("oversampling must be nonnegative")
+    if n_iter < 0:
+        raise ValueError("n_iter must be nonnegative")
+    r = min(k + oversampling, m_dim, n_dim)
+
+    if seed is None:
+        Omega = tn.randn((n_dim, r), dtype=mat.dtype, device=mat.device)
+    else:
+        rng = np.random.default_rng(seed)
+        Omega = tn.tensor(
+            rng.standard_normal((n_dim, r)),
+            dtype=mat.dtype,
+            device=mat.device,
+        )
+
+    Y = mat @ Omega
+    for _ in range(n_iter):
+        Q, _ = QR(Y)
+        Y = mat @ (mat.transpose(0, 1) @ Q)
+    Q, _ = QR(Y)
+
+    B = Q.transpose(0, 1) @ mat
+    U_tilde, S, V = SVD(B)
+    U = Q @ U_tilde
+
+    return U[:, :k], S[:k], V[:k, :]
+
+
+def SVD(mat, k: int | None = None):
     """
     Computes the SVD of a matrix.
 
     Args:
         mat (tinygrad.Tensor): the matrix
+        k (int, optional): target rank for randomized SVD
 
     Returns:
         U, S, V: the SVD factors.
     """
+    m, n = mat.shape
+    if k is not None:
+        if k < min(m, n):
+            return randomized_svd(mat, k)
+        if k > min(m, n):
+            raise ValueError(f"k must not exceed min(mat.shape)={min(m, n)}")
+
     is_gpu = not _device_is_cpu(mat.device)
     prefer_tinygrad = _SVD_BACKEND == "tinygrad" or is_gpu
 
@@ -244,7 +293,7 @@ def rl_orthogonal(tt_cores, R, is_ttm, no_gpu=False):
     return cores_new, R
 
 
-def round_tt(tt_cores, R, eps, rmax, is_ttm=False, rule=None):
+def round_tt(tt_cores, R, eps, rmax=None, is_ttm=False, rule=None, **kwargs):
     """
     Rounds a TT-tensor (tt_cores have to be orthogonal)
 
@@ -267,6 +316,16 @@ def round_tt(tt_cores, R, eps, rmax, is_ttm=False, rule=None):
         rounded ranks.
 
     """
+    legacy_rmax = kwargs.pop("Rmax", None)
+    if kwargs:
+        names = ", ".join(sorted(kwargs))
+        raise TypeError(f"unexpected keyword argument(s): {names}")
+    if rmax is not None and legacy_rmax is not None:
+        raise TypeError("pass only one of rmax or legacy Rmax")
+    rmax = legacy_rmax if rmax is None else rmax
+    if rmax is None:
+        raise TypeError("missing required rank bound: rmax")
+
     d = len(tt_cores)
     if d == 1:
         tt_cores = [tt_cores[0].clone()]

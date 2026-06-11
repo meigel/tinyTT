@@ -74,8 +74,7 @@ def _qr_move_lr(cores: list, pos: int, preserve_rank: bool = False) -> list:
         Position of the core to orthogonalise.  Must satisfy 0 <= pos < d-1
         (the last core cannot be left-orthogonalised with this sweep).
     preserve_rank : bool
-        If True, force the output core to keep its original rank even when
-        r_left * n < r_right by adding a small random perturbation.
+        If True, reject locally inadmissible ranks instead of shrinking them.
 
     Returns
     -------
@@ -99,23 +98,12 @@ def _qr_move_lr(cores: list, pos: int, preserve_rank: bool = False) -> list:
     if r.device != mat.device: r = r.to(mat.device)
 
     k = min(r_left * n, r_right)
-    
+
     if preserve_rank and k < r_right:
-        # Rank would shrink; preserve it by extending Q with orthogonal
-        # random directions from the nullspace.
-        q_k = q[:, :k]                                      # (r_left*n, k)
-        pad = 1e-8 * tn.randn((r_left * n, r_right - k), dtype=core.dtype, device=core.device)
-        pad = pad - q_k @ (q_k.T @ pad)
-        q_null, _ = tn.linalg.qr(pad)
-        q_full = tn.cat([q_k, q_null[:, :r_right - k]], dim=1)  # (r_left*n, r_right)
-        cores[pos] = q_full.reshape(r_left, n, r_right)
-        # Absorb R (padded to full rank) into the next core
-        import numpy as np
-        r_np = np.zeros((r_right, r_right), dtype=np.float64)
-        r_np[:k, :] = tn.to_numpy(r[:k, :])
-        r_pad = tn.tensor(r_np, dtype=core.dtype, device=core.device)
-        nxt = cores[pos + 1]
-        cores[pos + 1] = tn.einsum('ab,bcd->acd', r_pad, nxt)
+        raise ValueError(
+            f"inadmissible TT rank at bond {pos + 1}: r={r_right} exceeds "
+            f"left unfolding dimension {r_left * n}"
+        )
     else:
         cores[pos] = q[:, :k].reshape(r_left, n, k)
         # Absorb R into the next core
@@ -143,8 +131,7 @@ def _qr_move_rl(cores: list, pos: int, preserve_rank: bool = False) -> list:
         Position of the core to orthogonalise.  Must satisfy 0 < pos <= d-1
         (the first core cannot be right-orthogonalised with this sweep).
     preserve_rank : bool
-        If True, force the output core to keep its original rank even when
-        r_left > n * r_right by splitting the R absorption.
+        If True, reject locally inadmissible ranks instead of shrinking them.
 
     Returns
     -------
@@ -168,29 +155,12 @@ def _qr_move_rl(cores: list, pos: int, preserve_rank: bool = False) -> list:
     if r.device != mat.device: r = r.to(mat.device)
 
     k = min(r_left, n * r_right)
-    
+
     if preserve_rank and k < r_left:
-        # Rank would shrink; preserve it.
-        # We cannot simply pad Q and re-QR because QR truncates again.
-        # Instead, extend q with random orthogonal directions by computing
-        # a nullspace basis via QR of the padded matrix's complement.
-        q_k = q[:, :k]                                      # (n*r_right, k)
-        # Random matrix to fill the remaining rank
-        pad = 1e-8 * tn.randn((n * r_right, r_left - k), dtype=core.dtype, device=core.device)
-        # Subtract projection onto q_k's span
-        pad = pad - q_k @ (q_k.T @ pad)
-        # QR of the residual gives the nullspace basis
-        q_null, _ = tn.linalg.qr(pad)
-        q_full = tn.cat([q_k, q_null[:, :r_left - k]], dim=1)  # (n*r_right, r_left)
-        cores[pos] = q_full.T.reshape(r_left, n, r_right)
-        # Absorb R (padded to full rank) into the previous core
-        # (create via numpy to avoid tinygrad setitem contiguity issues)
-        import numpy as np
-        r_np = np.zeros((r_left, r_left), dtype=np.float64)
-        r_np[:k, :] = tn.to_numpy(r[:k, :])
-        r_pad = tn.tensor(r_np, dtype=core.dtype, device=core.device)
-        prv = cores[pos - 1]
-        cores[pos - 1] = tn.einsum('abc,cd->abd', prv, r_pad)
+        raise ValueError(
+            f"inadmissible TT rank at bond {pos}: r={r_left} exceeds "
+            f"right unfolding dimension {n * r_right}"
+        )
     else:
         # Q is (n * r_right, k); reshape to (k, n, r_right)
         cores[pos] = q[:, :k].T.reshape(k, n, r_right)
@@ -695,3 +665,49 @@ def svd_retraction(cores: list, direction: list, step_size: float,
     # is allowed to mutate.
     rounded, _ = round_tt([c.clone() for c in summed], R[:], eps, Rmax, is_ttm=False)
     return rounded
+
+
+def gauge_align_cores(cores_ref: list[tn.Tensor], cores: list[tn.Tensor]) -> list[tn.Tensor]:
+    """Align the virtual bonds gauge of cores to match the gauge of cores_ref (Procrustes alignment).
+
+    Parameters
+    ----------
+    cores_ref : list of tn.Tensor
+        Reference TT cores.
+    cores : list of tn.Tensor
+        TT cores to be aligned.
+
+    Returns
+    -------
+    list of tn.Tensor
+        Aligned TT cores representing the same tensor as cores but aligned to cores_ref.
+    """
+    if len(cores_ref) != len(cores):
+        raise ValueError("reference and target must have the same number of cores")
+    if not cores:
+        return []
+    for k, (ref, core) in enumerate(zip(cores_ref, cores)):
+        if tuple(ref.shape) != tuple(core.shape):
+            raise ValueError(f"core {k} shape mismatch: {ref.shape} != {core.shape}")
+
+    d = len(cores)
+    cores_aligned = [c.clone() for c in cores]
+    import numpy as np
+
+    for k in range(d - 1):
+        r_left, n, r_right = cores_aligned[k].shape
+        ref_mat = tn.to_numpy(cores_ref[k].reshape(r_left * n, r_right))
+        mat = tn.to_numpy(cores_aligned[k].reshape(r_left * n, r_right))
+
+        # Solve Procrustes alignment
+        C = mat.T @ ref_mat
+        P, _, Qh = np.linalg.svd(C)
+        U_np = P @ Qh
+
+        U = tn.tensor(U_np, dtype=cores_aligned[k].dtype, device=cores_aligned[k].device)
+
+        # Apply gauge matrices
+        cores_aligned[k] = tn.einsum('lna,ab->lnb', cores_aligned[k], U)
+        cores_aligned[k + 1] = tn.einsum('ba,anr->bnr', U, cores_aligned[k + 1])
+
+    return cores_aligned

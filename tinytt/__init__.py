@@ -64,6 +64,7 @@ from ._riemannian import (
     mixed_canonical,
     check_left_orthogonal,
     check_right_orthogonal,
+    gauge_align_cores,
 )
 from ._iterative_solvers import cg
 from ._linesearch import armijo_ls
@@ -81,7 +82,7 @@ import tinytt._linesearch as linesearch
 import tinytt._functional as functional
 from . import truncation
 from . import streaming
-from .streaming import StreamingTT, streaming_tt
+from .streaming import StreamingTT, streaming_tt, StreamingCurvature
 from .compositional import (
     CompositionalTT, CTTLayer,
     random_ctt,
@@ -133,6 +134,7 @@ __all__ = [
     'right_orthogonalize',
     'check_left_orthogonal',
     'check_right_orthogonal',
+    'gauge_align_cores',
     'monomial_features',
     'legendre_features',
     'hermite_features',
@@ -150,6 +152,7 @@ __all__ = [
     'streaming',
     'StreamingTT',
     'streaming_tt',
+    'StreamingCurvature',
     'CompositionalTT',
     'CTTLayer',
     'random_ctt',
