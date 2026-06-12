@@ -164,6 +164,12 @@ class FunctionalTT:
             if c.grad is not None:
                 c.grad = None
 
+    def linearize(self, phi_list, frame=None):
+        """Build a cached matrix-free tangent linearization for a batch."""
+        from tinytt.manifold import FunctionalTTLinearization
+
+        return FunctionalTTLinearization(self, phi_list, frame=frame)
+
     # ------------------------------------------------------------------
     # Analytic integral
     # ------------------------------------------------------------------

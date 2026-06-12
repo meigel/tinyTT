@@ -83,11 +83,25 @@ TT format:
 |---|---|---|
 | **Left/right orthogonalise** | `left_orthogonalize`, `right_orthogonalize` | Full sweep QR canonicalisation |
 | **Mixed canonical** | `mixed_canonical(cores, k)` | Orthogonality centre at site k |
-| **Horizontal projection** | `horizontal_projection(cores, G)` | Project Euclidean gradient onto horizontal space |
-| **Tangent projection** | `tangent_project(x, Z)` | Lubich/Vandereycken projection of ambient tensor |
-| **QR retraction** | `qr_retraction(cores, dir, step)` | Rank-preserving retraction |
-| **SVD retraction** | `svd_retraction(cores, dir, step, rmax)` | Rank-relaxing retraction |
+| **Tangent projection** | `tangent_project(x, Z)` | Compatibility wrapper for the verified one-pass projector |
 | **Gauge checks** | `check_left_orthogonal`, `check_right_orthogonal` | Verify canonical form |
+
+The recommended matrix-free API uses a reusable manifold frame and
+gauge-constrained tangent blocks:
+
+```python
+frame = tt.TTManifoldFrame.from_tt(x)
+xi = frame.project(z)              # orthogonal tangent projection
+y = frame.retract(xi, step=0.1)    # fixed-rank rounding retraction
+
+new_frame = tt.TTManifoldFrame.from_tt(y)
+xi_new = tt.projection_transport(xi, new_frame)
+```
+
+`TTTangentBatch` stores several tangent columns without intrinsic bases and
+supports Gram matrices, adjoint application, and linear combinations. For
+`FunctionalTT`, `model.linearize(phi_list, frame)` provides cached JVP, VJP,
+and GGN sample-factor operations.
 
 Usage: `examples/tt_riemannian_gd.py`
 
@@ -349,9 +363,9 @@ f = CompositionalTT([A, A])                # A ∘ A
 y = f(x)                                   # A·(A·x)
 
 # ---- Riemannian optimisation ----
-from tinytt._riemannian import horizontal_projection, qr_retraction
-tan = horizontal_projection(x.cores, grad)  # project to tangent space
-theta = qr_retraction(x.cores, tan, 0.1)    # retract to manifold
+frame = tt.TTManifoldFrame.from_tt(x)
+tan = frame.project(grad)              # ambient TT or dense tensor
+theta = frame.retract(tan, step=-0.1)  # fixed-rank rounding retraction
 ```
 
 ## Tests

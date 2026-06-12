@@ -1,6 +1,6 @@
 """
 Tests for Riemannian module: QR gauge sweeps, orthogonalisation,
-horizontal projection, and retraction.
+the compatibility tangent projector, and gauge alignment.
 """
 
 import os
@@ -16,10 +16,7 @@ from tinytt._riemannian import (
     left_orthogonalize,
     right_orthogonalize,
     mixed_canonical,
-    horizontal_projection,
-    qr_retraction,
     tangent_project,
-    svd_retraction,
     check_left_orthogonal,
     check_right_orthogonal,
 )
@@ -255,120 +252,6 @@ class TestMixedCanonical:
 
 
 # ======================================================================
-# Horizontal projection
-# ======================================================================
-
-class TestHorizontalProjection:
-    @NEEDS_CLANG
-    def test_output_shapes_match(self):
-        cores = _make_tt_cores(d=3, n=4, r=3, seed=50)
-        grads = _make_tt_cores(d=3, n=4, r=3, seed=51)
-        h = horizontal_projection(cores, grads)
-        assert len(h) == len(grads)
-        for hk, gk in zip(h, grads):
-            assert hk.shape == gk.shape, f"Shape mismatch: {hk.shape} vs {gk.shape}"
-
-    @NEEDS_CLANG
-    def test_zero_gradient_returns_zero(self):
-        cores = _make_tt_cores(d=3, n=4, r=3, seed=52)
-        zero_grads = [tn.zeros(c.shape, dtype=c.dtype, device=c.device) for c in cores]
-        h = horizontal_projection(cores, zero_grads)
-        for hk in h:
-            assert float(tn.to_numpy(tn.linalg.norm(hk))) == 0.0
-
-    @NEEDS_CLANG
-    def test_projection_reduces_gauge_component(self):
-        """Projection should reduce the norm more than the original gradient."""
-        cores = _make_tt_cores(d=3, n=4, r=3, seed=53)
-        grads = _make_tt_cores(d=3, n=4, r=3, seed=54)
-        h = horizontal_projection(cores, grads)
-
-        def norm2(tensors):
-            return sum(float(tn.to_numpy((x.reshape(-1) * x.reshape(-1)).sum())) for x in tensors)
-
-        # The projected gradient norm should be ≤ the original (removing gauge)
-        assert norm2(h) <= norm2(grads) * 1.1 + 1e-10, "Projection should not increase norm"
-
-    @NEEDS_CLANG
-    def test_nonzero_output(self):
-        """Non-zero input should produce non-zero output."""
-        cores = _make_tt_cores(d=3, n=4, r=3, seed=55)
-        grads = _make_tt_cores(d=3, n=4, r=3, seed=56)
-        h = horizontal_projection(cores, grads)
-        total_norm = sum(float(tn.to_numpy(tn.linalg.norm(hk))) for hk in h)
-        assert total_norm > 0.0, "Projection of non-zero gradient should be non-zero"
-
-    @NEEDS_CLANG
-    def test_mismatched_length_raises(self):
-        cores = _make_tt_cores(d=3, n=4, r=3, seed=55)
-        grads = _make_tt_cores(d=2, n=4, r=3, seed=56)
-        with pytest.raises(ValueError, match="must match"):
-            horizontal_projection(cores, grads)
-
-    @NEEDS_CLANG
-    def test_works_for_d2(self):
-        cores = _make_tt_cores(d=2, n=5, r=4, seed=57)
-        grads = _make_tt_cores(d=2, n=5, r=4, seed=58)
-        h = horizontal_projection(cores, grads)
-        assert len(h) == 2
-        for hk, gk in zip(h, grads):
-            assert hk.shape == gk.shape
-
-
-# ======================================================================
-# QR retraction
-# ======================================================================
-
-class TestQRRetraction:
-    @NEEDS_CLANG
-    def test_retraction_stays_on_manifold(self):
-        """After retraction, all cores except last should be left-orthogonal."""
-        cores = _make_tt_cores(d=3, n=4, r=3, seed=60)
-        direction = _make_tt_cores(d=3, n=4, r=3, seed=61)
-        new_cores = qr_retraction(cores, direction, step_size=0.1)
-        for k in range(len(new_cores) - 1):
-            assert check_left_orthogonal(new_cores[k]), f"Core {k} after retraction"
-
-    @NEEDS_CLANG
-    def test_small_step_moves_core_values(self):
-        cores = _make_tt_cores(d=3, n=4, r=3, seed=62)
-        direction = _make_tt_cores(d=3, n=4, r=3, seed=63)
-        new_cores = qr_retraction(cores, direction, step_size=0.1)
-        # cores should have changed
-        diff = sum(
-            float(tn.to_numpy(tn.linalg.norm(n - c)).item())
-            for n, c in zip(new_cores, cores)
-        )
-        assert diff > 0.0, "Retraction did not change cores"
-
-    @NEEDS_CLANG
-    def test_zero_step_preserves_tensor(self):
-        """With zero step, the retraction only changes the gauge.
-        The underlying tensor must be preserved."""
-        cores = _make_tt_cores(d=3, n=4, r=3, seed=64)
-        direction = _make_tt_cores(d=3, n=4, r=3, seed=65)
-        new_cores = qr_retraction(cores, direction, step_size=0.0)
-        full_orig = _tt_full(cores)
-        full_new = _tt_full(new_cores)
-        np.testing.assert_allclose(full_orig, full_new, atol=1e-10)
-
-    @NEEDS_CLANG
-    def test_preserves_tt_representation(self):
-        """Retraction should not change the underlying tensor for zero step."""
-        cores = _make_tt_cores(d=4, n=3, r=3, seed=66)
-        direction = _make_tt_cores(d=4, n=3, r=3, seed=67)
-        for step in [0.0, 0.01]:
-            new_cores = qr_retraction(cores, direction, step)
-            # Verify all cores have valid TT structure
-            ranks = [1]
-            for c in new_cores:
-                assert c.ndim == 3, "All cores must be 3-D"
-                assert c.shape[0] == ranks[-1], f"Rank mismatch at core {k}"
-                ranks.append(c.shape[2])
-            assert ranks[-1] == 1, "Last rank must be 1"
-
-
-# ======================================================================
 # Check helper functions
 # ======================================================================
 
@@ -404,7 +287,7 @@ class TestCheckOrthogonal:
 
 
 # ======================================================================
-# tangent_project + svd_retraction (Lubich/Vandereycken construction)
+# Compatibility tangent projector
 # ======================================================================
 
 def _tt_dense_from_cores(cores):
@@ -457,36 +340,6 @@ class TestTangentProject:
         proj_np = _tt_dense_from_cores(tangent_project(cores, Z))
         proj_tn = _tt_dense_from_cores(tangent_project(cores, tn.tensor(Z, dtype=tn.float64)))
         np.testing.assert_allclose(proj_np, proj_tn, atol=1e-12)
-
-
-class TestSVDRetraction:
-    @NEEDS_CLANG
-    def test_riemannian_gd_decreases_loss(self):
-        """One step should decrease f(x) = 0.5||x - target||^2 for any
-        gradient direction far from optimum (with a sensible step)."""
-        rng = np.random.default_rng(0)
-        cores = _make_tt_cores(d=4, n=3, r=2, seed=80)
-        ns = [int(c.shape[1]) for c in cores]
-        target = rng.standard_normal(ns)
-        cur = _tt_dense_from_cores(cores)
-        loss_before = 0.5 * float(np.linalg.norm(cur - target) ** 2)
-        grad = cur - target
-        eta = tangent_project(cores, grad)
-        new_cores = svd_retraction(cores, eta, step_size=0.5, rmax=max(c.shape[0] for c in cores) + 1)
-        loss_after = 0.5 * float(np.linalg.norm(_tt_dense_from_cores(new_cores) - target) ** 2)
-        assert loss_after < loss_before
-
-    @NEEDS_CLANG
-    def test_respects_rmax_bound(self):
-        cores = _make_tt_cores(d=4, n=4, r=3, seed=81)
-        ns = [int(c.shape[1]) for c in cores]
-        Z = np.random.default_rng(3).standard_normal(ns)
-        eta = tangent_project(cores, Z)
-        retracted = svd_retraction(cores, eta, step_size=-1.0, rmax=3)
-        for c in retracted:
-            assert c.shape[0] <= 3
-            assert c.shape[2] <= 3
-
 
 class TestRankAdmissibilityAndProcrustes:
     @NEEDS_CLANG

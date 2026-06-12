@@ -55,9 +55,6 @@ from . import tdvp
 from . import bug
 
 from ._riemannian import (
-    qr_retraction,
-    svd_retraction,
-    horizontal_projection,
     tangent_project,
     left_orthogonalize,
     right_orthogonalize,
@@ -90,6 +87,21 @@ from .compositional import (
     prepend_lift,
     projection_retraction,
     first_coord_retraction,
+)
+from .manifold import (
+    FunctionalTTLinearization,
+    TangentCGResult,
+    TangentRitzResult,
+    TangentBlockJacobi,
+    TangentAdjacentPair,
+    TTManifoldFrame,
+    TTTangent,
+    TTTangentBatch,
+    project_tt,
+    projection_transport,
+    tangent_conjugate_gradient,
+    tangent_ritz_vectors,
+    transport_batch,
 )
 
 __all__ = [
@@ -128,10 +140,10 @@ __all__ = [
     'fast_mm',
     'cg',
     'armijo_ls',
-    'qr_retraction',
-    'horizontal_projection',
+    'tangent_project',
     'left_orthogonalize',
     'right_orthogonalize',
+    'mixed_canonical',
     'check_left_orthogonal',
     'check_right_orthogonal',
     'gauge_align_cores',
@@ -160,4 +172,17 @@ __all__ = [
     'prepend_lift',
     'projection_retraction',
     'first_coord_retraction',
+    'TTManifoldFrame',
+    'FunctionalTTLinearization',
+    'TangentCGResult',
+    'TangentRitzResult',
+    'TangentBlockJacobi',
+    'TangentAdjacentPair',
+    'TTTangent',
+    'TTTangentBatch',
+    'project_tt',
+    'projection_transport',
+    'tangent_conjugate_gradient',
+    'tangent_ritz_vectors',
+    'transport_batch',
 ]

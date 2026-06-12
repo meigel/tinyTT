@@ -5,30 +5,19 @@ Provides:
   - _qr_move_lr / _qr_move_rl : single-step QR gauge sweeps
   - left_orthogonalize / right_orthogonalize : full sweep to canonicalise cores
   - mixed_canonical : place orthogonality centre at a chosen site
-  - horizontal_projection : project a per-core Euclidean gradient onto the
-    horizontal space of the TT quotient manifold (gauge-aware)
   - tangent_project : project an ambient-space tensor (TT, tinygrad Tensor, or
-    ndarray) onto T_x M via the Lubich/Vandereycken construction
-  - qr_retraction : retract a tangent vector back to the manifold via QR
-    (rank-preserving)
-  - svd_retraction : retract by TT addition + SVD rounding (rank-relaxing)
+    ndarray) onto T_x M through the verified one-pass manifold projector
+  - gauge_align_cores : align equivalent TT representations by orthogonal
+    Procrustes transformations
 
 All functions operate on lists of TT cores following tinyTT's convention:
   cores[k] shape (rk, nk, r_{k+1})  with r0 = rD = 1.
-
-Both projection paths produce the same tangent vector numerically; they
-differ in input form. horizontal_projection takes a list of per-core
-Euclidean gradients (e.g. from autograd); tangent_project takes an
-ambient-space tensor (e.g. a residual b - A·x). The retraction choice
-depends on whether you want strict-rank (qr_retraction) or rank-adaptive
-(svd_retraction) iterations.
 """
 
 from __future__ import annotations
 
 import numpy as np
 import tinytt._backend as tn
-from tinytt._decomposition import round_tt
 
 
 def _coerce_to_tensor(cores, inplace=False):
@@ -276,142 +265,6 @@ def mixed_canonical(cores: list, k: int, inplace: bool = False) -> list:
 
 
 # ---------------------------------------------------------------------------
-# horizontal space projection
-# ---------------------------------------------------------------------------
-
-def horizontal_projection(cores: list, grad_cores: list) -> list:
-    """
-    Project Euclidean gradients to the horizontal space of the TT quotient
-    manifold.
-
-    The projection first brings the current cores into right-orthogonal form
-    (using rank-preserving QR sweeps), then for each core removes the gauge
-    component:
-
-        h_k = g_k - A_k · sym(A_k^† g_k)
-
-    where sym(X) = ½(X + X^T) ensures the correction lies in the skew-symmetric
-    gauge direction.
-
-    Parameters
-    ----------
-    cores : list of tensors or numpy arrays
-        Current TT cores (used to determine the gauge).
-    grad_cores : list of tensors or numpy arrays
-        Euclidean gradients, one per core, same shapes as *cores*.
-
-    Returns
-    -------
-    list
-        Projected gradients (same shapes as *grad_cores*).
-    """
-    cores = _coerce_to_tensor(cores, False)
-    grad_cores = _coerce_to_tensor(grad_cores, False)
-    d = len(cores)
-    if len(grad_cores) != d:
-        raise ValueError(
-            f"Number of cores ({d}) and gradient cores ({len(grad_cores)}) must match."
-        )
-
-    # Right-orthogonalise current cores (safe: rank-preserving QR)
-    ro_cores = right_orthogonalize([c.clone() for c in cores], inplace=False)
-
-    h_grad = []
-    for k in range(d):
-        g = grad_cores[k]
-        c = ro_cores[k]                     # right-orthogonal core (same shape as original)
-        r_left, n, r_right = c.shape
-
-        if k == 0:
-            # First core: shape (1, n0, r1).  After the right-to-left sweep
-            # this core has absorbed all R factors and is *not* right-orthogonal.
-            # The gauge acts from the RIGHT (A0 → A0 R), so the correct
-            # projection uses the pseudoinverse:
-            #   h0 = g0 - A0 · (A0^T A0)^{-1} · A0^T g0
-            c2d = c.reshape(-1, r_right)    # (n0, r1)
-            g2d = g.reshape(-1, r_right)    # (n0, r1)
-            AtA = c2d.T @ c2d                # (r1, r1)
-            Atg = c2d.T @ g2d                # (r1, r1)
-            reg = 1e-12 * tn.eye(r_right, dtype=c2d.dtype, device=c2d.device)
-            X = tn.linalg.solve(AtA + reg, Atg)
-            h = g2d - c2d @ X
-            h_grad.append(h.reshape(c.shape))
-
-        elif k == d - 1:
-            # Last core: shape (r_{d-1}, n_{d-1}, 1).
-            # Right-orthogonal in row form: A_row @ A_row^T = I.
-            #   h = g - g @ A_row^T @ A_row
-            c2d = c.reshape(r_left, -1)     # (r_{d-1}, n_{d-1})
-            g2d = g.reshape(r_left, -1)
-            h = g2d - (g2d @ c2d.T) @ c2d   # uses A_row @ A_row^T = I
-            h_grad.append(h.reshape(c.shape))
-
-        else:
-            # Middle core: shape (rk, nk, r_{k+1}).  Right-orthogonal in both
-            # row and column form.  Two gauge actions via alternating projection.
-            c2d_col = c.reshape(r_left * n, r_right)
-            c2d_row = c.reshape(r_left, n * r_right)
-            g2d = g.reshape(r_left * n, r_right)
-            reg = 1e-12 * tn.eye(r_right, dtype=c2d_col.dtype, device=c2d_col.device)
-            AtA = c2d_col.T @ c2d_col
-            AtA_reg = AtA + reg
-            h = g2d
-            for _ in range(20):  # alternating projections
-                # RIGHT gauge (column space)
-                Atg = c2d_col.T @ h
-                X = tn.linalg.solve(AtA_reg, Atg)
-                h = h - c2d_col @ X
-                # LEFT gauge (row space, A_row @ A_row^T = I)
-                h2d = h.reshape(r_left, n * r_right)
-                h2d = h2d - (h2d @ c2d_row.T) @ c2d_row
-                h = h2d.reshape(r_left * n, r_right)
-            h_grad.append(h.reshape(c.shape))
-
-    return h_grad
-
-
-# ---------------------------------------------------------------------------
-# retraction
-# ---------------------------------------------------------------------------
-
-def qr_retraction(cores: list, direction: list, step_size: float) -> list:
-    """
-    Rank-preserving QR retraction on the fixed-rank TT manifold.
-
-    Computes
-
-        cores_new ← cores - step_size · direction
-
-    then applies a rank-preserving left-to-right QR sweep to restore the
-    gauge (left-canonical form).  If a core's effective rank would shrink
-    during QR, it is padded with a small random perturbation to preserve
-    the original rank.
-
-    Parameters
-    ----------
-    cores : list of tensors or numpy arrays
-        Current TT cores.
-    direction : list of tensors or numpy arrays
-        Tangent direction (same shapes as *cores*).
-    step_size : float
-        Step length.
-
-    Returns
-    -------
-    list
-        New cores on the manifold (left-orthogonalised via QR sweep,
-        with original ranks preserved).
-    """
-    cores = _coerce_to_tensor(cores, False)
-    direction = _coerce_to_tensor(direction, False)
-    new_cores = [c - step_size * z for c, z in zip(cores, direction)]
-    d = len(new_cores)
-    for pos in range(d - 1):
-        _qr_move_lr(new_cores, pos, preserve_rank=True)
-    return new_cores
-
-
-# ---------------------------------------------------------------------------
 # helpers for checking gauge conditions
 # ---------------------------------------------------------------------------
 
@@ -464,7 +317,7 @@ def check_right_orthogonal(core: tn.Tensor, tol: float = 1e-10) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Lubich/Vandereycken tangent-space projection and SVD-retraction
+# Compatibility tangent-space projection
 # ---------------------------------------------------------------------------
 
 def _coerce_to_cores(Z, ref_cores):
@@ -495,176 +348,19 @@ def _coerce_to_cores(Z, ref_cores):
     )
 
 
-def _build_left_env_z(x_cores, z_cores, k, dtype, device):
-    """L[a, b] for sites 0..k-1 (rx_left, rz_left)."""
-    L = tn.ones((1, 1), dtype=dtype, device=device)
-    for i in range(k):
-        # L[a,b] -> Lp[c,d] = sum_{a,b,n} L[a,b] * x[a,n,c] * z[b,n,d]
-        L = tn.realize(tn.einsum('ab,anc,bnd->cd', L, x_cores[i], z_cores[i]))
-    return L
-
-
-def _build_right_env_z(x_cores, z_cores, k, dtype, device):
-    """R[a, b] for sites k+1..d-1 (rx_right, rz_right)."""
-    d = len(x_cores)
-    R = tn.ones((1, 1), dtype=dtype, device=device)
-    for i in range(d - 1, k, -1):
-        R = tn.realize(tn.einsum('ab,cna,dnb->cd', R, x_cores[i], z_cores[i]))
-    return R
-
-
-def _tt_block_stack_add(a_cores, b_cores, is_ttm=False):
-    """Exact TT addition by block-stacking cores."""
-    d = len(a_cores)
-    new_cores = []
-    for k in range(d):
-        ac, bc = a_cores[k], b_cores[k]
-        ref = ac
-        if is_ttm:
-            ra_l, m, n, ra_r = ac.shape
-            rb_l, _, _, rb_r = bc.shape
-            if k == 0:
-                block = tn.cat([ac, bc], dim=-1)
-            elif k == d - 1:
-                block = tn.cat([ac, bc], dim=0)
-            else:
-                top = tn.cat([ac, tn.zeros([ra_l, m, n, rb_r], dtype=ref.dtype, device=ref.device)], dim=-1)
-                bot = tn.cat([tn.zeros([rb_l, m, n, ra_r], dtype=ref.dtype, device=ref.device), bc], dim=-1)
-                block = tn.cat([top, bot], dim=0)
-        else:
-            ra_l, n, ra_r = ac.shape
-            rb_l, _, rb_r = bc.shape
-            if k == 0:
-                block = tn.cat([ac, bc], dim=-1)
-            elif k == d - 1:
-                block = tn.cat([ac, bc], dim=0)
-            else:
-                top = tn.cat([ac, tn.zeros([ra_l, n, rb_r], dtype=ref.dtype, device=ref.device)], dim=-1)
-                bot = tn.cat([tn.zeros([rb_l, n, ra_r], dtype=ref.dtype, device=ref.device), bc], dim=-1)
-                block = tn.cat([top, bot], dim=0)
-        new_cores.append(block)
-    return new_cores
-
-
 def tangent_project(cores: list, Z) -> list:
+    """Project an ambient TT tensor onto the fixed-rank TT tangent space.
+
+    This compatibility wrapper uses the verified one-pass manifold projector.
+    It returns the exact rank-``2r`` TT representation expected by the legacy
+    API. Dense arrays remain accepted for compatibility and are first
+    converted to a TT by :func:`_coerce_to_cores`.
     """
-    Project an ambient-space tensor ``Z`` onto the tangent space at TT
-    represented by ``cores`` (Lubich/Vandereycken construction).
+    from tinytt.manifold import TTManifoldFrame
 
-    For each site k = 0..d-1:
-      1. Bring cores into mixed-canonical form at k.
-      2. Contract Z with the (orthonormal) left and right interfaces of the
-         canonical form to get the per-site update δG_k.
-      3. For k < d-1 enforce the gauge condition δG_k.left ⊥ G_k.left via a
-         thin QR projection.
-    Sum the d single-site components into a single TT (rank up to d * r before
-    rounding) by block-stacking cores.
-
-    The result is a *list of cores* (same convention as the rest of this
-    module). For an SVD-truncated version, call ``svd_retraction`` or compose
-    with ``round_tt``.
-
-    Parameters
-    ----------
-    cores : list of tensors
-        Base point on the manifold (the TT at which the tangent space is
-        defined).
-    Z : list of TT cores | tinygrad Tensor | np.ndarray
-        Ambient-space tensor to project. Mode sizes must match ``cores``.
-
-    Returns
-    -------
-    list
-        Cores of the tangent vector represented as a TT.
-    """
-    d = len(cores)
-    z_cores = _coerce_to_cores(Z, cores)
-    ref = cores[0]
-    dtype, device = ref.dtype, ref.device
-
-    summands = []
-    for k in range(d):
-        xc = mixed_canonical(cores, k)
-        L = _build_left_env_z(xc, z_cores, k, dtype, device)         # (rx_L, rz_L)
-        R = _build_right_env_z(xc, z_cores, k, dtype, device)        # (rx_R, rz_R)
-        # δG_k[a, n, c] = sum_{b, b'} L[a, b] * Z_k[b, n, b'] * R[c, b']
-        delta = tn.realize(tn.einsum('ab,bnd,cd->anc', L, z_cores[k], R))
-
-        # Gauge: for k < d-1 force δG_k's left unfolding to be orthogonal to
-        # G_k's column space. xc[k] in mixed-canonical form carries the norm
-        # of the tensor, so its columns are not orthonormal — take a thin QR.
-        if k < d - 1:
-            G_k = xc[k]
-            rL, n, rR = G_k.shape
-            G_left = tn.reshape(G_k, [rL * n, rR])
-            Q, _ = tn.linalg.qr(G_left)
-            delta_left = tn.reshape(delta, [rL * n, rR])
-            delta_left = tn.realize(delta_left - Q @ (Q.transpose(0, 1) @ delta_left))
-            delta = tn.reshape(delta_left, [rL, n, rR])
-
-        summand = [c.clone() for c in xc]
-        summand[k] = delta
-        summands.append(summand)
-
-    total = summands[0]
-    for s in summands[1:]:
-        total = _tt_block_stack_add(total, s, is_ttm=False)
-    return total
-
-
-def svd_retraction(cores: list, direction: list, step_size: float,
-                   rmax: int | None = None, eps: float = 1e-12) -> list:
-    """
-    Rank-adaptive retraction: ``cores - step_size * direction`` followed by
-    TT-SVD rounding back to ``rmax``.
-
-    This is the standard retraction in TT-completion / Lubich/Vandereycken
-    settings where the rank is allowed to shrink. For strict-rank Riemannian
-    optimisation use :func:`qr_retraction` instead.
-
-    Parameters
-    ----------
-    cores : list of tensors
-        Current cores on the manifold.
-    direction : list of tensors
-        Tangent direction. If ``direction`` has a different (typically
-        larger) rank than ``cores`` — which is the case for a raw
-        ``tangent_project`` result — the addition is exact (block-stack)
-        and the rounding controls the output rank.
-    step_size : float
-        Step length.
-    rmax : int, optional
-        Maximum TT rank for the rounded result. If omitted, the maximum
-        rank of ``cores`` is used.
-    eps : float
-        SVD truncation tolerance.
-
-    Returns
-    -------
-    list
-        New cores with rank ≤ ``rmax``.
-    """
-    if rmax is None:
-        rmax = max(int(c.shape[0]) for c in cores) if len(cores) > 0 else 1
-        rmax = max(rmax, max(int(c.shape[2]) for c in cores) if len(cores) > 0 else 1)
-
-    # Scale direction by -step_size (rescale first core only) so we don't have
-    # to materialise a separately scaled copy.
-    if cores and len(direction) > 0:
-        d0 = direction[0] * (-float(step_size))
-        scaled_direction = [d0] + [c.clone() for c in direction[1:]]
-    else:
-        scaled_direction = list(direction)
-
-    summed = _tt_block_stack_add(cores, scaled_direction, is_ttm=False)
-
-    # round_tt sweeps internally; just pass the ranks explicitly.
-    R = [1] + [c.shape[2] for c in summed[:-1]] + [1]
-    Rmax = [1] + [int(rmax)] * (len(summed) - 1) + [1]
-    # round_tt calls lr_orthogonal internally; build a temporary core list it
-    # is allowed to mutate.
-    rounded, _ = round_tt([c.clone() for c in summed], R[:], eps, Rmax, is_ttm=False)
-    return rounded
+    frame = TTManifoldFrame.from_tt(cores)
+    ambient_cores = _coerce_to_cores(Z, cores)
+    return frame.project(ambient_cores).to_tt().cores
 
 
 def gauge_align_cores(cores_ref: list[tn.Tensor], cores: list[tn.Tensor]) -> list[tn.Tensor]:
