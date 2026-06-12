@@ -20,7 +20,12 @@ NEEDS_CLANG = pytest.mark.skipif(
 class TestRandomizedSVD:
     @NEEDS_CLANG
     def test_randomized_svd_low_rank(self):
-        # Generate a truly low-rank matrix of shape (50, 40) with rank 5
+        """Verify that randomized SVD recovers a low-rank matrix of rank r=5 exactly.
+
+        Generates a matrix :math:`A = U_{\\text{true}} V_{\\text{true}} \\in \\mathbb{R}^{50 \\times 40}`
+        of rank 5 and asserts that `randomized_svd(A, k=5)` reconstructs :math:`A` with an error
+        :math:`\\|A - U \\Sigma V^T\\|_F \\le 10^{-5}`.
+        """
         rng = np.random.default_rng(42)
         u_np = rng.standard_normal((50, 5))
         v_np = rng.standard_normal((5, 40))
@@ -41,7 +46,10 @@ class TestRandomizedSVD:
 
     @NEEDS_CLANG
     def test_svd_explicit_randomized_truncation(self):
-        # Generate matrix of shape (30, 20)
+        """Verify that global SVD interface delegates to randomized_svd when k is specified.
+
+        Asserts that calling `SVD(mat, k=10)` returns truncated matrices matching the specified target dimensions.
+        """
         rng = np.random.default_rng(100)
         mat_np = rng.standard_normal((30, 20))
         mat = tn.tensor(mat_np, dtype=tn.float64)
@@ -54,6 +62,10 @@ class TestRandomizedSVD:
 
     @NEEDS_CLANG
     def test_randomized_svd_seed_is_reproducible(self):
+        """Verify that passing a seed produces identical random sketches and factorizations.
+
+        Checks that two independent runs of `randomized_svd` with the same seed result in numerically identical factors.
+        """
         rng = np.random.default_rng(101)
         mat = tn.tensor(rng.standard_normal((40, 25)), dtype=tn.float64)
         first = randomized_svd(mat, k=6, seed=11)
@@ -63,6 +75,7 @@ class TestRandomizedSVD:
 
     @NEEDS_CLANG
     def test_randomized_svd_validates_rank(self):
+        """Verify that randomized_svd raises a ValueError if the rank constraint k is out of bounds."""
         mat = tn.tensor(np.eye(5), dtype=tn.float64)
         with pytest.raises(ValueError, match="k must lie"):
             randomized_svd(mat, k=0)

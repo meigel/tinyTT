@@ -375,9 +375,36 @@ class CompositionalTT:
     def round(self, eps: float = 1e-12, rmax=sys.maxsize, X_data=None) -> CompositionalTT:
         """Round (compress) every layer's ``ψ`` via TT‑SVD.
 
-        If X_data is provided, uses a marginal feature-covariance weighting
-        heuristic. This does not generally minimize the empirical output error,
-        because cross-coordinate feature correlations are not represented.
+        If `X_data` is not provided, rounds each layer's coefficient tensor independently.
+        If `X_data` is provided, performs data-driven covariance-weighted compositional rounding to minimize
+        the error in function space.
+
+        The covariance-weighted algorithm proceeds as follows:
+        1. Propagate the input data :math:`X \\in \\mathbb{R}^{B \\times d}` up to layer :math:`\\ell` to get the current state activations :math:`y \\in \\mathbb{R}^{B \\times p}`.
+        2. For each state coordinate :math:`j = 1, \\dots, p`, evaluate the univariate basis functions on the activations :math:`y_{:, j}` to get the feature matrix :math:`\\Phi_j \\in \\mathbb{R}^{B \\times n}`.
+        3. Compute the empirical feature covariance (Gram) matrix for each coordinate:
+        
+           .. math::
+               C_j = \\frac{1}{B} \\Phi_j^T \\Phi_j + \\epsilon I_n
+               
+           where :math:`\\epsilon = 10^{-8}` is a regularization parameter.
+        4. Compute the symmetric matrix square root :math:`W_j = C_j^{1/2}` and its inverse :math:`W_j^{-1} = C_j^{-1/2}` using the SVD :math:`C_j = U \\Sigma V^T`:
+        
+           .. math::
+               W_j = U \\Sigma^{1/2} V^T, \\quad W_j^{-1} = V \\Sigma^{-1/2} U^T
+               
+        5. Transform the target coefficient cores of :math:`\\psi_\\ell` by applying the weight :math:`W_j` to the feature mode of core :math:`j+1`:
+        
+           .. math::
+               \\tilde{G}_{j+1} = W_j \\cdot_2 G_{j+1}
+               
+        6. Perform standard SVD rounding on the weighted cores :math:`\\{\\tilde{G}_{j+1}\\}` to obtain the compressed cores :math:`\\{\\tilde{G}_{j+1}^{\\text{rounded}}\\}`.
+        7. Transform the rounded cores back to the original scale by applying the inverse weight :math:`W_j^{-1}`:
+        
+           .. math::
+               G_{j+1}^{\\text{rounded}} = W_j^{-1} \\cdot_2 \\tilde{G}_{j+1}^{\\text{rounded}}
+               
+        8. Propagate the activations through this newly rounded layer to obtain the input for the next layer.
 
         Parameters
         ----------

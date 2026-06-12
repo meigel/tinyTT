@@ -68,7 +68,63 @@ def randomized_svd(
     n_iter: int = 1,
     seed: int | None = None,
 ):
-    """Compute a reproducible approximate rank-k SVD by randomized range finding."""
+    """Compute a reproducible approximate rank-k SVD using randomized range finding.
+
+    Approximates the Singular Value Decomposition (SVD) of a matrix :math:`A \\in \\mathbb{R}^{m \\times n}`
+    using the randomized algorithm described in Halko et al. (2011).
+
+    The algorithm consists of the following steps:
+    1. Drawing a random sketching matrix :math:`\\Omega \\in \\mathbb{R}^{n \\times r}` where :math:`r = \\min(k + p, m, n)`
+       and :math:`p` is the oversampling parameter.
+    2. Computing the sketch matrix :math:`Y = A \\Omega \\in \\mathbb{R}^{m \\times r}`.
+    3. Performing :math:`q` subspace power iterations to improve approximation quality for matrices with
+       decaying singular spectra:
+       
+       .. math::
+           Y \\leftarrow A (A^T Q) \\quad \\text{where} \\quad Q, R = \\text{QR}(Y)
+           
+    4. Orthonormalizing the final sketch matrix to obtain an orthonormal basis :math:`Q \\in \\mathbb{R}^{m \\times r}`:
+    
+       .. math::
+           Q, R = \\text{QR}(Y)
+           
+    5. Projecting the matrix :math:`A` onto the column space of :math:`Q`:
+    
+       .. math::
+           B = Q^T A \\in \\mathbb{R}^{r \\times n}
+           
+    6. Computing the standard SVD of the small matrix :math:`B`:
+    
+       .. math::
+           B = \\tilde{U} \\Sigma V^T
+           
+    7. Recovering the singular vectors of the original matrix :math:`A`:
+    
+       .. math::
+           U = Q \\tilde{U} \\in \\mathbb{R}^{m \\times r}
+
+    Parameters
+    ----------
+    mat : Tensor
+        Input matrix :math:`A` of shape :math:`(m, n)`.
+    k : int
+        Target approximation rank.
+    oversampling : int, default=5
+        Oversampling parameter :math:`p` to improve the quality of the sketch.
+    n_iter : int, default=1
+        Number of power iterations :math:`q` to perform.
+    seed : int, optional
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    U : Tensor
+        Left singular vectors of shape :math:`(m, k)`.
+    S : Tensor
+        Singular values of shape :math:`(k,)`.
+    V : Tensor
+        Right singular vectors of shape :math:`(k, n)`.
+    """
     m_dim, n_dim = mat.shape
     max_rank = min(m_dim, n_dim)
     if not 0 < k <= max_rank:

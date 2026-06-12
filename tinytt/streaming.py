@@ -254,11 +254,16 @@ def streaming_tt(shape, ranks, data_stream, device=None, dtype=None):
 
 
 class StreamingCurvature:
-    """Positive low-rank-plus-diagonal streaming precision/Fisher matrix.
+    r"""Positive low-rank-plus-diagonal streaming precision/Fisher matrix.
 
-    Represents J = diag(diagonal) + factor @ factor.T.
-    The diagonal is a fixed positive floor. SVD truncation provides a one-sided
-    spectral approximation of the streaming low-rank curvature.
+    Represents the precision (or Fisher) matrix :math:`J \in \mathbb{R}^{d \times d}` in a symmetric,
+    low-rank-plus-diagonal format:
+
+    .. math::
+        J = \operatorname{diag}(D) + F F^T
+
+    where :math:`D \in \mathbb{R}^d` is a strictly positive diagonal vector representing the positive damping/regularization
+    floor, and :math:`F \in \mathbb{R}^{d \times k}` is the low-rank square-root factor.
     """
 
     def __init__(self, diagonal: tn.Tensor, factor: tn.Tensor):
@@ -291,7 +296,37 @@ class StreamingCurvature:
         return int(self.factor.shape[1])
 
     def update_from_rows(self, rows: tn.Tensor, gamma: float, max_rank: int | None = None):
-        """Exponentially weighted update from a batch of rows."""
+        r"""Exponentially weighted update from a batch of rows.
+
+        Updates the precision matrix with a batch of row vectors :math:`X \in \mathbb{R}^{B \times d}`:
+
+        .. math::
+            J_{\text{new}} = (1 - \gamma) J_{\text{old}} + \frac{\gamma}{B} X^T X
+
+        In terms of the factorization parameters, the diagonal :math:`D` decays exponentially, while the low-rank
+        factor :math:`F` concatenates the scaled old factor and the new row activations:
+
+        .. math::
+            D_{\text{new}} = (1 - \gamma) D_{\text{old}}
+
+            F_{\text{new}} = \begin{pmatrix} \sqrt{1 - \gamma} F_{\text{old}} & \sqrt{\frac{\gamma}{B}} X^T \end{pmatrix}
+
+        If the rank exceeds `max_rank`, SVD-based compression is triggered.
+
+        Parameters
+        ----------
+        rows : Tensor
+            Batch of input row activations of shape :math:`(B, d)`.
+        gamma : float
+            Exponential moving average coefficient :math:`\gamma \in (0, 1]`.
+        max_rank : int, optional
+            Maximum allowed rank constraint. If exceeded, triggers `compress`.
+
+        Returns
+        -------
+        float
+            The spectral certificate error norm if compressed, else 0.0.
+        """
         if len(rows.shape) != 2 or int(rows.shape[1]) != self.dimension:
             raise ValueError("rows must have shape (batch, dimension)")
         batch = int(rows.shape[0])
@@ -309,7 +344,35 @@ class StreamingCurvature:
         return 0.0
 
     def compress(self, max_rank: int):
-        """Spectrally truncate the factor and return discarded curvature norm."""
+        r"""Spectrally truncate the factor and return the discarded curvature norm.
+
+        Computes the Singular Value Decomposition (SVD) of the low-rank factor :math:`F \in \mathbb{R}^{d \times r}`:
+
+        .. math::
+            F = U \Sigma V^T
+
+        and retains only the top :math:`k_{\text{max}} = \text{max\_rank}` singular values/vectors:
+
+        .. math::
+            F_{\text{compressed}} = U_{:, :k_{\text{max}}} \Sigma_{:k_{\text{max}}}
+
+        The truncation provides a one-sided spectral approximation certificate of the curvature.
+        The spectral order-2 operator norm of the discarded curvature error :math:`\|J_{\text{new}} - J_{\text{compressed}}\|_2`
+        is exactly equal to the square of the first discarded singular value:
+
+        .. math::
+            \sigma_{k_{\text{max}} + 1}^2
+
+        Parameters
+        ----------
+        max_rank : int
+            Target rank constraint to compress to.
+
+        Returns
+        -------
+        float
+            The operator norm of the discarded curvature :math:`\sigma_{k_{\text{max}} + 1}^2`.
+        """
         if max_rank < 0:
             raise ValueError("max_rank must be nonnegative")
         if self.rank <= max_rank:
@@ -323,7 +386,25 @@ class StreamingCurvature:
         return float(tn.to_numpy(s[kept]).item() ** 2)
 
     def solve(self, vector: tn.Tensor) -> tn.Tensor:
-        """Apply J^-1 via Woodbury identity."""
+        r"""Apply the inverse precision matrix :math:`J^{-1} v` using the Woodbury identity.
+
+        Solves :math:`J x = v` in :math:`O(d k^2)` operations instead of :math:`O(d^3)` by exploiting the low-rank
+        structure of the precision matrix:
+
+        .. math::
+            J^{-1} v = \left(\operatorname{diag}(D) + F F^T\right)^{-1} v
+                     = D^{-1} v - D^{-1} F \left(I_k + F^T D^{-1} F\right)^{-1} F^T D^{-1} v
+
+        Parameters
+        ----------
+        vector : Tensor
+            Target vector :math:`v` of shape :math:`(d,)`.
+
+        Returns
+        -------
+        Tensor
+            Solution vector :math:`x = J^{-1} v` of shape :math:`(d,)`.
+        """
         if tuple(vector.shape) != (self.dimension,):
             raise ValueError("vector must have shape (dimension,)")
         inv_diag_v = vector / self.diagonal

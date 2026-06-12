@@ -491,9 +491,11 @@ class TestSVDRetraction:
 class TestRankAdmissibilityAndProcrustes:
     @NEEDS_CLANG
     def test_qr_move_lr_rejects_impossible_rank(self):
-        # Create cores where r_left * n < r_right to force rank preservation padding
-        # e.g., r_left = 2, n = 2, r_right = 5.
-        # Here r_left * n = 4 < 5.
+        """Verify that left-to-right QR move rejects impossible target ranks during sweeps.
+
+        If r_left * n < r_right, the coordinate space dimension is too small to support the target
+        rank, making the rank locally inadmissible. This test verifies that a ValueError is raised.
+        """
         rng = np.random.default_rng(123)
         c0 = tn.tensor(rng.standard_normal((1, 2, 2)))
         c1 = tn.tensor(rng.standard_normal((2, 2, 5)))
@@ -505,9 +507,11 @@ class TestRankAdmissibilityAndProcrustes:
 
     @NEEDS_CLANG
     def test_qr_move_rl_rejects_impossible_rank(self):
-        # Create cores where r_left > n * r_right to force rank preservation padding
-        # e.g., r_left = 5, n = 2, r_right = 2.
-        # Here n * r_right = 4 < 5.
+        """Verify that right-to-left QR move rejects impossible target ranks during sweeps.
+
+        If n * r_right < r_left, the coordinate space dimension is too small to support the target
+        rank, making the rank locally inadmissible. This test verifies that a ValueError is raised.
+        """
         rng = np.random.default_rng(124)
         c0 = tn.tensor(rng.standard_normal((1, 2, 5)))
         c1 = tn.tensor(rng.standard_normal((5, 2, 2)))
@@ -519,6 +523,11 @@ class TestRankAdmissibilityAndProcrustes:
 
     @NEEDS_CLANG
     def test_gauge_align_cores_preserves_tensor(self):
+        """Verify that gauge_align_cores aligns two mismatched gauges without changing the represented tensor.
+
+        Applies a random orthogonal matrix U to simulate gauge mismatch, aligns the core list to the reference,
+        and asserts that the represented dense tensor matches the reference exactly.
+        """
         from tinytt._riemannian import gauge_align_cores
 
         # Build two identical tensors with different gauges (by applying random orthogonal matrices)

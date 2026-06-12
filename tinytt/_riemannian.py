@@ -670,6 +670,31 @@ def svd_retraction(cores: list, direction: list, step_size: float,
 def gauge_align_cores(cores_ref: list[tn.Tensor], cores: list[tn.Tensor]) -> list[tn.Tensor]:
     """Align the virtual bonds gauge of cores to match the gauge of cores_ref (Procrustes alignment).
 
+    For each core site :math:`k = 1, \\dots, d-1`, we align the target core :math:`G_k` (unfolded as a matrix
+    :math:`M_k \\in \\mathbb{R}^{r_{\\text{left}} n \\times r_{\\text{right}}}`) to the reference core :math:`G_k^{\\text{ref}}`
+    (unfolded as :math:`M_k^{\\text{ref}} \\in \\mathbb{R}^{r_{\\text{left}} n \\times r_{\\text{right}}}`) by solving the Orthogonal
+    Procrustes problem:
+
+    .. math::
+        \\min_{U_k} \\| M_k U_k - M_k^{\\text{ref}} \\|_F^2 \\quad \\text{subject to} \\quad U_k^T U_k = I_{r_{\\text{right}}}
+
+    The closed-form analytical solution is obtained using the SVD of the cross-covariance matrix:
+
+    .. math::
+        C_k = M_k^T M_k^{\\text{ref}} = P \\Sigma Q^T
+
+        U_k = P Q^T
+
+    The gauge transformation is then applied to the target cores sequentially:
+    
+    .. math::
+        G_k \\leftarrow G_k \\cdot U_k
+        
+        G_{k+1} \\leftarrow U_k^T \\cdot G_{k+1}
+
+    Since :math:`U_k` is orthogonal, the contraction is invariant (:math:`G_k \\cdot U_k \\cdot U_k^T \\cdot G_{k+1} = G_k G_{k+1}`),
+    so the reconstructed tensor is preserved exactly, while its coordinate representation is aligned to the reference manifold gauge.
+
     Parameters
     ----------
     cores_ref : list of tn.Tensor
@@ -680,7 +705,7 @@ def gauge_align_cores(cores_ref: list[tn.Tensor], cores: list[tn.Tensor]) -> lis
     Returns
     -------
     list of tn.Tensor
-        Aligned TT cores representing the same tensor as cores but aligned to cores_ref.
+        Aligned TT cores representing the same tensor as target cores but aligned to the gauge of cores_ref.
     """
     if len(cores_ref) != len(cores):
         raise ValueError("reference and target must have the same number of cores")
