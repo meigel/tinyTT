@@ -59,13 +59,16 @@ class FunctionalTT:
     # Forward pass
     # ------------------------------------------------------------------
 
-    def forward(self, phi_list):
+    def forward(self, phi_list, normalize=False):
         """
         Evaluate f(x) for a batch of samples.
 
         Parameters
         ----------
         phi_list : list of d tensors, each of shape (m, n_k)
+        normalize : bool
+            If True, normalize R after each contraction step to kill eigenvalue drift.
+            Makes variance independent of width and rank.
 
         Returns
         -------
@@ -79,11 +82,15 @@ class FunctionalTT:
         Ad = self.cores[d]                               # (r_d, n_d, 1)
         phi_d = phi_list[d - 1]                          # (m, n_d)
         R = tn.einsum('mb,ab->ma', phi_d, Ad.squeeze(2))  # (m, r_d)
+        if normalize:
+            R = R / (R.pow(2).mean(dim=0, keepdim=True).sqrt() + 1e-8)
 
         for k in range(d - 1, 0, -1):
             Ak = self.cores[k]                           # (r_k, n_k, r_{k+1})
             phi_k = phi_list[k - 1]                      # (m, n_k)
             R = tn.einsum('mb,abc,mc->ma', phi_k, Ak, R)  # (m, r_k)
+            if normalize:
+                R = R / (R.pow(2).mean(dim=0, keepdim=True).sqrt() + 1e-8)
 
         # Output core A_0: (1, n_0, r_1)
         f = tn.einsum('ma,na->mn', R, self.cores[0].squeeze(0))  # (m, n_0)
