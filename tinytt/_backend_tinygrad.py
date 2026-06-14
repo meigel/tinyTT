@@ -479,10 +479,24 @@ class _Linalg:
         return (x * x).sum().sqrt()
 
     def qr(self, x: Tensor):
-        return x.qr()
+        q, r = x.qr()
+        if q.device != x.device:
+            q = q.to(x.device)
+        if r.device != x.device:
+            r = r.to(x.device)
+        return q, r
 
     def svd(self, x: Tensor, full_matrices: bool = False):
-        return x.svd(full_matrices=full_matrices)
+        res = x.svd(full_matrices=full_matrices)
+        # handle potential variation in return type (tuple of 3 tensors)
+        u, s, vt = res[0], res[1], res[2]
+        if u.device != x.device:
+            u = u.to(x.device)
+        if s.device != x.device:
+            s = s.to(x.device)
+        if vt.device != x.device:
+            vt = vt.to(x.device)
+        return u, s, vt
 
     def solve(self, a: Tensor, b: Tensor):
         return solve(a, b)

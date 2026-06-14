@@ -227,7 +227,7 @@ def right_orthogonalize(cores: list, inplace: bool = False) -> list:
     return cores
 
 
-def mixed_canonical(cores: list, k: int, inplace: bool = False) -> list:
+def mixed_canonical(cores: list, k: int, inplace: bool = False, preserve_rank: bool = True) -> list:
     """
     Bring the TT into mixed-canonical form with the orthogonality centre
     at site ``k``: cores[0..k-1] are left-orthogonal, cores[k+1..d-1] are
@@ -245,6 +245,8 @@ def mixed_canonical(cores: list, k: int, inplace: bool = False) -> list:
         Position of the orthogonality centre, ``0 <= k < d``.
     inplace : bool
         If True, modify the input list in place; otherwise clone first.
+    preserve_rank : bool
+        If True, reject locally inadmissible ranks instead of shrinking them.
 
     Returns
     -------
@@ -258,9 +260,9 @@ def mixed_canonical(cores: list, k: int, inplace: bool = False) -> list:
     if not inplace:
         cores = [c.clone() for c in cores]
     for pos in range(k):
-        _qr_move_lr(cores, pos, preserve_rank=True)
+        _qr_move_lr(cores, pos, preserve_rank=preserve_rank)
     for pos in range(d - 1, k, -1):
-        _qr_move_rl(cores, pos, preserve_rank=True)
+        _qr_move_rl(cores, pos, preserve_rank=preserve_rank)
     return cores
 
 
