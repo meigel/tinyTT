@@ -1,12 +1,12 @@
 r"""
-Tensor-Train (TT) decomposition using tinygrad as the backend.
+Tensor-Train (TT) decomposition — dual backend (tinygrad / PyTorch).
 
 Modules
 -------
 tt.TT
     Core TT tensor / TT-matrix class.
 tt.solvers
-    ALS, AMEn, DMRG solvers.
+    ALS, AMEn, DMRG, CG, GMRES, BiCGSTAB solvers.
 tt.tdvp
     Time-evolution (TDVP) sweeps.
 tt.uq_adf
@@ -18,7 +18,22 @@ tt.truncation
 tt.streaming
     One-pass randomised TT approximation (STTA).
 tt.riemannian
-    Riemannian manifold operations (projection, retraction).
+    Riemannian manifold operations (legacy interface).
+tt.manifold
+    Matrix-free manifold frame, tangent vectors, projection,
+    transport, Krylov methods, and structured preconditioners.
+tt.functional_tt
+    FunctionalTT: basis-driven regression model.
+tt.compositional
+    Compositional TT (residual CTT, arXiv:2512.18059).
+tt.regression
+    ALS regression and continuity fit for functional TT.
+tt.grad
+    Autograd helpers (watch, unwatch, grad).
+tt.functional
+    Basis functions (Legendre, Hermite, Monomial).
+tt.linesearch
+    Armijo backtracking line search.
 """
 
 from ._tt_base import TT

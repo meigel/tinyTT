@@ -9,8 +9,8 @@ include = ["tinytt*"]
 
 [project]
 name = "tinyTT"
-version = "0.3"
-description = "Tensor-Train decomposition in tinygrad."
+version = "0.4"
+description = "Tensor-Train decomposition — tinygrad and PyTorch backends, Riemannian manifold, certified solvers."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -21,12 +21,15 @@ license = {file = "LICENSE"}
 authors = [
     { name = "Ion Gabriel Ion", email = "ion.ion.gabriel@gmail.com" }
 ]
-keywords = ["tinygrad", "tensor-train decomposition"]
+keywords = ["tinygrad", "pytorch", "tensor-train", "tt-decomposition", "riemannian-optimisation"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
 [tool.pytest.ini_options]
