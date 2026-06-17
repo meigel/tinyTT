@@ -1,6 +1,7 @@
 # tinyTT
 
 [![CI](https://github.com/meigel/tinyTT/actions/workflows/testing.yml/badge.svg)](https://github.com/meigel/tinyTT/actions/workflows/testing.yml)
+[![Docs](https://img.shields.io/badge/docs-github.io-blue)](https://meigel.github.io/tinyTT/)
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -10,6 +11,8 @@ and certified Krylov methods on the fixed-rank TT tangent bundle.
 
 Supports CPU (default), CUDA, Metal, and OpenCL backends (via tinygrad), plus
 native CUDA/MPS via PyTorch.
+
+📖 **Documentation: [meigel.github.io/tinyTT](https://meigel.github.io/tinyTT/)** — tutorials, API reference, and examples.
 
 ## Quickstart
 

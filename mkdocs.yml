@@ -1,0 +1,47 @@
+site_name: tinyTT
+site_description: Tensor-Train (TT) tensors, operators, and solvers — dual backend (tinygrad / PyTorch)
+site_url: https://meigel.github.io/tinyTT/
+repo_url: https://github.com/meigel/tinyTT
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: indigo
+      accent: teal
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+    - content.code.annotate
+
+plugins:
+  - search
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - admonition
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Tutorials:
+    - TT Basics: tutorials/tt-basics.md
+    - Solvers: tutorials/solvers.md
+    - Functional TT: tutorials/functional-tt.md
+    - Riemannian Optimisation: tutorials/riemannian.md
+    - Compositional TT (CTT): tutorials/compositional-tt.md
+    - Quantized TT (QTT): tutorials/qtt.md
+    - Streaming TT: tutorials/streaming.md
+    - UQ-ADF: tutorials/uq-adf.md
+    - Dual Backend: tutorials/dual-backend.md
+  - Examples: examples.md

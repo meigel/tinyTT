@@ -1,5 +1,7 @@
 # CTT Redesign — Changes from Prior Implementation
 
+*See also the [Compositional TT documentation](https://meigel.github.io/tinyTT/tutorials/compositional-tt/) for usage examples.*
+
 ## What changed and why
 
 The prior `CompositionalTT` implemented a **stack of TT-matrices** applied sequentially:
