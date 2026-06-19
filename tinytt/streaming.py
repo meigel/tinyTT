@@ -315,7 +315,7 @@ class StreamingCurvature:
 
         Parameters
         ----------
-        rows : Tensor
+        rows : Tensor (or ndarray)
             Batch of input row activations of shape :math:`(B, d)`.
         gamma : float
             Exponential moving average coefficient :math:`\gamma \in (0, 1]`.
@@ -327,6 +327,8 @@ class StreamingCurvature:
         float
             The spectral certificate error norm if compressed, else 0.0.
         """
+        # Ensure rows is a tinygrad tensor
+        rows = tn.tensor(rows) if not tn.is_tensor(rows) else rows
         if len(rows.shape) != 2 or int(rows.shape[1]) != self.dimension:
             raise ValueError("rows must have shape (batch, dimension)")
         batch = int(rows.shape[0])
@@ -334,10 +336,17 @@ class StreamingCurvature:
             raise ValueError("rows must contain at least one sample")
         if not 0.0 < gamma <= 1.0:
             raise ValueError("gamma must lie in (0, 1]")
-        old_factor = ((1.0 - gamma) ** 0.5) * self.factor
-        new_factor = ((gamma / batch) ** 0.5) * rows.transpose(0, 1)
 
-        self.factor = tn.cat([old_factor, new_factor], dim=1)
+        # Diagonal decays
+        self.diagonal = (1.0 - gamma) * self.diagonal
+
+        # Update factor: handle rank=0 separately to avoid tinygrad cat issues
+        new_factor = ((gamma / batch) ** 0.5) * rows.transpose(0, 1)  # (dim, batch)
+        if self.rank == 0:
+            self.factor = new_factor
+        else:
+            old_factor = ((1.0 - gamma) ** 0.5) * self.factor
+            self.factor = tn.cat([old_factor, new_factor], dim=1)
 
         if max_rank is not None and self.rank > max_rank:
             return self.compress(max_rank)
@@ -407,6 +416,7 @@ class StreamingCurvature:
         """
         if tuple(vector.shape) != (self.dimension,):
             raise ValueError("vector must have shape (dimension,)")
+        vector = tn.tensor(vector) if not tn.is_tensor(vector) else vector
         inv_diag_v = vector / self.diagonal
         if self.rank == 0:
             return inv_diag_v
