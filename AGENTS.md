@@ -28,6 +28,7 @@ backends, autograd, and manifold geometry). Key supporting areas:
 | Uncertainty | `uq_adf.py` | UQ with ADF |
 | Streaming | `streaming.py` | STTA (one-pass randomised TT), `StreamingCurvature` |
 | Truncation | `truncation.py` | Threshold, Dörfler, adaptive truncation rules |
+| **Problems** | **`problems/`** | **DarcySampler — parametric 2D Darcy flow (FEM+KL)** |
 | Autograd | `grad.py` | `watch`/`unwatch`/`grad` helpers |
 | **Backend facade** | `_backend.py` | Dispatches to tinygrad or PyTorch via `TINYTT_BACKEND` |
 | **Backend impls** | `_backend_tinygrad.py`, `_backend_pytorch.py` | Backend-specific tensor wrappers |

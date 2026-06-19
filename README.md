@@ -46,6 +46,7 @@ separated module:
 | **CTT (Compositional TT)** | `tinytt/compositional.py` | Residual functional-TT composition with lift & retraction (arXiv:2512.18059) |
 | **FTT** | `tinytt/functional_tt.py` | Functional TT: basis-driven regression model |
 | **Streaming TT** | `tinytt/streaming.py` | One-pass randomised TT (STTA) for streaming data |
+| **Problems** | `tinytt/problems/` | DarcySampler — parametric 2D Darcy flow (FEM+KL) |
 
 ## Features
 

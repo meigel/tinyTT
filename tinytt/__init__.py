@@ -32,9 +32,8 @@ tt.grad
     Autograd helpers (watch, unwatch, grad).
 tt.functional
     Basis functions (Legendre, Hermite, Monomial).
-tt.darcy
-    Parametric 2D Darcy flow solver (FEM + KL expansion) for
-    surrogate modelling.
+tt.problems
+    Parametric PDE problems (Darcy, etc.) for surrogate modelling.
 tt.linesearch
     Armijo backtracking line search.
 """
@@ -70,7 +69,7 @@ from .solvers import amen_mm
 from . import interpolate
 from . import uq_adf
 from . import tdvp
-from . import bug, darcy
+from . import bug, problems
 
 from ._riemannian import (
     tangent_project,
@@ -190,6 +189,7 @@ __all__ = [
     'prepend_lift',
     'projection_retraction',
     'first_coord_retraction',
+    'problems',
     'TTManifoldFrame',
     'FunctionalTTLinearization',
     'TangentCGResult',
