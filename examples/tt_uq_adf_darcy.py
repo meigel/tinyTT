@@ -2,6 +2,10 @@
 """
 UQ-ADF for parametric Darcy flow PDE with uncertain permeability.
 
+Note: tinyTT now provides tinytt.darcy.DarcySampler as a cleaner
+interface for this problem.  This example is kept as a reference
+for the original UQ-ADF workflow.
+
   -∇ · (a(x, y) · ∇u) = 1    in Ω = [0, 1]²
                        u = 0  on ∂Ω
 
