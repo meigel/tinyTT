@@ -84,11 +84,13 @@ def dmrg_matvec_python(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4
             else:
                 delta_cores[k] = 0.0
 
-            if delta_cores[k] / delta_cores_prev[k] >= 1 and delta_cores[k] > eps:
-                r_enlarge[k] += 1
-
-            if delta_cores[k] / delta_cores_prev[k] < 0.1 and delta_cores[k] < eps:
-                r_enlarge[k] = max(1, r_enlarge[k] - 1)
+            # Guard zero division (initial guess = exact solution)
+            dp = delta_cores_prev[k]
+            if dp != 0.0:
+                if delta_cores[k] / dp >= 1 and delta_cores[k] > eps:
+                    r_enlarge[k] += 1
+                if delta_cores[k] / dp < 0.1 and delta_cores[k] < eps:
+                    r_enlarge[k] = max(1, r_enlarge[k] - 1)
 
             U, S, V = SVD(tn.reshape(W, [W.shape[0] * W.shape[1], -1]))
             r_new = rank_chop(tn.to_numpy(S), b_val * eps / (d ** (0.5 if last else 1.5)))
@@ -208,11 +210,13 @@ def dmrg_hadamard_python(z, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank
             else:
                 delta_cores[k] = 0.0
 
-            if delta_cores[k] / delta_cores_prev[k] >= 1 and delta_cores[k] > eps:
-                r_enlarge[k] += 1
-
-            if delta_cores[k] / delta_cores_prev[k] < 0.1 and delta_cores[k] < eps:
-                r_enlarge[k] = max(1, r_enlarge[k] - 1)
+            # Guard zero division (initial guess = exact solution)
+            dp = delta_cores_prev[k]
+            if dp != 0.0:
+                if delta_cores[k] / dp >= 1 and delta_cores[k] > eps:
+                    r_enlarge[k] += 1
+                if delta_cores[k] / dp < 0.1 and delta_cores[k] < eps:
+                    r_enlarge[k] = max(1, r_enlarge[k] - 1)
 
             U, S, V = SVD(tn.reshape(W, [W.shape[0] * W.shape[1], -1]))
             r_new = rank_chop(tn.to_numpy(S), b_val * eps / (d ** (0.5 if last else 1.5)))
