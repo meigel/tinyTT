@@ -556,28 +556,48 @@ class TT:
         tt_cores, _ = round_tt(self.cores, self.__R.copy(), eps, rmax, self.__is_ttm)
         return TT(tt_cores)
 
-    def to_qtt(self, eps=1e-12, mode_size=2, rmax=sys.maxsize):
+    def to_qtt(self, eps=1e-12, mode_size=2, rmax=sys.maxsize, skip_cores=None):
+        """Convert to QTT format, optionally skipping specified cores.
+
+        Parameters
+        ----------
+        eps : float
+            Rounding tolerance for the QTT conversion.
+        mode_size : int
+            Target mode size for quantisation (default 2).
+        rmax : int
+            Maximum TT rank after conversion.
+        skip_cores : list of int, optional
+            Indices of cores to leave in standard TT format (not quantised).
+            Useful for parametric cores in mixed QTT/TT formats.
+        """
         cores_new = []
+        skip = set(skip_cores) if skip_cores is not None else set()
         if self.__is_ttm:
             shape_new = []
             for i in range(len(self.__N)):
-                if self.__N[i] != self.__M[i]:
-                    raise ShapeMismatch("Only quadratic TTM can be tranformed to QTT.")
-                if self.__N[i] == mode_size ** int(math.log(self.N[i], mode_size)):
-                    shape_new += [(mode_size, mode_size)] * int(
-                        math.log(self.__N[i], mode_size)
-                    )
+                if i in skip:
+                    shape_new.append((self.__M[i], self.__N[i]))
                 else:
-                    raise ShapeMismatch(
-                        "Reshaping error: check if the dimensions are powers of the desired mode size:\r\n"
-                        f"core size {list(self.cores[i].shape)} cannot be reshaped."
-                    )
+                    if self.__N[i] != self.__M[i]:
+                        raise ShapeMismatch("Only quadratic TTM can be tranformed to QTT.")
+                    if self.__N[i] == mode_size ** int(math.log(self.N[i], mode_size)):
+                        shape_new += [(mode_size, mode_size)] * int(
+                            math.log(self.__N[i], mode_size)
+                        )
+                    else:
+                        raise ShapeMismatch(
+                            "Reshaping error: check if the dimensions are powers of the desired mode size:\r\n"
+                            f"core size {list(self.cores[i].shape)} cannot be reshaped."
+                        )
             import tinytt._extras as _extras
 
             result = _extras.reshape(self, shape_new, eps, rmax)
         else:
-            for core in self.cores:
-                if int(math.log(core.shape[1], mode_size)) > 1:
+            for i, core in enumerate(self.cores):
+                if i in skip:
+                    cores_new.append(core)
+                elif int(math.log(core.shape[1], mode_size)) > 1:
                     nnew = (
                         [core.shape[0] * mode_size]
                         + [mode_size] * (int(math.log(core.shape[1], mode_size)) - 2)
