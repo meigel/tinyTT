@@ -43,6 +43,7 @@ from ._extras import (
     eye,
     zeros,
     kron,
+    kron_sum,
     ones,
     random,
     randn,
@@ -65,6 +66,7 @@ from ._dmrg import dmrg_hadamard
 from ._fast_mult import fast_hadamard, fast_hadammard, fast_mv, fast_mm
 from . import grad
 from . import solvers
+from . import fem
 from .solvers import amen_mm
 from . import interpolate
 from . import uq_adf

@@ -161,16 +161,16 @@ def inner(a, b):
     if d == 0:
         return tn.tensor(0.0, dtype=tn.float64)
     
-    # Contract core 0: (n0, r1) × (n0, s1) → (r1, s1)
-    M = tn.einsum('iα,iβ->αβ', a.cores[0][0], b.cores[0][0])
-    
-    # Middle cores: (ri, si) × (ri, ni, r_{i+1}) × (si, ni, s_{i+1}) → (r_{i+1}, s_{i+1})
+    # Contract core 0: (n0, r1) x (n0, s1) -> (r1, s1)
+    M = tn.einsum('ia,ib->ab', a.cores[0][0], b.cores[0][0])
+
+    # Middle cores: (ri, si) x (ri, ni, r_{i+1}) x (si, ni, s_{i+1}) -> (r_{i+1}, s_{i+1})
     for i in range(1, d - 1):
-        M = tn.einsum('αβ,αiν,βiμ->νμ', M, a.cores[i], b.cores[i])
-    
+        M = tn.einsum('ab,aiu,biv->uv', M, a.cores[i], b.cores[i])
+
     # Last core: contract remaining physical and rank indices
     if d > 1:
-        result = tn.einsum('αβ,αi,βi->', M, a.cores[-1][:, :, 0], b.cores[-1][:, :, 0])
+        result = tn.einsum('ab,ai,bi->', M, a.cores[-1][:, :, 0], b.cores[-1][:, :, 0])
     else:
         result = tn.einsum('i,i->', a.cores[0][0, :, 0], b.cores[0][0, :, 0])
     
@@ -221,7 +221,67 @@ def add(a, b, eps=1e-12, rmax=sys.maxsize):
             raise ShapeMismatch("TTM shapes do not match.")
     elif a.N != b.N:
         raise ShapeMismatch("TT shapes do not match.")
-    
+
+    return _add_core_concat(a, b, eps, rmax)
+
+
+def kron_sum(terms, weights=None, eps=1e-12, rmax=sys.maxsize):
+    r"""Weighted sum of TT-matrices: ``A = Σᵢ wᵢ · Aᵢ``.
+
+    Parameters
+    ----------
+    terms : list of TT
+        TT matrices to sum (all must have the same shape).
+        Each term may itself be a Kronecker product (via :func:`kron`)
+        of spatial and parametric TT-matrices.
+    weights : array_like, optional
+        Coefficients for each term.  ``None`` (default) gives unit weights.
+    eps : float
+        Rounding tolerance after each addition (default 1e-12).
+    rmax : int
+        Maximum TT rank after rounding (default unlimited).
+
+    Returns
+    -------
+    TT
+        Weighted sum of the input TT-matrices.
+
+    Examples
+    --------
+    >>> A0 = tinytt.fem.laplacian_qtt(n)                  # base operator
+    >>> id_chain = tinytt.TT([I_p]*M)                      # parametric identity
+    >>> A = kron_sum([kron(A0, id_chain)])                 # A₀ ⊗ I_y
+    >>> for Bm, coeff in zip(Bm_list, coeffs):
+    ...     term = kron(Bm_qtt, d_chain)                    # Bₘ ⊗ Dₘ
+    ...     A = kron_sum([A, term], weights=[1.0, coeff])   # accumulate
+    """
+    import tinytt._tt_base as _tt
+    from . import add as _add
+
+    if weights is None:
+        weights = [1.0] * len(terms)
+    else:
+        weights = list(weights)
+
+    if len(terms) != len(weights):
+        raise InvalidArguments("Number of terms and weights must match.")
+
+    result = _tt.TT(terms[0]) if not isinstance(
+        terms[0], _tt.TT) else terms[0].clone()
+    if weights[0] != 1.0:
+        result = _tt.TT([weights[0] * c for c in result.cores])
+
+    for k in range(1, len(terms)):
+        term = _tt.TT(terms[k]) if not isinstance(
+            terms[k], _tt.TT) else terms[k].clone()
+        if weights[k] != 1.0:
+            term = _tt.TT([weights[k] * c for c in term.cores])
+        result = _add(result, term, eps=eps, rmax=rmax)
+
+    return result
+
+def _add_core_concat(a, b, eps, rmax):
+    """Core concatenation addition (used by add after validation)."""
     d = len(a.cores)
     dtype = a.cores[0].dtype
     device = a.cores[0].device
