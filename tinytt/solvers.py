@@ -112,12 +112,41 @@ class _LinearOp:
             J = _invert(J)
             self.J = tn.reshape(J, sh)
             self.contraction = None
+        elif prec == "full":
+            # Build the FULL effective operator matrix and invert it.
+            # The effective operator for 2 cores is:
+            #   A_eff[l,m,L]  =  sum_{s,S}  Phi_left[l,s,r] · coreA[s,m,n,S] · Phi_right[L,S,R]
+            #   with r=left_rank, . = right_rank, fixed for each (r,R) pair.
+            # Reshape to a square matrix of size (r*m*r_right) × (r*n*r_right).
+            #
+            # Approach: apply matvec to each basis vector and stack results.
+            shape_now = shape  # (r_interface, m, n, r_right)
+            nrows = shape_now[0] * shape_now[1] * shape_now[3]
+            dtype = coreA.dtype
+            device = coreA.device
+            eye = tn.eye(nrows, dtype=dtype, device=device)
+            # Build matrix columns by calling matvec on each basis vector
+            mat_cols = []
+            for i in range(nrows):
+                ei = eye[:, i:i+1]
+                ei_reshaped = tn.reshape(ei, shape_now)
+                A_ei = self.matvec(ei_reshaped, apply_prec=False)
+                mat_cols.append(tn.reshape(A_ei, [-1, 1]))
+            A_full = tn.cat(mat_cols, dim=1)
+            self.J = _invert(A_full)
+            self.contraction = None
 
     def apply_prec(self, x):
         if self.prec == "c":
             return tn.einsum("rnR,rRmn->rmR", x, self.J)
         if self.prec == "r":
             return tn.einsum("rnR,rmLnR->rmL", x, self.J)
+        if self.prec == "full":
+            # Apply full inverse: reshape, multiply by J, reshape back
+            sh = x.shape
+            x_flat = tn.reshape(x, [-1, 1])
+            x_prec = self.J @ x_flat
+            return tn.reshape(x_prec, sh)
         return x
 
     def matvec(self, x, apply_prec=True):
@@ -144,7 +173,7 @@ class _LinearOp:
                 w = tn.tensordot(x, self.Phi_left, ([0], [2]))
                 w = tn.tensordot(w, self.coreA, ([0, 3], [2, 0]))
                 w = tn.tensordot(w, self.Phi_right, ([0, 3], [2, 1]))
-        elif self.prec in ("c", "r"):
+        elif self.prec in ("c", "r", "full"):
             x = tn.reshape(x, self.shape)
             x = self.apply_prec(x)
             w = tn.tensordot(x, self.Phi_left, ([0], [2]))
@@ -601,6 +630,10 @@ def amen_solve(
     band_diagonal=-1,
     use_single_precision=False,
     truncation_rule=None,
+    # EPS alternating: restrict sweep to [core_start, core_end)
+    core_range=None,
+    fixed_phi_left=None,
+    fixed_phi_right=None,
 ):
     """
     Solve ``A @ x = b`` for a TT-matrix ``A`` and TT-vector ``b`` using AMEn.
@@ -657,6 +690,9 @@ def amen_solve(
         trunc_norm, local_solver, local_iterations, resets, verbose,
         preconditioner, use_single_precision, band_diagonal,
         truncation_rule=truncation_rule,
+        core_range=core_range,
+        fixed_phi_left=fixed_phi_left,
+        fixed_phi_right=fixed_phi_right,
     )
 
 
@@ -724,6 +760,10 @@ def _amen_solve_python(
     use_single_precision=False,
     band_diagonal=-1,
     truncation_rule=None,
+    # EPS alternating: restrict sweep to [core_start, core_end)
+    core_range=None,
+    fixed_phi_left=None,
+    fixed_phi_right=None,
 ):
     if verbose:
         time_total = datetime.datetime.now()
@@ -741,6 +781,11 @@ def _amen_solve_python(
 
     if isinstance(rmax, int):
         rmax = [1] + (d - 1) * [rmax] + [1]
+
+    if core_range is not None:
+        cs, ce = core_range
+    else:
+        cs, ce = 0, d
 
     rz = [1] + (d - 1) * [kickrank + kick2] + [1]
     z_tt = random(N, rz, dtype, device=device)
@@ -769,6 +814,14 @@ def _amen_solve_python(
         + [tn.ones((1, 1), dtype=dtype, device=device)]
     )
 
+    # Set fixed boundary interfaces for sub-range sweeps
+    if fixed_phi_right is not None:
+        Phis[ce] = fixed_phi_right
+        Phis_b[ce] = tn.ones((1, 1), dtype=dtype, device=device)
+    if fixed_phi_left is not None:
+        Phis[cs] = fixed_phi_left
+        Phis_b[cs] = tn.ones((1, 1), dtype=dtype, device=device)
+
     last = False
 
     normA = np.ones((d - 1))
@@ -778,8 +831,8 @@ def _amen_solve_python(
 
     if verbose:
         print(
-            "Starting AMEn solve with:\n\tepsilon: %g\n\tsweeps: %d\n\tlocal iterations: %d\n\tresets: %d\n\tpreconditioner: %s"
-            % (eps, nswp, local_iterations, resets, str(preconditioner))
+            "Starting AMEn solve with:\n\tepsilon: %g\n\tsweeps: %d\n\tlocal iterations: %d\n\tresets: %d\n\tpreconditioner: %s\n\tcore_range: %s"
+            % (eps, nswp, local_iterations, resets, str(preconditioner), str(core_range))
         )
         print()
 
@@ -789,7 +842,7 @@ def _amen_solve_python(
             print("Starting sweep %d %s..." % (swp + 1, "(last one) " if last else ""))
             tme_sweep = datetime.datetime.now()
 
-        for k in range(d - 1, 0, -1):
+        for k in range(ce - 1, cs, -1):
             if not last:
                 if swp > 0:
                     czA = _local_product(
@@ -876,7 +929,7 @@ def _amen_solve_python(
         max_res = 0.0
         max_dx = 0.0
 
-        for k in range(d):
+        for k in range(cs, ce):
             if verbose:
                 print("\tCore", k)
             previous_solution = tn.reshape(x_cores[k], [-1, 1])
@@ -1246,6 +1299,10 @@ def _als_solve_python(
     preconditioner=None,
     use_single_precision=False,
     band_diagonal=-1,
+    # EPS alternating: restrict sweep to [core_start, core_end)
+    core_range=None,
+    fixed_phi_left=None,
+    fixed_phi_right=None,
 ):
     if verbose:
         time_total = datetime.datetime.now()
@@ -1253,6 +1310,11 @@ def _als_solve_python(
     dtype = A.cores[0].dtype
     device = A.cores[0].device
     damp = 2
+
+    if core_range is not None:
+        cs, ce = core_range
+    else:
+        cs, ce = 0, len(A.N)
 
     # ALS rank growth is limited by the current iterate ranks. Starting from a
     # rank-1 tensor (ones) can stall on problems whose solution needs higher
@@ -1345,7 +1407,7 @@ def _als_solve_python(
         max_res = 0.0
         max_dx = 0.0
 
-        for k in range(d):
+        for k in range(cs, ce):
             if verbose:
                 print("\tCore", k)
             previous_solution = tn.reshape(x_cores[k], [-1, 1])
