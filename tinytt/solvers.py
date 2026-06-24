@@ -224,6 +224,8 @@ def _amen_mm_python(
     if verbose:
         time_total = datetime.datetime.now()
 
+    skip_boundary = False
+
     dtype = A_cores[0].dtype
     device = A_cores[0].device
     d = len(N)
@@ -634,6 +636,8 @@ def amen_solve(
     core_range=None,
     fixed_phi_left=None,
     fixed_phi_right=None,
+    fixed_phi_rhs_left=None,
+    fixed_phi_rhs_right=None,
 ):
     """
     Solve ``A @ x = b`` for a TT-matrix ``A`` and TT-vector ``b`` using AMEn.
@@ -693,6 +697,8 @@ def amen_solve(
         core_range=core_range,
         fixed_phi_left=fixed_phi_left,
         fixed_phi_right=fixed_phi_right,
+        fixed_phi_rhs_left=fixed_phi_rhs_left,
+        fixed_phi_rhs_right=fixed_phi_rhs_right,
     )
 
 
@@ -764,6 +770,8 @@ def _amen_solve_python(
     core_range=None,
     fixed_phi_left=None,
     fixed_phi_right=None,
+    fixed_phi_rhs_left=None,
+    fixed_phi_rhs_right=None,
 ):
     if verbose:
         time_total = datetime.datetime.now()
@@ -788,6 +796,12 @@ def _amen_solve_python(
         cs, ce = 0, d
 
     rz = [1] + (d - 1) * [kickrank + kick2] + [1]
+    # Fix boundary noise ranks BEFORE creating z_cores
+    if fixed_phi_right is not None:
+        rz[ce] = 1
+        rz[ce-1] = 1
+    if fixed_phi_left is not None:
+        rz[cs] = 1
     z_tt = random(N, rz, dtype, device=device)
     z_cores = z_tt.cores
     z_cores, rz = rl_orthogonal(z_cores, rz, False)
@@ -817,11 +831,13 @@ def _amen_solve_python(
     # Set fixed boundary interfaces for sub-range sweeps
     if fixed_phi_right is not None:
         Phis[ce] = fixed_phi_right
-        Phis_b[ce] = tn.ones((1, 1), dtype=dtype, device=device)
+        Phis_b[ce] = fixed_phi_rhs_right if fixed_phi_rhs_right is not None \
+                     else tn.ones((1, 1), dtype=dtype, device=device)
     if fixed_phi_left is not None:
         Phis[cs] = fixed_phi_left
-        Phis_b[cs] = tn.ones((1, 1), dtype=dtype, device=device)
-
+        Phis_b[cs] = fixed_phi_rhs_left if fixed_phi_rhs_left is not None \
+                     else tn.ones((1, 1), dtype=dtype, device=device)
+ 
     last = False
 
     normA = np.ones((d - 1))
@@ -842,7 +858,7 @@ def _amen_solve_python(
             print("Starting sweep %d %s..." % (swp + 1, "(last one) " if last else ""))
             tme_sweep = datetime.datetime.now()
 
-        for k in range(ce - 1, cs, -1):
+        for k in range(d - 1, 0, -1):
             if not last:
                 if swp > 0:
                     czA = _local_product(
@@ -859,7 +875,7 @@ def _amen_solve_python(
                     cz_new = czy * nrmsc - czA
                     _, _, vz = SVD(tn.reshape(cz_new, [cz_new.shape[0], -1]))
                     cz_new = tn.transpose(vz[: min(kickrank, vz.shape[0]), :], 0, 1)
-                    if k < d - 1:
+                    if k < d - 1 and not (fixed_phi_right is not None and k == ce - 1):
                         cz_new = tn.cat(
                             (
                                 cz_new,
@@ -930,6 +946,8 @@ def _amen_solve_python(
         max_dx = 0.0
 
         for k in range(cs, ce):
+            # Also skip enrichment at right boundary in forward sweep
+            skip_boundary = (fixed_phi_right is not None and k == ce - 1)
             if verbose:
                 print("\tCore", k)
             previous_solution = tn.reshape(x_cores[k], [-1, 1])
@@ -1303,6 +1321,8 @@ def _als_solve_python(
     core_range=None,
     fixed_phi_left=None,
     fixed_phi_right=None,
+    fixed_phi_rhs_left=None,
+    fixed_phi_rhs_right=None,
 ):
     if verbose:
         time_total = datetime.datetime.now()
@@ -1311,10 +1331,12 @@ def _als_solve_python(
     device = A.cores[0].device
     damp = 2
 
-    if core_range is not None:
-        cs, ce = core_range
-    else:
-        cs, ce = 0, len(A.N)
+    skip_boundary = False
+    # EPS alternating: restrict sweep to [core_start, core_end)
+    core_range_als = core_range
+    fixed_phi_left_als = fixed_phi_left
+    fixed_phi_right_als = fixed_phi_right
+    damp = 2
 
     # ALS rank growth is limited by the current iterate ranks. Starting from a
     # rank-1 tensor (ones) can stall on problems whose solution needs higher
@@ -1407,13 +1429,13 @@ def _als_solve_python(
         max_res = 0.0
         max_dx = 0.0
 
-        for k in range(cs, ce):
+        for k in range(d):
             if verbose:
                 print("\tCore", k)
             previous_solution = tn.reshape(x_cores[k], [-1, 1])
 
             rhs = tn.einsum(
-                "br,bmB,BR->rmR", Phis_b[k], b.cores[k] * nrmsc, Phis_b[k + 1]
+                "br,bmB,BR->rmR", Phis_b[k], b.cores[k], Phis_b[k + 1]
             )
             rhs = tn.reshape(rhs, [-1, 1])
             norm_rhs = _scalar(tn.linalg.norm(rhs))

@@ -86,10 +86,13 @@ def dmrg_matvec_python(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4
 
             # Guard zero division (initial guess = exact solution)
             dp = delta_cores_prev[k]
-            if dp != 0.0:
-                if delta_cores[k] / dp >= 1 and delta_cores[k] > eps:
-                    r_enlarge[k] += 1
-                if delta_cores[k] / dp < 0.1 and delta_cores[k] < eps:
+            if dp != 0.0 and delta_cores[k] != 0.0:
+                ratio = delta_cores[k] / dp
+            else:
+                ratio = 0.0
+            if ratio >= 1 and delta_cores[k] > eps:
+                r_enlarge[k] += 1
+            if ratio < 0.1 and delta_cores[k] < eps:
                     r_enlarge[k] = max(1, r_enlarge[k] - 1)
 
             U, S, V = SVD(tn.reshape(W, [W.shape[0] * W.shape[1], -1]))
@@ -212,10 +215,13 @@ def dmrg_hadamard_python(z, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank
 
             # Guard zero division (initial guess = exact solution)
             dp = delta_cores_prev[k]
-            if dp != 0.0:
-                if delta_cores[k] / dp >= 1 and delta_cores[k] > eps:
-                    r_enlarge[k] += 1
-                if delta_cores[k] / dp < 0.1 and delta_cores[k] < eps:
+            if dp != 0.0 and delta_cores[k] != 0.0:
+                ratio = delta_cores[k] / dp
+            else:
+                ratio = 0.0
+            if ratio >= 1 and delta_cores[k] > eps:
+                r_enlarge[k] += 1
+            if ratio < 0.1 and delta_cores[k] < eps:
                     r_enlarge[k] = max(1, r_enlarge[k] - 1)
 
             U, S, V = SVD(tn.reshape(W, [W.shape[0] * W.shape[1], -1]))
