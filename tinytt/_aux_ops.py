@@ -82,4 +82,46 @@ def bilinear_form_aux(x_cores, A_cores, y_cores, d):
         result = tn.einsum('srmL,smnS->LSrn',result,A_cores[i]) 
         result = tn.einsum('LSrn,rnR->LSR',result,y_cores[i]) 
         
-    return tn.squeeze(result)
+    return result
+
+
+def tt_matvec(A_cores, x_cores, rmax=64):
+    """TT-matrix @ TT-vector via per-core contraction.
+    
+    Contracts each TT-matrix core with the corresponding TT-vector core
+    over the shared physical dimension, avoiding .full() materialisation.
+    
+    The output ranks multiply: r_out_k = r_A_k × r_x_k.  After all cores
+    are assembled the result is rounded to ``rmax`` to control rank growth.
+    
+    Complexity: O(d · r_A² · r_x² · n) vs O(N · r_A²) for dense_matvec.
+    For N > r_A² · r_x² this is asymptotically faster.
+    
+    Parameters
+    ----------
+    A_cores : list of Tensor
+        TT-matrix cores, each (r_l_A, n_in, n_out, r_r_A).
+    x_cores : list of Tensor
+        TT-vector cores, each (r_l_x, n_in, r_r_x).
+    rmax : int
+        Max TT rank after rounding.
+    
+    Returns
+    -------
+    tt.TT
+        TT-vector result of the matrix-vector product.
+    """
+    import tinytt as tt
+    d = len(A_cores)
+    new_cores = []
+    for k in range(d):
+        # A_core: (r_l_A, n_in, n_out, r_r_A)
+        # x_core: (r_l_x, n_in, r_r_x)
+        # Contraction over n_in → (r_l_A, r_l_x, n_out, r_r_A, r_r_x)
+        c = tn.einsum('ainb,lim->alnbm', A_cores[k], x_cores[k])
+        rl = c.shape[0] * c.shape[1]
+        n = c.shape[2]
+        rr = c.shape[3] * c.shape[4]
+        new_cores.append(tn.reshape(c, (rl, n, rr)))
+    result = tt.TT(new_cores)
+    return result.round(eps=1e-10, rmax=rmax)

@@ -515,8 +515,9 @@ class TT:
             if self.__is_ttm and not other.is_ttm:
                 if self.__N != other.N:
                     raise ShapeMismatch("Shapes do not match.")
-                full = dense_matvec(self.cores, other.full())
-                return TT(full, shape=self.__M)
+                # TT-matrix @ TT-vector via per-core contraction (no .full())
+                from ._aux_ops import tt_matvec
+                return tt_matvec(self.cores, other.cores)
             if self.__is_ttm and other.is_ttm:
                 if self.__N != other.M:
                     raise ShapeMismatch("Shapes do not match.")
