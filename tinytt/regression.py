@@ -208,15 +208,20 @@ def als_regression(X, Y, bases, ranks, sweeps=10, out_dim=1,
             ATA = A_mat.T @ A_mat                # (n_cols, n_cols)
             ATb = A_mat.T @ Y                    # (n_cols, out_dim)
 
-            # Regularise for stability
-            reg = tol * np.trace(ATA) * np.eye(n_cols)
+            # Regularise for stability (stronger for ill-conditioned problems)
+            reg_strength = max(tol, 1e-6)  # minimum regularisation
+            reg = reg_strength * np.trace(ATA) * np.eye(n_cols)
             # Scaled solve: avoid ill-conditioning from mixed scales.
             # Clip to prevent overflow from near-zero columns in pathological
             # initialisations (real data produces well-behaved scales).
             scale = np.sqrt(np.maximum(np.diag(ATA), 1e-100))
             scaled_ATA = ATA / scale[:, None] / scale[None, :]
             scaled_ATb = ATb / scale[:, None]
-            scaled_x = np.linalg.solve(scaled_ATA + reg, scaled_ATb)
+            try:
+                scaled_x = np.linalg.solve(scaled_ATA + reg, scaled_ATb)
+            except np.linalg.LinAlgError:
+                # Fallback to pseudo-inverse if still singular
+                scaled_x = np.linalg.lstsq(scaled_ATA + reg, scaled_ATb, rcond=1e-6)[0]
             x = scaled_x / scale[:, None]
 
             # Reshape back into core
