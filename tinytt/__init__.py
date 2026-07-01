@@ -72,6 +72,7 @@ from . import interpolate
 from . import uq_adf
 from . import tdvp
 from . import bug, problems
+from tinytt.projector_splitting import projector_splitting_step
 
 from ._riemannian import (
     tangent_project,
