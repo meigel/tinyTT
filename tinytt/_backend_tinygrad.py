@@ -419,6 +419,8 @@ def astype(x: Tensor, dtype):
 
 def to_numpy(x: Tensor):
     """Extract a numpy array (blocks if lazy)."""
+    if isinstance(x, np.ndarray):
+        return x
     return x.numpy()
 
 

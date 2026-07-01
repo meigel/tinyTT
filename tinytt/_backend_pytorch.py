@@ -454,9 +454,11 @@ def astype(x: torch.Tensor, dtype):
 # instance-method wrappers (backend-polymorphic)
 # ---------------------------------------------------------------------------
 
-def to_numpy(x: torch.Tensor):
+def to_numpy(x):
     """Extract a numpy array."""
-    return x.detach().cpu().numpy()
+    if hasattr(x, 'detach'):       # torch.Tensor → numpy
+        return x.detach().cpu().numpy()
+    return np.asarray(x)           # numpy array or other → safe cast
 
 
 def cast(x: torch.Tensor, dtype):
