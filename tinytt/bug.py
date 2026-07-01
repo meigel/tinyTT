@@ -251,7 +251,8 @@ def bug_like_sweep(state, mpo, dt, threshold=1e-10, max_bond_dim=1024, numiter_l
             return _project_site(left_envs[i], right_envs[i + 1], mpo.cores[i], x)
         
         theta_new = _evolve_local(theta, apply_heff, dt,
-                                max_dense=256, krylov_dim=numiter_lanczos)
+                                max_dense=256, krylov_dim=numiter_lanczos,
+                                real_time=real_time)
         
         cores[i] = theta_new
         
@@ -263,13 +264,16 @@ def bug_like_sweep(state, mpo, dt, threshold=1e-10, max_bond_dim=1024, numiter_l
     return state
 
 
-def bug(state, mpo, dt, threshold=1e-10, max_bond_dim=1024, numiter_lanczos=25):
+def bug(state, mpo, dt, threshold=1e-10, max_bond_dim=1024, numiter_lanczos=25, real_time=False):
     """Evolve a TT state with a rank-adaptive BUG step.
 
-    The implementation is for linear MPO dynamics in imaginary time. It uses
-    local residuals from projected site evolutions to update neighbouring TT
-    bases, QR-retracts the expanded bases, performs a Galerkin local evolution
-    sweep in the updated bases, and truncates to ``max_bond_dim``.
+    The implementation is for linear MPO dynamics. When ``real_time=False``
+    (default, imaginary-time evolution), local evolution uses an eigenvalue shift
+    and normalization. When ``real_time=True`` (real-time PDE evolution), the
+    eigenvalue shift and normalization are skipped. It uses local residuals from
+    projected site evolutions to update neighbouring TT bases, QR-retracts the
+    expanded bases, performs a Galerkin local evolution sweep in the updated
+    bases, and truncates to ``max_bond_dim``.
 
     The input ``state`` is updated in place for compatibility and the evolved
     TT is also returned.
@@ -305,6 +309,7 @@ def bug(state, mpo, dt, threshold=1e-10, max_bond_dim=1024, numiter_lanczos=25):
                 dt,
                 max_dense=256,
                 krylov_dim=numiter_lanczos,
+                real_time=real_time,
             )
             residual = theta_new - theta
             residual_norm = _scalar(tn.linalg.norm(residual))
