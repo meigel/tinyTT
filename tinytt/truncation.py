@@ -142,9 +142,10 @@ class DoerflerAdaptivity:
 
     def _effective_max_rank(self, position: int | None, max_rank: int | None,
                             sigma_size: int) -> int:
-        if self.max_ranks is not None and position is not None \
-           and 0 <= position < len(self.max_ranks):
-            return int(self.max_ranks[position])
+        if self.max_ranks is not None and position is not None:
+            idx = position - 1 if position > 0 else position
+            if 0 <= idx < len(self.max_ranks):
+                return int(self.max_ranks[idx])
         if max_rank is not None:
             return int(max_rank)
         return sigma_size

@@ -970,7 +970,9 @@ def _amen_solve_python(
                 Bp = tn.einsum("smnS,LSR->smnRL", A.cores[k], Phis[k + 1])
                 B = tn.einsum("lsr,smnRL->lmLrnR", Phis[k], Bp)
                 B = tn.reshape(B, [rx[k] * N[k] * rx[k + 1], rx[k] * N[k] * rx[k + 1]])
-
+                if verbose:
+                    print("  DEBUG: k =", k, "norm(rhs) =", float(tn.to_numpy(tn.linalg.norm(rhs)).item()), "norm(B) =", float(tn.to_numpy(tn.linalg.norm(B)).item()))
+                    print("  DEBUG: numpy solve norm =", float(np.linalg.norm(np.linalg.solve(tn.to_numpy(B), tn.to_numpy(rhs)))))
                 solution_now = tn.linalg.solve(B, rhs)
 
                 res_old = (
@@ -1241,7 +1243,6 @@ def _amen_solve_python(
                 else:
                     norm_now = 1.0
                 normx[k] = normx[k] * norm_now
-
                 x_cores[k] = tn.reshape(u, [rx[k], N[k], r])
                 x_cores[k + 1] = tn.reshape(v, [r, N[k + 1], rx[k + 2]])
                 rx[k + 1] = r
@@ -1293,6 +1294,7 @@ def _amen_solve_python(
         print()
         print("Finished after", swp + 1, " sweeps and ", time_total)
         print()
+
     normx = np.exp(np.sum(np.log(normx)) / d)
 
     for k in range(d):

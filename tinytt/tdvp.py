@@ -170,7 +170,7 @@ def _krylov_exp_matvec(matvec, vec, dt, krylov_dim, tol, complex_phase):
     return out
 
 
-def _krylov_exp(apply_fn, shape, vec, dt, krylov_dim, tol, complex_phase, dtype, device):
+def _krylov_exp(apply_fn, shape, vec, dt, krylov_dim, tol, complex_phase, dtype, device, real_time=False):
     def matvec(x):
         xr = np.real(x)
         xi = np.imag(x)
@@ -185,7 +185,7 @@ def _krylov_exp(apply_fn, shape, vec, dt, krylov_dim, tol, complex_phase, dtype,
     return _krylov_exp_matvec(matvec, vec, dt, krylov_dim, tol, complex_phase)
 
 
-def _evolve_local(theta, apply_fn, dt, max_dense=256, krylov_dim=20, krylov_tol=1e-10):
+def _evolve_local(theta, apply_fn, dt, max_dense=256, krylov_dim=20, krylov_tol=1e-10, real_time=False):
     vec = theta.reshape(-1)
     n = vec.numel()
     if n > max_dense:
@@ -197,9 +197,10 @@ def _evolve_local(theta, apply_fn, dt, max_dense=256, krylov_dim=20, krylov_tol=
             dt,
             krylov_dim,
             krylov_tol,
-            False,
-            theta.dtype,
-            theta.device,
+            complex_phase=False,
+            real_time=real_time,
+            dtype=theta.dtype,
+            device=theta.device,
         )
         return tn.tensor(out, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
 
@@ -212,12 +213,16 @@ def _evolve_local(theta, apply_fn, dt, max_dense=256, krylov_dim=20, krylov_tol=
         H[:, i] = tn.to_numpy(apply_fn(e)).reshape(-1)
 
     w, V = np.linalg.eigh(H)
-    w_shift = w - np.min(w)
-    expw = np.exp(-dt * w_shift)
+    if real_time:
+        expw = np.exp(-dt * w)
+    else:
+        w_shift = w - np.min(w)
+        expw = np.exp(-dt * w_shift)
     vec_new = (V * expw) @ (V.T @ vec_np)
-    norm = np.linalg.norm(vec_new)
-    if norm > 0:
-        vec_new = vec_new / norm
+    if not real_time:
+        norm = np.linalg.norm(vec_new)
+        if norm > 0:
+            vec_new = vec_new / norm
     return tn.tensor(vec_new, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
 
 

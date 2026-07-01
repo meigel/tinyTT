@@ -57,7 +57,7 @@ def _build_right_envs(cores, mpo):
     return R
 
 
-def _evolve_local(theta, apply_fn, dt, max_dense=256, krylov_dim=20, krylov_tol=1e-10):
+def _evolve_local(theta, apply_fn, dt, max_dense=256, krylov_dim=20, krylov_tol=1e-10, real_time=False):
     """Evolve local tensor using Lanczos."""
     vec = theta.reshape(-1)
     n = tn.numel(vec)
@@ -76,7 +76,7 @@ def _evolve_local(theta, apply_fn, dt, max_dense=256, krylov_dim=20, krylov_tol=
                 return yr + 1j * yi
             return yr
 
-        out = _krylov_exp(matvec, vec_np, dt, krylov_dim, krylov_tol, False)
+        out = _krylov_exp(matvec, vec_np, dt, krylov_dim, krylov_tol, complex_phase=False, real_time=real_time)
         return tn.tensor(out, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
 
     vec_np = tn.to_numpy(vec).reshape(-1).astype(np.complex128)
@@ -88,12 +88,16 @@ def _evolve_local(theta, apply_fn, dt, max_dense=256, krylov_dim=20, krylov_tol=
         H[:, i] = tn.to_numpy(apply_fn(e)).reshape(-1)
 
     w, V = np.linalg.eigh(H)
-    w_shift = w - np.min(w)
-    expw = np.exp(-dt * w_shift)
+    if real_time:
+        expw = np.exp(-dt * w)
+    else:
+        w_shift = w - np.min(w)
+        expw = np.exp(-dt * w_shift)
     vec_new = (V * expw) @ (V.T @ vec_np)
-    norm = np.linalg.norm(vec_new)
-    if norm > 0:
-        vec_new = vec_new / norm
+    if not real_time:
+        norm = np.linalg.norm(vec_new)
+        if norm > 0:
+            vec_new = vec_new / norm
     return tn.tensor(vec_new, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
 
 
@@ -165,7 +169,7 @@ def _copy_back(dst, src):
     dst.cores = [c.clone() for c in src.cores]
 
 
-def _krylov_exp(matvec, vec, dt, krylov_dim, tol, complex_phase):
+def _krylov_exp(matvec, vec, dt, krylov_dim, tol, complex_phase, real_time=False):
     """Krylov subspace exponentiation."""
     n = vec.shape[0]
     v = vec.astype(np.complex128 if complex_phase else np.float64)
@@ -204,7 +208,12 @@ def _krylov_exp(matvec, vec, dt, krylov_dim, tol, complex_phase):
             T[j + 1, j] = beta[j]
 
     w, U = np.linalg.eig(T)
-    expw = np.exp(-1j * dt * w) if complex_phase else np.exp(-dt * (w - np.min(w.real)))
+    if complex_phase:
+        expw = np.exp(-1j * dt * w)
+    elif real_time:
+        expw = np.exp(-dt * w)
+    else:
+        expw = np.exp(-dt * (w - np.min(w.real)))
     e1 = np.zeros(m, dtype=U.dtype)
     e1[0] = 1.0
     y = U @ (expw * (np.linalg.solve(U, e1)))

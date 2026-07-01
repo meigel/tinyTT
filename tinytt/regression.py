@@ -209,7 +209,7 @@ def als_regression(X, Y, bases, ranks, sweeps=10, out_dim=1,
             ATb = A_mat.T @ Y                    # (n_cols, out_dim)
 
             # Regularise for stability (stronger for ill-conditioned problems)
-            reg_strength = max(tol, 1e-6)  # minimum regularisation
+            reg_strength = max(tol, 1e-12)  # minimum regularisation
             reg = reg_strength * np.eye(n_cols)
             # Scaled solve: avoid ill-conditioning from mixed scales.
             # Clip to prevent overflow from near-zero columns in pathological
@@ -260,7 +260,7 @@ def als_regression(X, Y, bases, ranks, sweeps=10, out_dim=1,
             ATb = A_mat.T @ Y
 
             # Regularise for stability (stronger for ill-conditioned problems)
-            reg_strength = max(tol, 1e-6)
+            reg_strength = max(tol, 1e-12)
             reg = reg_strength * np.eye(n_cols)
             # Scaled solve: avoid ill-conditioning from mixed scales.
             scale = np.sqrt(np.maximum(np.diag(ATA), 1e-100))

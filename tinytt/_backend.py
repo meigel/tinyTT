@@ -1,9 +1,9 @@
 """
 Backend facade — dispatches to the selected tensor backend.
 
-Set ``TINYTT_BACKEND`` (default: ``"tinygrad"``) to choose the backend::
+Set ``TINYTT_BACKEND`` (default: ``"pytorch"``) to choose the backend::
 
-    TINYTT_BACKEND=pytorch python my_script.py
+    TINYTT_BACKEND=tinygrad python my_script.py
 
 All public symbols are re-exported so the rest of tinyTT can continue to
 write ``import tinytt._backend as tn`` regardless of which backend is active.
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os as _os
 
-_BACKEND = _os.getenv("TINYTT_BACKEND", "tinygrad").lower()
+_BACKEND = _os.getenv("TINYTT_BACKEND", "pytorch").lower()
 
 if _BACKEND == "tinygrad":
     from tinytt._backend_tinygrad import *
