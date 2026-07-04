@@ -1,7 +1,6 @@
 """
 Tests for the BUG time evolution module.
 """
-
 import os
 import sys
 import numpy as np
@@ -35,40 +34,13 @@ class TestBUG:
     rng = np.random.RandomState(42)
 
     @NEEDS_CLANG
-    def test_bug_like_sweep_imag_time_smoke(self):
-        """Legacy right-to-left sweep on 3-site Ising MPO runs without error."""
-        H = build_ising_mpo(3, J=1.0, h=1.0)
-        psi = tt.ones([2, 2, 2])
-
-        evolved = bug_like_sweep(psi, H, dt=0.01, threshold=1e-8, max_bond_dim=16, numiter_lanczos=10)
-
-        # Check that psi is still a valid TT
-        assert hasattr(evolved, 'cores')
-        assert hasattr(evolved, 'R')
-        assert len(evolved.cores) == 3
-        assert len(evolved.R) == 4
-
-        # Check that norm is finite and positive
-        norm_val = tn.to_numpy(evolved.norm()).item()
-        assert norm_val > 0
-        assert np.isfinite(norm_val)
-
-    @NEEDS_CLANG
-    def test_bug_like_sweep_matching_sites(self):
-        """Verify error raised for mismatched sites."""
-        H = build_ising_mpo(3, J=1.0, h=1.0)
-        psi = tt.ones([2, 2])
-
-        with pytest.raises(ValueError):
-            bug_like_sweep(psi, H, dt=0.01)
-
-    @NEEDS_CLANG
     def test_bug_full_step_runs_and_updates_state(self):
+        """BUG step on 2-site Ising MPO runs and updates state in-place."""
         H = build_ising_mpo(2, J=1.0, h=1.0)
         psi = tt.ones([2, 2])
         old_full = tn.to_numpy(psi.full()).copy()
 
-        evolved = bug(psi, H, dt=0.01, threshold=1e-10, max_bond_dim=8, numiter_lanczos=10)
+        evolved = bug(psi, H, dt=0.01, threshold=1e-10, max_bond_dim=8)
 
         assert evolved.N == [2, 2]
         assert psi.N == [2, 2]
@@ -81,10 +53,34 @@ class TestBUG:
 
     @NEEDS_CLANG
     def test_bug_can_expand_internal_rank(self):
+        """BUG step can increase rank on 3-site system."""
         H = build_ising_mpo(3, J=1.0, h=1.0)
         psi = tt.ones([2, 2, 2])
 
-        evolved = bug(psi, H, dt=0.05, threshold=1e-12, max_bond_dim=8, numiter_lanczos=10)
+        evolved = bug(psi, H, dt=0.05, threshold=1e-12, max_bond_dim=8)
 
         assert max(evolved.R) > 1
         assert max(evolved.R) <= 8
+
+    @NEEDS_CLANG
+    def test_bug_matching_sites(self):
+        """Verify error raised for mismatched sites."""
+        H = build_ising_mpo(3, J=1.0, h=1.0)
+        psi = tt.ones([2, 2])
+
+        with pytest.raises(ValueError):
+            bug(psi, H, dt=0.01)
+
+    @NEEDS_CLANG
+    def test_bug_sweep_alias(self):
+        """bug_like_sweep still works as an alias."""
+        H = build_ising_mpo(2, J=1.0, h=1.0)
+        psi = tt.ones([2, 2])
+
+        evolved = bug_like_sweep(psi, H, dt=0.01, threshold=1e-10, max_bond_dim=8)
+
+        assert hasattr(evolved, 'cores')
+        assert hasattr(evolved, 'R')
+        norm_val = tn.to_numpy(evolved.norm()).item()
+        assert norm_val > 0
+        assert np.isfinite(norm_val)

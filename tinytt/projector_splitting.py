@@ -10,9 +10,10 @@ The algorithm proceeds in three stages per time step:
   3. QR orthogonalization sweep to restore the mixed gauge
 
 This differs from the BUG integrator (:func:`tinytt.bug.bug`) which uses
-local operator exponentials designed for quantum Hamiltonians. This
-projector-splitting variant is appropriate for real-time PDE evolution
-where the operator is applied globally.
+a step-truncate approach (global operator application + SVD rounding)
+without the explicit QR gauge sweep. This projector-splitting variant
+is appropriate for real-time PDE evolution and enforces the mixed gauge
+explicitly.
 """
 
 from __future__ import annotations

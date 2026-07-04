@@ -5,8 +5,7 @@ Minimal finite-size TDVP (imaginary time) utilities for TT/MPO.
    TDVP with sequential site-by-site evolution is designed for **quantum
    Hamiltonians** (imaginary-time ground state search, real-time Schrödinger
    dynamics).  It is **not suitable** for dissipative PDEs (heat, Burgers,
-   Fokker-Planck).  Use :func:`~tinytt.bug.bug` with ``method="proper"``
-   (step-truncate) for instationary PDEs.
+   Fokker-Planck).  Use :func:`~tinytt.bug.bug` for instationary PDEs.
 """
 
 from __future__ import annotations
@@ -213,8 +212,7 @@ def _evolve_local(theta, apply_fn, dt, max_dense=256, krylov_dim=20,
        dissipative PDEs (heat, Burgers, Fokker-Planck) because the
        local projected Hamiltonians have eigenvalues O(1/h²) that
        make both the matrix exponential and implicit integrators
-       inaccurate.  Use :func:`~tinytt.bug.bug` with
-       ``method="proper"`` (step-truncate) for instationary PDEs.
+       inaccurate.  Use :func:`~tinytt.bug.bug` for instationary PDEs.
     """
     vec = theta.reshape(-1)
     n = vec.numel()
@@ -303,8 +301,7 @@ def tdvp_imag_time(
     .. note::
        TDVP is designed for **quantum Hamiltonians** (ground state
        search, Rayleigh quotient minimisation).  It is **not suitable**
-       for dissipative PDEs.  Use :func:`~tinytt.bug.bug` with
-       ``method="proper"`` for instationary PDEs.
+       for dissipative PDEs.  Use :func:`~tinytt.bug.bug` for instationary PDEs.
 
     With ``normalize=True`` (default) psi is rescaled to unit Frobenius norm
     after every sweep, so subsequent ``<psi|H|psi>`` evaluations are Rayleigh
