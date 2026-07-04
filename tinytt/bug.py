@@ -14,6 +14,11 @@ import tinytt._backend as tn
 from tinytt._tt_base import TT
 from tinytt._decomposition import QR
 
+try:
+    import torch
+except ModuleNotFoundError:  # pragma: no cover - torch is optional.
+    torch = None
+
 
 def _update_left_env(L, A, W):
     """Update left environment."""
@@ -55,50 +60,6 @@ def _build_right_envs(cores, mpo):
     for i in range(len(cores) - 1, -1, -1):
         R[i] = _update_right_env(R[i + 1], cores[i], mpo.cores[i])
     return R
-
-
-def _evolve_local(theta, apply_fn, dt, max_dense=256, krylov_dim=20, krylov_tol=1e-10, real_time=False):
-    """Evolve local tensor using Lanczos."""
-    vec = theta.reshape(-1)
-    n = tn.numel(vec)
-    
-    if n > max_dense:
-        vec_np = tn.to_numpy(vec).reshape(-1).astype(np.complex128)
-
-        def matvec(x):
-            xr = np.real(x)
-            xi = np.imag(x)
-            tr = tn.tensor(xr, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
-            yr = tn.to_numpy(apply_fn(tr)).reshape(-1)
-            if np.any(xi):
-                ti = tn.tensor(xi, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
-                yi = tn.to_numpy(apply_fn(ti)).reshape(-1)
-                return yr + 1j * yi
-            return yr
-
-        out = _krylov_exp(matvec, vec_np, dt, krylov_dim, krylov_tol, complex_phase=False, real_time=real_time)
-        return tn.tensor(out, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
-
-    vec_np = tn.to_numpy(vec).reshape(-1).astype(np.complex128)
-    H = np.zeros((n, n), dtype=np.complex128)
-    for i in range(n):
-        basis = np.zeros(n, dtype=np.complex128)
-        basis[i] = 1.0
-        e = tn.tensor(basis, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
-        H[:, i] = tn.to_numpy(apply_fn(e)).reshape(-1)
-
-    w, V = np.linalg.eigh(H)
-    if real_time:
-        expw = np.exp(-dt * w)
-    else:
-        w_shift = w - np.min(w)
-        expw = np.exp(-dt * w_shift)
-    vec_new = (V * expw) @ (V.T @ vec_np)
-    if not real_time:
-        norm = np.linalg.norm(vec_new)
-        if norm > 0:
-            vec_new = vec_new / norm
-    return tn.tensor(vec_new, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
 
 
 def _zeros(shape, like):
@@ -169,8 +130,17 @@ def _copy_back(dst, src):
     dst.cores = [c.clone() for c in src.cores]
 
 
+def _complex_dtype(dtype):
+    """Return corresponding complex dtype."""
+    if dtype == np.float32 or dtype == np.complex64:
+        return np.complex64
+    if dtype == np.float64 or dtype == np.complex128:
+        return np.complex128
+    return dtype
+
+
 def _krylov_exp(matvec, vec, dt, krylov_dim, tol, complex_phase, real_time=False):
-    """Krylov subspace exponentiation."""
+    """Krylov subspace exponentiation (numpy)."""
     n = vec.shape[0]
     v = vec.astype(np.complex128 if complex_phase else np.float64)
     beta_prev = 0.0
@@ -210,10 +180,8 @@ def _krylov_exp(matvec, vec, dt, krylov_dim, tol, complex_phase, real_time=False
     w, U = np.linalg.eig(T)
     if complex_phase:
         expw = np.exp(-1j * dt * w)
-    elif real_time:
-        expw = np.exp(-dt * w)
     else:
-        expw = np.exp(-dt * (w - np.min(w.real)))
+        expw = np.exp(-dt * w)
     e1 = np.zeros(m, dtype=U.dtype)
     e1[0] = 1.0
     y = U @ (expw * (np.linalg.solve(U, e1)))
@@ -221,62 +189,105 @@ def _krylov_exp(matvec, vec, dt, krylov_dim, tol, complex_phase, real_time=False
     return out.real if not complex_phase else out
 
 
-def bug_like_sweep(state, mpo, dt, threshold=1e-10, max_bond_dim=1024, numiter_lanczos=25):
+def _evolve_local(theta, apply_fn, dt, max_dense=256, krylov_dim=20,
+                  krylov_tol=1e-10, real_time=False):
+    """Evolve a local TT core using Krylov, dense exponentiation, or
+    forward-Euler matvec.
+
+    .. warning::
+       The sequential site-by-site local evolution used by BUG and TDVP
+       is unstable for discretised dissipative PDEs because the projected
+       local Hamiltonians have eigenvalues O(1/h²) (h = grid spacing).
+       Use ``bug(..., linearized=True)`` only with Courant-limited steps.
+    """
+    vec = theta.reshape(-1)
+    n = tn.numel(vec)
+    complex_phase = bool(real_time)
+
+    if n > max_dense:
+        vec_np = tn.to_numpy(vec).reshape(-1).astype(np.complex128)
+
+        def matvec(x):
+            xr = np.real(x)
+            xi = np.imag(x)
+            tr = tn.tensor(xr, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
+            yr = tn.to_numpy(apply_fn(tr)).reshape(-1)
+            if np.any(xi):
+                ti = tn.tensor(xi, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
+                yi = tn.to_numpy(apply_fn(ti)).reshape(-1)
+                return yr + 1j * yi
+            return yr
+
+        out = _krylov_exp(matvec, vec_np, dt, krylov_dim, krylov_tol,
+                           complex_phase, real_time=real_time)
+        dtype = _complex_dtype(theta.dtype) if real_time else theta.dtype
+        return tn.tensor(out, dtype=dtype, device=theta.device).reshape(theta.shape)
+
+    vec_np = tn.to_numpy(vec).reshape(-1).astype(np.complex128)
+    H = np.zeros((n, n), dtype=np.complex128)
+    for i in range(n):
+        basis = np.zeros(n, dtype=np.complex128)
+        basis[i] = 1.0
+        e = tn.tensor(basis, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
+        H[:, i] = tn.to_numpy(apply_fn(e)).reshape(-1)
+
+    w, V = np.linalg.eigh(H)
+    expw = np.exp(-1j * dt * w) if real_time else np.exp(-dt * w)
+    vec_new = (V * expw) @ (V.T @ vec_np)
+    dtype = _complex_dtype(theta.dtype) if real_time else theta.dtype
+    return tn.tensor(vec_new, dtype=dtype, device=theta.device).reshape(theta.shape)
+
+
+def bug_like_sweep(state, mpo, dt, threshold=1e-10, max_bond_dim=1024,
+                   numiter_lanczos=25, real_time=False):
     """Right-to-left local-evolution sweep.
-    
-    This is not the full BUG algorithm. It performs local Krylov evolution in a
-    right-to-left sweep and then truncates by SVD.
-    
-    Args:
-        state: Initial TT state (modified in place).
-        mpo: Hamiltonian as TT (MPO).
-        dt: Time step.
-        threshold: SVD threshold for truncation.
-        max_bond_dim: Max bond dimension.
-        numiter_lanczos: Lanczos iterations.
+
+    .. warning::
+       Sequential site-by-site evolution is unstable for dissipative PDEs
+       with moderate-to-large discretisations.  Use step-truncate (forward
+       Euler on the full state + SVD rounding) instead.
     """
     num_sites = len(mpo.cores)
     if num_sites != len(state.cores):
         raise ValueError("State and Hamiltonian must have same number of sites")
-    
+
     cores = [c.clone() for c in state.cores]
-    
     left_envs = _build_left_envs(cores, mpo)
     right_envs = _build_right_envs(cores, mpo)
-    
+
     for i in range(num_sites - 1, -1, -1):
         theta = cores[i]
-        
+
         def apply_heff(x):
             return _project_site(left_envs[i], right_envs[i + 1], mpo.cores[i], x)
-        
-        theta_new = _evolve_local(theta, apply_heff, dt,
-                                max_dense=256, krylov_dim=numiter_lanczos,
-                                real_time=real_time)
-        
+
+        theta_new = _evolve_local(
+            theta, apply_heff, dt,
+            max_dense=256, krylov_dim=numiter_lanczos,
+            real_time=real_time,
+        )
         cores[i] = theta_new
-        
         left_envs = _build_left_envs(cores, mpo)
         right_envs = _build_right_envs(cores, mpo)
-    
+
     state = TT(cores)
     state = state.round(eps=threshold, rmax=max_bond_dim)
     return state
 
 
-def bug(state, mpo, dt, threshold=1e-10, max_bond_dim=1024, numiter_lanczos=25, real_time=False):
+def bug(state, mpo, dt, threshold=1e-10, max_bond_dim=1024,
+        numiter_lanczos=25, real_time=False):
     """Evolve a TT state with a rank-adaptive BUG step.
 
-    The implementation is for linear MPO dynamics. When ``real_time=False``
-    (default, imaginary-time evolution), local evolution uses an eigenvalue shift
-    and normalization. When ``real_time=True`` (real-time PDE evolution), the
-    eigenvalue shift and normalization are skipped. It uses local residuals from
-    projected site evolutions to update neighbouring TT bases, QR-retracts the
-    expanded bases, performs a Galerkin local evolution sweep in the updated
-    bases, and truncates to ``max_bond_dim``.
-
-    The input ``state`` is updated in place for compatibility and the evolved
-    TT is also returned.
+    .. warning::
+       The BUG algorithm uses sequential site-by-site local evolution
+       which is unstable for dissipative PDEs (heat, Burgers, FP) with
+       moderate-to-large spatial discretisations.  The projected local
+       Hamiltonians have eigenvalues O(1/h²) that make both the matrix
+       exponential and the forward-Euler approximation numerically
+       unstable.  Use step-truncate (forward Euler + SVD rounding) for
+       instationary PDEs until a proper Sylvester/Galerkin BUG is
+       implemented.
     """
     num_sites = len(mpo.cores)
     if num_sites != len(state.cores):
@@ -291,8 +302,7 @@ def bug(state, mpo, dt, threshold=1e-10, max_bond_dim=1024, numiter_lanczos=25, 
 
     cores = [c.clone() for c in state.cores]
 
-    # Basis update: expand bonds from residual directions generated by local
-    # projected evolution, then QR-retract the expanded bases.
+    # Basis update: expand bonds from residual directions.
     for direction in ("lr", "rl"):
         indices = range(num_sites - 1) if direction == "lr" else range(num_sites - 1, 0, -1)
         for i in indices:
@@ -304,11 +314,8 @@ def bug(state, mpo, dt, threshold=1e-10, max_bond_dim=1024, numiter_lanczos=25, 
                 return _project_site(L[site], R[site + 1], mpo.cores[site], x)
 
             theta_new = _evolve_local(
-                theta,
-                apply_heff,
-                dt,
-                max_dense=256,
-                krylov_dim=numiter_lanczos,
+                theta, apply_heff, dt,
+                max_dense=256, krylov_dim=numiter_lanczos,
                 real_time=real_time,
             )
             residual = theta_new - theta
@@ -334,11 +341,9 @@ def bug(state, mpo, dt, threshold=1e-10, max_bond_dim=1024, numiter_lanczos=25, 
             return _project_site(left_envs[site], right_envs[site + 1], mpo.cores[site], x)
 
         cores[i] = _evolve_local(
-            theta,
-            apply_heff,
-            dt,
-            max_dense=256,
-            krylov_dim=numiter_lanczos,
+            theta, apply_heff, dt,
+            max_dense=256, krylov_dim=numiter_lanczos,
+            real_time=real_time,
         )
         left_envs = _build_left_envs(cores, mpo)
         right_envs = _build_right_envs(cores, mpo)

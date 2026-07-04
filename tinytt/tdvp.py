@@ -118,6 +118,15 @@ def _heff_two_site(theta, L, R, W1, W2):
     return tn.einsum('laL,apqA,ArsB,tBT,lprt->LqsT', L, W1, W2, R, theta)
 
 
+def _complex_dtype(dtype):
+    """Return corresponding complex dtype for a given float/complex dtype."""
+    if dtype == np.float32 or dtype == np.complex64:
+        return np.complex64
+    if dtype == np.float64 or dtype == np.complex128:
+        return np.complex128
+    return dtype
+
+
 def _krylov_exp_matvec(matvec, vec, dt, krylov_dim, tol, complex_phase):
     n = vec.shape[0]
     v = vec.astype(np.complex128 if complex_phase else np.float64)
@@ -159,8 +168,7 @@ def _krylov_exp_matvec(matvec, vec, dt, krylov_dim, tol, complex_phase):
     if complex_phase:
         expw = np.exp(-1j * dt * w)
     else:
-        w_shift = w - np.min(w.real)
-        expw = np.exp(-dt * w_shift)
+        expw = np.exp(-dt * w)
     e1 = np.zeros(m, dtype=U.dtype)
     e1[0] = 1.0
     y = U @ (expw * (np.linalg.solve(U, e1)))
@@ -186,6 +194,12 @@ def _krylov_exp(apply_fn, shape, vec, dt, krylov_dim, tol, complex_phase, dtype,
 
 
 def _evolve_local(theta, apply_fn, dt, max_dense=256, krylov_dim=20, krylov_tol=1e-10, real_time=False):
+    """Evolve a local TT core.
+
+    .. warning::
+       Sequential site-by-site evolution is unstable for dissipative PDEs
+       with moderate-to-large discretisations.  Use step-truncate instead.
+    """
     vec = theta.reshape(-1)
     n = vec.numel()
     if n > max_dense:
@@ -214,16 +228,12 @@ def _evolve_local(theta, apply_fn, dt, max_dense=256, krylov_dim=20, krylov_tol=
 
     w, V = np.linalg.eigh(H)
     if real_time:
-        expw = np.exp(-dt * w)
+        expw = np.exp(-1j * dt * w)
     else:
-        w_shift = w - np.min(w)
-        expw = np.exp(-dt * w_shift)
+        expw = np.exp(-dt * w)
     vec_new = (V * expw) @ (V.T @ vec_np)
-    if not real_time:
-        norm = np.linalg.norm(vec_new)
-        if norm > 0:
-            vec_new = vec_new / norm
-    return tn.tensor(vec_new, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
+    dtype = _complex_dtype(theta.dtype) if real_time else theta.dtype
+    return tn.tensor(vec_new, dtype=dtype, device=theta.device).reshape(theta.shape)
 
 
 def _evolve_local_complex(theta_re, theta_im, apply_fn, dt, max_dense=256, krylov_dim=20, krylov_tol=1e-10):
