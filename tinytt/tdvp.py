@@ -193,13 +193,58 @@ def _krylov_exp(apply_fn, shape, vec, dt, krylov_dim, tol, complex_phase, dtype,
     return _krylov_exp_matvec(matvec, vec, dt, krylov_dim, tol, complex_phase)
 
 
-def _evolve_local(theta, apply_fn, dt, max_dense=256, krylov_dim=20, krylov_tol=1e-10, real_time=False):
+def _build_dense_H(theta, apply_fn, complex_dtype=np.complex128):
+    """Build the full local H matrix column by column."""
+    vec = theta.reshape(-1)
+    n = int(tn.numel(vec))
+    H = np.zeros((n, n), dtype=complex_dtype)
+    for j in range(n):
+        ej = np.zeros(n, dtype=complex_dtype)
+        ej[j] = 1.0
+        core = tn.tensor(ej, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
+        H[:, j] = tn.to_numpy(apply_fn(core)).reshape(-1)
+    return H, tn.to_numpy(vec).reshape(-1)
+
+
+def _evolve_local_dense_implicit(theta, apply_fn, dt, real_time, propagator):
+    """Backward-Euler or Crank-Nicolson local evolution via dense solve."""
+    H, vec = _build_dense_H(theta, apply_fn)
+    n = H.shape[0]
+    I = np.eye(n, dtype=H.dtype)
+
+    if propagator == "backward-euler":
+        out = np.linalg.solve(I + dt * H, vec)
+    elif propagator == "crank-nicolson":
+        lhs = I + 0.5 * dt * H
+        rhs = (I - 0.5 * dt * H) @ vec
+        out = np.linalg.solve(lhs, rhs)
+    else:
+        raise ValueError(f"unknown implicit propagator {propagator!r}")
+
+    # Backward Euler / CN output is real for non-real-time PDEs
+    if not real_time:
+        out = out.real
+    dtype = _complex_dtype(theta.dtype) if real_time else theta.dtype
+    return tn.tensor(out, dtype=dtype, device=theta.device).reshape(theta.shape)
+
+
+def _evolve_local(theta, apply_fn, dt, max_dense=256, krylov_dim=20,
+                  krylov_tol=1e-10, real_time=False, propagator="expm"):
     """Evolve a local TT core.
 
-    .. warning::
-       Sequential site-by-site evolution is unstable for dissipative PDEs
-       with moderate-to-large discretisations.  Use step-truncate instead.
+    Parameters
+    ----------
+    propagator : str
+        One of ``"expm"`` (matrix exponential, default),
+        ``"backward-euler"`` (implicit Euler, unconditionally stable),
+        or ``"crank-nicolson"`` (trapezoidal, A-stable, O(dt²)).
+        The implicit propagators are recommended for dissipative PDEs
+        where local projected Hamiltonians have eigenvalues O(1/h²).
     """
+    # For non-expm propagators, always build the dense H matrix.
+    if propagator != "expm":
+        return _evolve_local_dense_implicit(theta, apply_fn, dt, real_time, propagator)
+
     vec = theta.reshape(-1)
     n = vec.numel()
     if n > max_dense:
@@ -278,6 +323,7 @@ def tdvp_imag_time(
     krylov_dim=20,
     krylov_tol=1e-10,
     normalize=True,
+    propagator="expm",
 ):
     """
     Imaginary-time TDVP with one-site or two-site update sweeps.
@@ -287,6 +333,15 @@ def tdvp_imag_time(
     quotients and the energy decreases monotonically toward the ground state.
     Set ``normalize=False`` to keep the raw imaginary-time evolution (e.g. if
     you want to track ``||psi(t)||`` separately).
+
+    Parameters
+    ----------
+    propagator : str
+        Local propagator for site evolution.  ``"expm"`` (default) uses
+        the matrix exponential.  ``"backward-euler"`` and
+        ``"crank-nicolson"`` are unconditionally A-stable and recommended
+        for dissipative PDEs where local projected Hamiltonians have
+        eigenvalues O(1/h²).
     """
     if not (isinstance(psi, TT) and isinstance(H, TT)):
         raise InvalidArguments('psi and H must be TT instances.')
@@ -316,6 +371,7 @@ def tdvp_imag_time(
                     max_dense=max_dense,
                     krylov_dim=krylov_dim,
                     krylov_tol=krylov_tol,
+                    propagator=propagator,
                 )
                 psi.cores[i] = theta
                 if i < d - 1:
@@ -336,6 +392,7 @@ def tdvp_imag_time(
                     max_dense=max_dense,
                     krylov_dim=krylov_dim,
                     krylov_tol=krylov_tol,
+                    propagator=propagator,
                 )
 
                 left_dim, d1, d2, right_dim = theta.shape
@@ -374,6 +431,7 @@ def tdvp_imag_time(
                     max_dense=max_dense,
                     krylov_dim=krylov_dim,
                     krylov_tol=krylov_tol,
+                    propagator=propagator,
                 )
 
                 left_dim, d1, d2, right_dim = theta.shape
