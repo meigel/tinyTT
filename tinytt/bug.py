@@ -196,7 +196,12 @@ def _krylov_exp(matvec, vec, dt, krylov_dim, tol, complex_phase, real_time=False
     if complex_phase:
         expw = np.exp(-1j * dt * w)
     else:
-        expw = np.exp(-dt * w)
+        # Imaginary-time quantum evolution: shift by min eigenvalue so
+        # exp(-dt*(w - min(w))) acts as a contractive filter.  The
+        # shift is NOT applied in the "proper" BUG/TDVP PDE paths which
+        # use step-truncate or implicit propagators instead.
+        w_shift = w - np.min(w.real)
+        expw = np.exp(-dt * w_shift)
     e1 = np.zeros(m, dtype=U.dtype)
     e1[0] = 1.0
     y = U @ (expw * (np.linalg.solve(U, e1)))
@@ -239,7 +244,12 @@ def _evolve_local_legacy(theta, apply_fn, dt, max_dense=256, krylov_dim=20,
         H[:, i] = tn.to_numpy(apply_fn(e)).reshape(-1)
 
     w, V = np.linalg.eigh(H)
-    expw = np.exp(-1j * dt * w) if real_time else np.exp(-dt * w)
+    if real_time:
+        expw = np.exp(-1j * dt * w)
+    else:
+        # λ_min shift for imaginary-time quantum evolution (contractive filter)
+        w_shift = w - np.min(w)
+        expw = np.exp(-dt * w_shift)
     vec_new = (V * expw) @ (V.T @ vec_np)
     dtype = _complex_dtype(theta.dtype) if real_time else theta.dtype
     return tn.tensor(vec_new, dtype=dtype, device=theta.device).reshape(theta.shape)

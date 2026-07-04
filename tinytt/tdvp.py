@@ -168,7 +168,9 @@ def _krylov_exp_matvec(matvec, vec, dt, krylov_dim, tol, complex_phase):
     if complex_phase:
         expw = np.exp(-1j * dt * w)
     else:
-        expw = np.exp(-dt * w)
+        # λ_min shift for imaginary-time quantum evolution
+        w_shift = w - np.min(w.real)
+        expw = np.exp(-dt * w_shift)
     e1 = np.zeros(m, dtype=U.dtype)
     e1[0] = 1.0
     y = U @ (expw * (np.linalg.solve(U, e1)))
@@ -275,7 +277,9 @@ def _evolve_local(theta, apply_fn, dt, max_dense=256, krylov_dim=20,
     if real_time:
         expw = np.exp(-1j * dt * w)
     else:
-        expw = np.exp(-dt * w)
+        # λ_min shift for imaginary-time quantum evolution (contractive filter)
+        w_shift = w - np.min(w)
+        expw = np.exp(-dt * w_shift)
     vec_new = (V * expw) @ (V.T @ vec_np)
     dtype = _complex_dtype(theta.dtype) if real_time else theta.dtype
     return tn.tensor(vec_new, dtype=dtype, device=theta.device).reshape(theta.shape)
