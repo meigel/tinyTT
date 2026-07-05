@@ -8,6 +8,7 @@ from .krylov import (
     tangent_conjugate_gradient,
     tangent_ritz_vectors,
 )
+from .momentum import DFIMomentum, DFOMomentum
 from .projection import project_tt, projection_transport, transport_batch
 from .preconditioner import TangentAdjacentPair, TangentBlockJacobi
 from .tangent import TTTangent, TTTangentBatch
@@ -21,6 +22,8 @@ __all__ = [
     "TTTangentBatch",
     "TangentBlockJacobi",
     "TangentAdjacentPair",
+    "DFIMomentum",
+    "DFOMomentum",
     "project_tt",
     "projection_transport",
     "tangent_conjugate_gradient",
