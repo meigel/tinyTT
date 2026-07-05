@@ -41,12 +41,18 @@ class FourierSineBasis:
         basis = np.sin(np.pi * x[:, None] * k[None, :])
         return tn.tensor(basis, dtype=tn.float64)
 
-    def laplacian(self, x):
-        """Evaluate Δ of basis: -k²π² · φ_k(x). Returns (m, n_modes)."""
+    def derivative(self, x):
+        """Evaluate ∂_x of basis: kπ · cos(kπx). Returns (m, n_modes)."""
         x = tn.to_numpy(x) if tn.is_tensor(x) else x
         k = np.arange(1, self.n_modes + 1, dtype=np.float64)
-        basis = np.sin(np.pi * x[:, None] * k[None, :])
-        lap = -(np.pi * k[None, :]) ** 2 * basis
+        dx = (np.pi * k[None, :]) * np.cos(np.pi * x[:, None] * k[None, :])
+        return tn.tensor(dx, dtype=tn.float64)
+
+    def laplacian(self, x):
+        """Evaluate ∂_xx of basis: -k²π² · sin(kπx). Returns (m, n_modes)."""
+        x = tn.to_numpy(x) if tn.is_tensor(x) else x
+        k = np.arange(1, self.n_modes + 1, dtype=np.float64)
+        lap = -(np.pi * k[None, :]) ** 2 * np.sin(np.pi * x[:, None] * k[None, :])
         return tn.tensor(lap, dtype=tn.float64)
 
     def to_numpy(self, tensor):
@@ -90,51 +96,31 @@ def sample_kappa(x_grid, n_kl=5, sigma=0.3, seed=42):
 # ---------------------------------------------------------------------------
 
 def compute_residual(model, basis, x_colloc, kappa, t, dt):
-    """Compute PDE residual r(x) = ∂_t u - κ(x) Δu at collocation points.
+    """Compute PDE residual r(x) = kappa(x) * Delta u at collocation points.
 
-    The time derivative ∂_t u is approximated by the previous DF update,
-    so the residual is the PDE mismatch evaluated at the current state.
+    For a FunctionalTT with d=2 and the same Fourier sine basis for
+    both feature dimensions, the model output is a bilinear form:
+        u(x) = phi(x)^T * W * phi(x)
 
-    Parameters
-    ----------
-    model : FunctionalTT
-        Current model state.
-    basis : FourierSineBasis
-    x_colloc : ndarray  shape (m,)  — collocation points
-    kappa : ndarray  shape (m,)  — diffusivity at collocation points
-    t : float — current time (unused, for API consistency)
-    dt : float — time step (unused)
+    The Laplacian requires three forward passes:
+        term1 = model.forward([lap_phi, phi])     # phi'' * W * phi
+        term2 = model.forward([dx_phi, dx_phi])    # phi' * W * phi'
+        term3 = model.forward([phi, lap_phi])      # phi * W * phi''
 
-    Returns
-    -------
-    residual : tensor  shape (m, n0)
-        PDE residual at collocation points.
+    Delta u = term1 + 2*term2 + term3
     """
-    m = len(x_colloc)
-    x_tensor = tn.tensor(x_colloc, dtype=tn.float64)
-    phi = basis(x_tensor)          # (m, n_modes)
-    lap_phi = basis.laplacian(x_tensor)  # (m, n_modes)
+    x_t = tn.tensor(x_colloc, dtype=tn.float64)
+    phi = basis(x_t)
+    dx_phi = basis.derivative(x_t)
+    lap_phi = basis.laplacian(x_t)
 
-    # u = model.forward([phi])  # (m, n0)
-    # Δu evaluated as model.forward([lap_phi]) in the functional sense
-    # For FunctionalTT, the model is f(x) = <A, Φ(x)>
-    # So Δf(x) = <A, ΔΦ(x)>
-    # and κ(x)Δf(x) = κ(x) · <A, ΔΦ(x)>
-    phi_list = [phi]
-    u_val = model.forward(phi_list)          # (m, n0)
+    term1 = model.forward([lap_phi, phi])
+    term2 = model.forward([dx_phi, dx_phi])
+    term3 = model.forward([phi, lap_phi])
+    lap_u = term1 + 2.0 * term2 + term3
 
-    # Compute Δu via the same model on Laplacian features
-    lap_phi_list = [lap_phi]
-    lap_u = model.forward(lap_phi_list)       # (m, n0)
-
-    # κ(x) Δu
     kappa_t = tn.tensor(kappa.reshape(-1, 1), dtype=tn.float64)
-    rhs = kappa_t * lap_u                      # (m, n0)
-
-    # Residual: r = κ Δu  (the PDE right-hand side for ∂_t u = κ Δu)
-    # In the DF formulation, we solve: J·v ≈ r
-    # where J is the Jacobian of the model output w.r.t. parameters
-    return rhs
+    return kappa_t * lap_u
 
 
 # ---------------------------------------------------------------------------
@@ -403,20 +389,21 @@ def main():
         # Time-stepping
         print("  Running tt-CLoRA...")
         t0 = time.time()
-        phi = basis(tn.tensor(x_colloc, dtype=tn.float64))
-        phi_list = [phi, phi]  # d=2, same basis for both feature dims
-        kappa_t = tn.tensor(kappa.reshape(-1, 1), dtype=tn.float64)
+        x_t = tn.tensor(x_colloc, dtype=tn.float64)
+        phi = basis(x_t)
+        phi_list = [phi, phi]
         steps = int(args.t_final / args.dt)
 
         for step in range(steps):
-            # PDE residual: r = κ(x) · Δu
-            u_val = lo_model.forward(phi_list)
-            lap_phi = basis.laplacian(tn.tensor(x_colloc, dtype=tn.float64))
-            lap_u = lo_model.forward([lap_phi, lap_phi])
-            residual = kappa_t * lap_u
+            # Rebuild merged cores
+            merged = FunctionalTT(lo_model.assemble_cores())
+
+            # PDE residual via Laplacian decomposition
+            residual = compute_residual(
+                merged, basis, x_colloc, kappa, step * args.dt, args.dt
+            )
 
             # DF solve on merged model
-            merged = FunctionalTT(lo_model.assemble_cores())
             delta, info = df_step(merged, phi_list, residual,
                                   damping=args.damping, cg_tol=args.cg_tol)
 
