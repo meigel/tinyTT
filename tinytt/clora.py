@@ -59,6 +59,11 @@ def _factorize_core(core, r_lo):
 
     u, s, v = tn.linalg.svd(mat, full_matrices=False)
 
+    # Cap r_lo to available SVD components
+    max_rank = len(s)
+    if r_lo > max_rank:
+        r_lo = max_rank
+
     B = u[:, :r_lo]                                   # (r_left, r_lo) — orthonormal
     C_mat = tn.diag(s[:r_lo]) @ v[:r_lo, :]           # (r_lo, n * r_right)
     C = C_mat.reshape(r_lo, n, r_right)                # (r_lo, n, r_right)
@@ -84,36 +89,37 @@ def _merge_factors(B, C):
 
 
 def _project_lora(tangent_blocks, B_list):
-    """Project each tangent block onto the LoRA subspace.
+    """Project each tangent block onto the LoRA subspace and return
+    the corresponding C-factor update.
 
     For each core k, the tangent block δA_k (shape (r_k, n, r_{k+1}))
-    is projected as::
+    is projected and then represented as a C-factor update::
 
-        δA_proj = B_k @ (B_k^T @ δA_mat)
+        δC_mat = B_k^T @ δA_mat   (shape (r_lo, n * r_{k+1}))
+        δC = reshape(δC_mat, (r_lo, n, r_{k+1}))
 
-    where δA_mat = δA_k.reshape(r_k, n * r_{k+1}) and B_k is the
-    frozen left factor.  This guarantees δA_proj is representable as
-    B_k @ δC_k.
+    This directly gives the update in the C_k parameter space.
 
     Parameters
     ----------
     tangent_blocks : list of tensors
-        Tangent blocks from the DF solve (one per core).
+        Tangent blocks from the DF solve (feature cores only).
     B_list : list of tensors
         Frozen B factors (one per feature core).
 
     Returns
     -------
-    list of tensors — projected tangent blocks
+    list of tensors — C-factor updates (one per feature core)
     """
-    projected = []
+    c_updates = []
     for k, (block, Bk) in enumerate(zip(tangent_blocks, B_list)):
         r_left, n, r_right = map(int, block.shape)
         mat = block.reshape(r_left, n * r_right)
-        Bt = Bk.transpose(0, 1)                   # (r_lo, r_left)
-        proj = Bk @ (Bt @ mat)                     # (r_left, n * r_right)
-        projected.append(proj.reshape(r_left, n, r_right))
-    return projected
+        Bt = Bk.transpose(0, 1)                     # (r_lo, r_left)
+        dC_mat = Bt @ mat                            # (r_lo, n * r_right)
+        dC = dC_mat.reshape(-1, n, r_right)          # (r_lo, n, r_right)
+        c_updates.append(dC)
+    return c_updates
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +228,8 @@ class CLoRAModel:
         )
 
     def project_update(self, tangent):
-        """Project a tangent solution onto the LoRA subspace.
+        """Project a tangent solution onto the LoRA subspace and return
+        C-factor updates.
 
         Parameters
         ----------
@@ -231,14 +238,11 @@ class CLoRAModel:
 
         Returns
         -------
-        TTTangent
-            Projected tangent vector (only changes in C_k directions).
+        list of tensors
+            C-factor updates (one per feature core).
         """
-        # The output core (block 0) is NOT factorised — keep as-is.
-        blocks = [tangent.blocks[0].clone()] + list(tangent.blocks[1:])
-        projected = _project_lora(blocks[1:], self.B)
-        all_blocks = [tangent.blocks[0].clone()] + projected
-        return tangent.frame.tangent(all_blocks, project_gauge=True)
+        # Only project feature cores (skip output core block 0)
+        return _project_lora(list(tangent.blocks[1:]), self.B)
 
     # -- Utilities --------------------------------------------------------
 
