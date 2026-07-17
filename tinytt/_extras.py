@@ -420,6 +420,45 @@ def rank1TT(elements):
     return tinytt._tt_base.TT([e[None, ..., None] for e in elements])
 
 
+def from_dense(vec, N, eps=1e-10, rmax=sys.maxsize, dtype=None, device=None):
+    r"""Construct a TT from a flat dense vector.
+
+    Parameters
+    ----------
+    vec : array_like
+        Flat vector of length ``prod(N)``.
+    N : list of int
+        Mode sizes for each TT core.
+    eps : float
+        SVD truncation tolerance.
+    rmax : int
+        Maximum TT rank.
+    dtype, device : optional
+        Passed to the backend tensor constructor.
+
+    Returns
+    -------
+    TT
+        TT decomposition of the reshaped vector.
+
+    Example
+    -------
+    >>> x = np.random.randn(64)   # flat DOF vector
+    >>> x_tt = tt.from_dense(x, [4, 4, 4])
+    """
+    N = list(N)
+    total = 1
+    for n in N:
+        total *= n
+    vec = np.asarray(vec, dtype=np.float64).reshape(-1)
+    if vec.size != total:
+        raise ShapeMismatch(
+            f"Flat vector has {vec.size} entries but prod(N) = {total}."
+        )
+    dense = vec.reshape(N)
+    return tinytt._tt_base.TT(dense, eps=eps, rmax=rmax, dtype=dtype, device=device)
+
+
 def diag(input):
     if not isinstance(input, tinytt._tt_base.TT):
         raise InvalidArguments("Input must be a tinytt.TT instance.")
