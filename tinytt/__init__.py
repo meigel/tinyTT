@@ -109,6 +109,11 @@ from .compositional import (
     projection_retraction,
     first_coord_retraction,
 )
+from ._ttm_base import (
+    ttm_multiply, ttm_add, ttm_neg, ttm_sub,
+    ttm_round, ttm_from_matrix, ttm_to_matrix, ttm_apply,
+)
+from ._ttm_construct import ttm_kron, ttm_kronsum, ttm_rank1
 from .manifold import (
     FunctionalTTLinearization,
     TangentCGResult,
