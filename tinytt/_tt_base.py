@@ -515,9 +515,11 @@ class TT:
             if self.__is_ttm and not other.is_ttm:
                 if self.__N != other.N:
                     raise ShapeMismatch("Shapes do not match.")
-                # TT-matrix @ TT-vector via per-core contraction (no .full())
-                from ._aux_ops import tt_matvec
-                return tt_matvec(self.cores, other.cores)
+                # TT-matrix @ TT-vector via per-core contraction (no .full()).
+                # Uses ttm_apply (exact, no intermediate rounding) not tt_matvec
+                # (which has a backend-index-ordering issue for certain inputs).
+                from ._ttm_base import ttm_apply
+                return TT(ttm_apply(self.cores, other.cores))
             if self.__is_ttm and other.is_ttm:
                 if self.__N != other.M:
                     raise ShapeMismatch("Shapes do not match.")
