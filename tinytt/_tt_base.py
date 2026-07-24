@@ -625,8 +625,9 @@ class TT:
         return result
 
     def qtt_to_tens(self, original_shape):
-        if not isinstance(original_shape, list):
-            raise InvalidArguments("Original shape must be a list.")
+        if not isinstance(original_shape, (list, tuple)):
+            raise InvalidArguments("Original shape must be a list or tuple.")
+        original_shape = list(original_shape)
 
         core = None
         cores_new = []

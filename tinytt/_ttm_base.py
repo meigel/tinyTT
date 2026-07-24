@@ -186,11 +186,14 @@ def ttm_from_matrix(
 ) -> list[tn.Tensor]:
     r"""Factorise a dense matrix into TTM cores via TT-SVD.
 
+    Ensures the input is converted to the backend tensor type, so that
+    numpy arrays and torch tensors both work transparently.
+
     Parameters
     ----------
     A:
-        Dense matrix of shape ``(M, N)`` where ``M = ∏ₖ mₖ`` and
-        ``N = ∏ₖ nₖ``.
+        Dense matrix of shape ``(M, N)`` where
+        ``M = prod(mode_sizes_m)`` and ``N = prod(mode_sizes_n)``.
     mode_sizes_m:
         Row mode sizes ``[m₀, m₁, …, m_{P-1}]``.
     mode_sizes_n:
@@ -206,6 +209,10 @@ def ttm_from_matrix(
     P = len(mode_sizes_m)
     if len(mode_sizes_n) != P:
         raise ValueError("mode_sizes_m and mode_sizes_n must have same length")
+
+    # Convert to backend tensor if necessary (handles numpy arrays transparently).
+    if not tn.is_tensor(A):
+        A = tn.tensor(A)
 
     # Reshape A to [m₀, m₁, …, n₀, n₁, …] grouping all row modes first,
     # then all column modes.  This correctly separates the row and column
