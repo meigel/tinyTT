@@ -103,8 +103,19 @@ class TTManifoldFrame:
     def from_tt(cls, tt_or_cores) -> "TTManifoldFrame":
         cores = _coerce_cores(tt_or_cores)
         _validate_cores(cores)
-        left = left_orthogonalize(cores, inplace=False)
-        right = right_orthogonalize(cores, inplace=False)
+        try:
+            left = left_orthogonalize(cores, inplace=False)
+            right = right_orthogonalize(cores, inplace=False)
+        except ValueError:
+            # Locally redundant rank bonds (r_k > r_{k-1} * n_{k-1}): the
+            # representation is a valid tensor but over-parameterised.  Round
+            # exactly (tiny tolerance kills only the numerical redundancy of
+            # the redundant bond) and retry.
+            rounded = TT(cores).round(eps=1e-14)
+            cores = [c.clone() for c in rounded.cores]
+            _validate_cores(cores)
+            left = left_orthogonalize(cores, inplace=False)
+            right = right_orthogonalize(cores, inplace=False)
         suffix = _suffix_cross_grams(left, right)
         singular_values = []
         for bond in range(1, len(cores)):
