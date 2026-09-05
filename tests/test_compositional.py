@@ -28,7 +28,7 @@ from tinytt.functional_tt import FunctionalTT, random_ftt
 from tinytt.errors import InvalidArguments, ShapeMismatch
 
 # Backend-agnostic Adam optimizer helper
-if os.environ.get("TINYTT_BACKEND", "tinygrad").lower() == "pytorch":
+if os.environ.get("TINYTT_BACKEND", "pytorch").lower() == "pytorch":
     import torch.optim as _optim
 
     def _make_adam(params, lr=0.1):

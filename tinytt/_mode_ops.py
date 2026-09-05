@@ -11,6 +11,7 @@ import numpy as np
 import tinytt._backend as tn
 from tinytt._tt_base import TT
 from tinytt._qtt_layout import QTTLayout
+from tinytt._decomposition import SVD, _scalar
 
 __all__ = ["apply_mode"]
 
@@ -79,19 +80,18 @@ def apply_mode(x: TT, dim: int, matrix, *, layout: QTTLayout | None = None,
 
 def _resplit(blk, ncores, mode_size, eps, rmax):
     """TT-SVD a ``(r0, mode_size**ncores, r1)`` block back into ``ncores`` cores."""
-    import torch
     r0, _, r1 = blk.shape
     out = []
     M = blk.reshape(r0, -1)
     left = r0
     for _ in range(ncores - 1):
         M = M.reshape(left * mode_size, -1)
-        U, s, Vh = torch.linalg.svd(M, full_matrices=False)
-        keep = max(int((s > eps * max(float(s[0]), 1e-300)).sum().item()), 1)
+        U, s, Vh = SVD(M)
+        keep = max(int(_scalar((s > eps * max(_scalar(s[0]), 1e-300)).sum())), 1)
         if rmax:
             keep = min(keep, rmax)
         out.append(U[:, :keep].reshape(left, mode_size, keep))
-        M = torch.diag(s[:keep]) @ Vh[:keep]
+        M = tn.diag(s[:keep]) @ Vh[:keep]
         left = keep
     out.append(M.reshape(left, mode_size, r1))
     return out

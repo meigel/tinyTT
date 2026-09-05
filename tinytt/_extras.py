@@ -269,13 +269,19 @@ def kron_sum(terms, weights=None, eps=1e-12, rmax=sys.maxsize):
     result = _tt.TT(terms[0]) if not isinstance(
         terms[0], _tt.TT) else terms[0].clone()
     if weights[0] != 1.0:
-        result = _tt.TT([weights[0] * c for c in result.cores])
+        # Scaling every core would scale the tensor by w**d, not w.
+        # float() first: numpy scalars can hijack `*` into an object array.
+        cores = list(result.cores)
+        cores[0] = cores[0] * float(weights[0])
+        result = _tt.TT(cores)
 
     for k in range(1, len(terms)):
         term = _tt.TT(terms[k]) if not isinstance(
             terms[k], _tt.TT) else terms[k].clone()
         if weights[k] != 1.0:
-            term = _tt.TT([weights[k] * c for c in term.cores])
+            cores = list(term.cores)
+            cores[0] = cores[0] * float(weights[k])
+            term = _tt.TT(cores)
         result = _add(result, term, eps=eps, rmax=rmax)
 
     return result

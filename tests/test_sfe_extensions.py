@@ -91,3 +91,17 @@ def test_expsum_converges_with_R():
     errs = [expsum_inv(R, 1.0, 200.0)[2] for R in [8, 16, 24, 48]]
     assert errs == sorted(errs, reverse=True)      # monotone decreasing
     assert errs[-1] < 1e-6
+
+
+def test_expsum_symbol_inverse_symbol():
+    """expsum_symbol builds the TT of 1/(l(k_1)+...+l(k_d)) pointwise."""
+    n, d = 8, 2
+    lam = 4.0 * np.sin(np.pi * np.arange(1, n + 1) / (2.0 * (n + 1))) ** 2
+    errs = []
+    for R in [8, 16, 24]:
+        y = tt.expsum.expsum_symbol(R, lam, d)
+        ref = 1.0 / (lam[:, None] + lam[None, :])
+        errs.append(np.max(np.abs(y.full().numpy() - ref)) / np.max(ref))
+        assert max(y.R) <= R
+    assert errs == sorted(errs, reverse=True)      # monotone decreasing
+    assert errs[-1] < 1e-4
