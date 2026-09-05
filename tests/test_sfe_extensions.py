@@ -105,3 +105,26 @@ def test_expsum_symbol_inverse_symbol():
         assert max(y.R) <= R
     assert errs == sorted(errs, reverse=True)      # monotone decreasing
     assert errs[-1] < 1e-4
+
+
+def test_expsum_symbol_rejects_zero_containing_symbol_without_range():
+    """A symbol with a zero entry makes the default range start at 0."""
+    lam = np.array([0.0, 1.0, 4.0, 9.0])
+    with pytest.raises(ValueError):
+        tt.expsum.expsum_symbol(8, lam, 2)
+
+
+def test_expsum_symbol_with_explicit_range_is_accurate():
+    """1/Lambda on the nonzero modes, with the zero entry kept as exp(0)=1."""
+    n, d, R = 8, 3, 24
+    k = np.fft.fftfreq(n, d=1.0 / n)
+    lam = k.astype(float) ** 2                       # lam[0] == 0 legitimately
+    lo = float(lam[lam > 0].min())
+    sym = tt.expsum.expsum_symbol(R, lam, d, eps=1e-12,
+                                  xrange=(lo, d * float(lam.max())))
+    got = sym.full().numpy().reshape((n,) * d)
+    Lam = sum(lam.reshape([-1 if j == i else 1 for j in range(d)])
+              for i in range(d))
+    mask = Lam > 0
+    rel = np.max(np.abs(got[mask] - 1.0 / Lam[mask]) * Lam[mask])
+    assert rel < 1e-3

@@ -60,7 +60,8 @@ def expsum_inv(R: int, xmin: float, xmax: float, ntest: int = 1200):
     return out
 
 
-def expsum_symbol(R: int, eigvals_1d, d: int, eps: float = 1e-11):
+def expsum_symbol(R: int, eigvals_1d, d: int, eps: float = 1e-11,
+                  xrange: tuple[float, float] | None = None):
     """``1/sum_i l(k_i)`` as a rank-``R`` TT tensor of separable factors.
 
     Parameters
@@ -71,12 +72,30 @@ def expsum_symbol(R: int, eigvals_1d, d: int, eps: float = 1e-11):
         The 1D symbol values ``l(k)``.
     d : int
         Number of dimensions.
+    xrange : (float, float), optional
+        Range of ``Lambda`` over which ``1/x`` is approximated. Defaults to
+        ``(d*min(l), d*max(l))``, which is WRONG whenever ``l`` contains zeros:
+        the zero entries are legitimate (``exp(0) = 1``), but the attainable
+        ``Lambda`` on the modes of interest excludes the all-zero mode, so the
+        lower end should be the smallest attainable NONZERO value, typically
+        ``min(l[l > 0])``. Pass it explicitly in that case.
     """
     from tinytt import kron, kron_sum, from_dense
 
     lam = np.asarray(eigvals_1d, dtype=float)
     n = lam.size
-    om, al, _ = expsum_inv(R, d * float(lam.min()), d * float(lam.max()))
+    if xrange is None:
+        lo = d * float(lam.min())
+        if lo <= 0.0:
+            raise ValueError(
+                "eigvals_1d contains non-positive entries, so the default "
+                "range starts at 0; pass xrange=(xmin, xmax) with xmin the "
+                "smallest attainable nonzero value of the separable sum"
+            )
+        hi = d * float(lam.max())
+    else:
+        lo, hi = float(xrange[0]), float(xrange[1])
+    om, al, _ = expsum_inv(R, lo, hi)
     terms = []
     for m in range(R):
         f = from_dense(np.exp(-al[m] * lam), [n], eps=1e-14)
