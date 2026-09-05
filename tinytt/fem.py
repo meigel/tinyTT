@@ -125,3 +125,78 @@ def fe_rhs(n: int) -> np.ndarray:
     """
     h = 1.0 / (n + 1)
     return h * h * np.ones(n * n)
+
+
+# ---------------------------------------------------------------------------
+# Periodic V0/V1 spaces and the 1D de Rham pair (added for mixed / H(div) work)
+# ---------------------------------------------------------------------------
+# The blocks above are Dirichlet P1 only, with h = 1/(n+1). Mixed methods need
+# in addition the piecewise-constant space V0, the derivative D : V1 -> V0, the
+# antiderivative A : V0 -> V1, and the MIXED Gram <P0, P1>. Periodic boundary
+# conditions are provided because they give exactly n = 2^L degrees of freedom
+# per direction, which is what `TT.to_qtt` requires (Dirichlet gives 2^L - 1 and
+# needs padding).
+#
+# Conventions (both are easy to get wrong):
+#   * S[k, l] = 1 iff l = k + 1, i.e. np.roll(I, +1, axis=1). Using -1 yields the
+#     TRANSPOSE, turning D into a backward difference of the wrong sign.
+#   * A must be STRICTLY lower triangular, otherwise D @ A is a shift, not I.
+
+
+def shift_periodic(n: int) -> np.ndarray:
+    r"""Periodic forward shift ``S``, with ``S[k, l] = 1`` iff ``l = k+1``."""
+    return np.roll(np.eye(n), 1, axis=1)
+
+
+def mass_p0_periodic(n: int) -> np.ndarray:
+    r"""``G00_{kl} = \int \phi^0_k \phi^0_l = h \delta_{kl}`` on ``n`` cells."""
+    return (1.0 / n) * np.eye(n)
+
+
+def mass_p1_periodic(n: int) -> np.ndarray:
+    r"""``G11 = h(2/3 I + 1/6 (S + S^T))`` for continuous periodic P1."""
+    h = 1.0 / n
+    S = shift_periodic(n)
+    return h * ((2.0 / 3.0) * np.eye(n) + (1.0 / 6.0) * (S + S.T))
+
+
+def mixed_mass_p0_p1_periodic(n: int) -> np.ndarray:
+    r"""``G01_{kl} = \int \phi^0_k \phi^1_l = (h/2)(I + S)``.
+
+    Needed whenever a flux component and a gradient component live in
+    TRANSPOSED tensor-product spaces, as they do for ``Q1``/``RT0`` on cubes.
+    """
+    return (1.0 / (2.0 * n)) * (np.eye(n) + shift_periodic(n))
+
+
+def derivative_p1_to_p0_periodic(n: int) -> np.ndarray:
+    r"""``D = (S - I)/h`` mapping periodic ``V1`` nodal values to ``V0``."""
+    return (shift_periodic(n) - np.eye(n)) * n
+
+
+def antiderivative_p0_to_p1_periodic(n: int) -> np.ndarray:
+    r"""``A = h \cdot \mathrm{strict\_lower}``, the inverse of ``D``.
+
+    Satisfies ``D @ A == I`` on mean-zero data (the periodic compatibility
+    condition). Its QTT-matrix rank is 2, independent of ``log2(n)``.
+    """
+    return (1.0 / n) * np.tril(np.ones((n, n)), -1)
+
+
+def mean_projector_periodic(n: int) -> np.ndarray:
+    r"""``P = (1/n) \mathbf{1}\mathbf{1}^T``, projection onto the mean."""
+    return np.ones((n, n)) / n
+
+
+def blocks_periodic(n: int) -> dict:
+    """All periodic 1D blocks in one dict: ``S, D, A, G00, G11, G01, P, h``."""
+    return dict(
+        n=n, h=1.0 / n,
+        S=shift_periodic(n),
+        D=derivative_p1_to_p0_periodic(n),
+        A=antiderivative_p0_to_p1_periodic(n),
+        G00=mass_p0_periodic(n),
+        G11=mass_p1_periodic(n),
+        G01=mixed_mass_p0_p1_periodic(n),
+        P=mean_projector_periodic(n),
+    )

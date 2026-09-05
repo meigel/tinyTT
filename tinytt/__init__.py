@@ -72,9 +72,22 @@ from .solvers import amen_mm
 from . import interpolate
 from . import uq_adf
 from . import tdvp
-from . import bug, problems
+from . import bug
+
+try:  # `problems` pulls in scikit-fem; keep core TT arithmetic usable without it
+    from . import problems
+except ImportError as _exc:  # pragma: no cover
+    import warnings as _warnings
+    _warnings.warn(
+        f"tinytt.problems unavailable ({_exc}); install scikit-fem to enable it",
+        ImportWarning,
+    )
+    problems = None
 from tinytt.projector_splitting import projector_splitting_step
 
+from ._qtt_layout import QTTLayout
+from ._mode_ops import apply_mode
+from . import expsum
 from ._riemannian import (
     tangent_project,
     left_orthogonalize,
@@ -163,6 +176,9 @@ __all__ = [
     'dmrg_hadamard',
     'fast_hadamard',
     'fast_hadammard',
+    'QTTLayout',
+    'apply_mode',
+    'expsum',
     'fast_mv',
     'fast_mm',
     'cg',
