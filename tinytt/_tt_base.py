@@ -556,8 +556,42 @@ class TT:
     def round(self, eps=1e-12, rmax=sys.maxsize):
         if not isinstance(rmax, list):
             rmax = [1] + len(self.__N) * [rmax] + [1]
-        tt_cores, _ = round_tt(self.cores, self.__R.copy(), eps, rmax, self.__is_ttm)
-        return TT(tt_cores)
+        # Contraction guard with retry: rounding must never inflate the norm
+        # (||round_eps(x)|| <= ||x||).  A BLAS/LAPACK-level fault on
+        # near-degenerate spectra (dgesdd deflation race, threaded) can
+        # silently corrupt a sweep attempt; a fresh clone retry recovers the
+        # correct result.  If every attempt fails the check, raise instead of
+        # shipping a corrupted tensor.
+        from tinytt._extras import inner as _inner
+
+        def _nrm(t):
+            v = float(_inner(t, t))
+            return float(np.sqrt(max(v, 0.0)))
+
+        in_norm = None
+        out = None
+        for attempt in range(4):
+            tt_cores, _ = round_tt(
+                [c.clone() for c in self.cores], self.__R.copy(), eps, rmax, self.__is_ttm
+            )
+            out = TT(tt_cores)
+            if in_norm is None:
+                in_norm = _nrm(self)
+            # two-sided contraction check: rounding must neither inflate nor
+            # deflate the norm beyond the requested tolerance (legit change
+            # is <= ~eps relative; corruption was 25-400x).  Absolute floor:
+            # (1) numerically-zero tensors round to SVD noise, and (2) inner()
+            # on ~zero tensors reports contraction noise (~1e-7 here) far
+            # above the tensor's true 0 norm — both are legitimate, and any
+            # tensor below ~1e-6 norm is below every meaningful tolerance
+            on = _nrm(out)
+            margin = max(10.0 * float(eps), 1e-9)
+            if abs(on - in_norm) <= max(in_norm * margin, 1e-6):
+                return out
+        raise RuntimeError(
+            f"round failed the contraction check 4x (||out||={_nrm(out):.6g} > "
+            f"||in||={in_norm:.6g}); kernel-level fault, not a tolerance issue"
+        )
 
     def to_qtt(self, eps=1e-12, mode_size=2, rmax=sys.maxsize, skip_cores=None):
         """Convert to QTT format, optionally skipping specified cores.
