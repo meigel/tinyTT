@@ -151,9 +151,17 @@ def inner(a, b):
     if not isinstance(a, tinytt._tt_base.TT) or not isinstance(b, tinytt._tt_base.TT):
         raise InvalidArguments("Both operands should be TT instances.")
     if a.is_ttm or b.is_ttm:
-        raise NotImplementedError(
-            "inner is only implemented for TT tensors (not TTM)."
-        )
+        # Frobenius inner product of two same-shape TT-matrices equals the
+        # TT inner product of the cores reshaped to (r, n_rows*n_cols, r').
+        if not a.is_ttm or not b.is_ttm or a.N != b.N or a.M != b.M:
+            raise InvalidArguments(
+                "TTM inner product requires matching row/column shapes.")
+        if list(a.shape) != list(b.shape):
+            raise InvalidArguments("TTM inner product requires equal shapes.")
+        a = tinytt.TT([c.reshape(c.shape[0], -1, c.shape[-1])
+                       for c in a.cores])
+        b = tinytt.TT([c.reshape(c.shape[0], -1, c.shape[-1])
+                       for c in b.cores])
     if a.N != b.N:
         raise ShapeMismatch("Operands are not the same size.")
     
