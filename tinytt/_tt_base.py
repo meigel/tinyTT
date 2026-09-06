@@ -581,12 +581,14 @@ class TT:
             # deflate the norm beyond the requested tolerance (legit change
             # is <= ~eps relative; corruption was 25-400x).  Absolute floor:
             # (1) numerically-zero tensors round to SVD noise, and (2) inner()
-            # on ~zero tensors reports contraction noise (~1e-7 here) far
-            # above the tensor's true 0 norm — both are legitimate, and any
-            # tensor below ~1e-6 norm is below every meaningful tolerance
+            # on ~zero tensors reports contraction noise that GROWS with the
+            # chain depth (~1e-7 at n=64 up to ~2e-6 at n=1024) far above the
+            # tensor's true 0 norm.  1e-4 admits those while still catching
+            # any 25x+ corruption of a tensor above ~1e-5 norm (i.e. anything
+            # that can matter at tol ~ 1e-4).
             on = _nrm(out)
             margin = max(10.0 * float(eps), 1e-9)
-            if abs(on - in_norm) <= max(in_norm * margin, 1e-6):
+            if abs(on - in_norm) <= max(in_norm * margin, 1e-4):
                 return out
         raise RuntimeError(
             f"round failed the contraction check 4x (||out||={_nrm(out):.6g} > "
