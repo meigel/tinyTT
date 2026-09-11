@@ -515,7 +515,29 @@ class _Linalg:
         return torch.linalg.qr(x)
 
     def svd(self, x: torch.Tensor, full_matrices: bool = False):
-        return torch.linalg.svd(x, full_matrices=full_matrices)
+        u, s, vh = torch.linalg.svd(x, full_matrices=full_matrices)
+        if x.device.type == "cpu" and x.numel() > 0:
+            total = float((x.abs().double() ** 2).sum())
+            energy = float((s.abs().double() ** 2).sum())
+            if total > 0.0 and np.abs(energy - total) > 1e-8 * total:
+                # A singular-value set that does not carry the Frobenius energy of
+                # the input is not a decomposition of it, and the vectors from the
+                # same call cannot be trusted either.  Apple's Accelerate gesdd
+                # returns exactly such a triple for rank-deficient inputs, where
+                # svdvals, numpy and scipy all give the correct answer; see
+                # tests/test_svd_rank_deficient.py.  Confirm on the residual and
+                # redo the decomposition with numpy, which fixes the values and the
+                # vectors together.  The guard is O(m n) in the healthy case.
+                residual = float((x - scale_cols(u, s) @ vh).abs().max())
+                scale = max(float(x.abs().max()), 1e-300)
+                if residual > 1e-8 * scale:
+                    u_np, s_np, vh_np = np.linalg.svd(
+                        x.detach().cpu().numpy(), full_matrices=full_matrices
+                    )
+                    u = torch.as_tensor(u_np, dtype=u.dtype, device=u.device)
+                    s = torch.as_tensor(s_np, dtype=s.dtype, device=s.device)
+                    vh = torch.as_tensor(vh_np, dtype=vh.dtype, device=vh.device)
+        return u, s, vh
 
     def solve(self, a: torch.Tensor, b: torch.Tensor):
         return solve(a, b)
