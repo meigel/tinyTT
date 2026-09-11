@@ -25,8 +25,8 @@ def _gauge_project(frame, blocks: list) -> list:
         r_left, mode, r_right = map(int, block.shape)
         matrix = block.reshape(r_left * mode, r_right)
         basis = frame.left_cores[k].reshape(r_left * mode, r_right)
-        matrix = matrix - basis @ (basis.transpose(0, 1) @ matrix)
-        projected.append(tn.realize(matrix.reshape(r_left, mode, r_right)))
+        matrix = matrix - basis @ (tn.conj_transpose(basis) @ matrix)
+        projected.append(matrix.reshape(r_left, mode, r_right))
     return projected
 
 
@@ -39,9 +39,9 @@ def _gauge_project_batch(frame, blocks: list) -> list:
         r_left, mode, r_right, columns = map(int, block.shape)
         matrix = block.reshape(r_left * mode, r_right * columns)
         basis = frame.left_cores[k].reshape(r_left * mode, r_right)
-        matrix = matrix - basis @ (basis.transpose(0, 1) @ matrix)
+        matrix = matrix - basis @ (tn.conj_transpose(basis) @ matrix)
         projected.append(
-            tn.realize(matrix.reshape(r_left, mode, r_right, columns))
+            matrix.reshape(r_left, mode, r_right, columns)
         )
     return projected
 
@@ -69,7 +69,7 @@ class TTTangent:
         self.frame = frame
         self.blocks = tuple(_gauge_project(frame, coerced) if project_gauge else coerced)
 
-    def clone(self) -> "TTTangent":
+    def clone(self) -> TTTangent:
         return TTTangent(self.frame, list(self.blocks), project_gauge=False)
 
     def gauge_residual(self) -> float:
@@ -79,30 +79,38 @@ class TTTangent:
             r_left, mode, r_right = map(int, core.shape)
             basis = core.reshape(r_left * mode, r_right)
             block = self.blocks[k].reshape(r_left * mode, r_right)
-            residual = tn.linalg.norm(basis.transpose(0, 1) @ block)
+            residual = tn.linalg.norm(tn.conj_transpose(basis) @ block)
             maximum = max(maximum, float(tn.to_numpy(residual).item()))
         return maximum
 
-    def inner(self, other: "TTTangent"):
+    def inner(self, other: TTTangent):
+        """The Riemannian metric ``<self, other>``.
+
+        Conjugate-linear in ``self``, so it is a genuine inner product for
+        complex TT tensors too; ``tn.conj`` is the identity for real dtypes.
+        Because the site blocks are mutually orthogonal in the canonical
+        frame, the metric is just the sum of their Frobenius products.
+        """
         if self.frame is not other.frame:
             raise ValueError("tangent vectors must use the same manifold frame")
         result = None
         for first, second in zip(self.blocks, other.blocks):
-            value = (first.reshape(-1) * second.reshape(-1)).sum()
+            value = (tn.conj(first.reshape(-1)) * second.reshape(-1)).sum()
             result = value if result is None else result + value
         return result
 
     def norm(self):
-        return self.inner(self).sqrt()
+        """The induced norm -- real and non-negative, also for complex TTs."""
+        return tn.sqrt(tn.abs(self.inner(self)))
 
-    def scaled(self, scalar: float) -> "TTTangent":
+    def scaled(self, scalar: float) -> TTTangent:
         return TTTangent(
             self.frame,
             [scalar * block for block in self.blocks],
             project_gauge=False,
         )
 
-    def add(self, other: "TTTangent") -> "TTTangent":
+    def add(self, other: TTTangent) -> TTTangent:
         if self.frame is not other.frame:
             raise ValueError("tangent vectors must use the same manifold frame")
         return TTTangent(
@@ -197,7 +205,7 @@ class TTTangentBatch:
         self._column_count = int(column_count or 0)
 
     @classmethod
-    def from_columns(cls, columns: list[TTTangent]) -> "TTTangentBatch":
+    def from_columns(cls, columns: list[TTTangent]) -> TTTangentBatch:
         if not columns:
             raise ValueError("at least one tangent column is required")
         frame = columns[0].frame
@@ -222,7 +230,7 @@ class TTTangentBatch:
             project_gauge=False,
         )
 
-    def select(self, indices) -> "TTTangentBatch":
+    def select(self, indices) -> TTTangentBatch:
         """Return selected tangent columns in the requested order."""
         selected = np.asarray(indices, dtype=int)
         if selected.ndim != 1:
@@ -236,7 +244,7 @@ class TTTangentBatch:
             [block[:, :, :, selected.tolist()] for block in self.blocks],
         )
 
-    def scaled(self, scalar: float) -> "TTTangentBatch":
+    def scaled(self, scalar: float) -> TTTangentBatch:
         """Scale every tangent column by the same scalar."""
         return TTTangentBatch(
             self.frame,
@@ -251,7 +259,7 @@ class TTTangentBatch:
         )
         for block in self.blocks:
             matrix = block.reshape(-1, self._column_count)
-            gram = gram + matrix.transpose(0, 1) @ matrix
+            gram = gram + tn.conj_transpose(matrix) @ matrix
         return gram
 
     def adjoint_apply(self, tangent: TTTangent):
@@ -264,10 +272,10 @@ class TTTangentBatch:
         )
         for block, vector_block in zip(self.blocks, tangent.blocks):
             matrix = block.reshape(-1, self._column_count)
-            result = result + matrix.transpose(0, 1) @ vector_block.reshape(-1)
+            result = result + tn.conj_transpose(matrix) @ vector_block.reshape(-1)
         return result
 
-    def linear_combination(self, coefficients) -> "TTTangentBatch":
+    def linear_combination(self, coefficients) -> TTTangentBatch:
         coefficients = (
             coefficients
             if tn.is_tensor(coefficients)
@@ -287,7 +295,7 @@ class TTTangentBatch:
             blocks.append(matrix.reshape(*prefix, output_columns))
         return TTTangentBatch(self.frame, blocks)
 
-    def append(self, other: "TTTangentBatch") -> "TTTangentBatch":
+    def append(self, other: TTTangentBatch) -> TTTangentBatch:
         if other.frame is not self.frame:
             raise ValueError("tangent batches must use the same frame")
         return TTTangentBatch(
@@ -303,7 +311,7 @@ class TTTangentBatch:
         *,
         relative_tolerance: float = 1e-12,
         absolute_tolerance: float = 0.0,
-    ) -> "TTTangentBatch":
+    ) -> TTTangentBatch:
         """Return a rank-revealing orthonormal basis for the column span.
 
         If ``C = S* S = V diag(lambda) V*``, the retained basis is

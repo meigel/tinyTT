@@ -16,7 +16,6 @@ import tinytt._backend as tn
 from tinytt.bug import bug, bug_with_momentum
 from tinytt.manifold import DFIMomentum, DFOMomentum
 
-
 # ---------------------------------------------------------------------------
 # Test helpers
 # ---------------------------------------------------------------------------
@@ -54,6 +53,18 @@ def _rank1_product_tt(n, d, func):
     """Build a rank-1 product TT of a 1D function."""
     v = tn.tensor(func.reshape(1, n, 1), dtype=tn.float64)
     return tt.TT([v.clone() for _ in range(d)])
+
+
+def _core_ranks(state):
+    """TT ranks read from the cores.
+
+    ``tinytt.bug._copy_back`` assigns ``state.cores`` directly, and ``TT.R``
+    returns a cached list captured at construction, so ``state.R`` is stale
+    after ``bug``/``bug_with_momentum``.  Read the ranks from the cores.
+    """
+    return [int(state.cores[0].shape[0])] + [
+        int(core.shape[2]) for core in state.cores
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +176,7 @@ class TestDFOMomentum:
 
     def test_reset(self):
         m = DFOMomentum(param=0.05)
-        assert not m._momentum is not None  # noqa  (no has_state accessor yet)
+        assert not m.has_momentum
         n, d, r = 16, 3, 8
         H = _simple_heat_mpo(n, d)
         x = np.linspace(0, 1, n)
@@ -173,9 +184,9 @@ class TestDFOMomentum:
         psi = _rank1_product_tt(n, d, s).round(rmax=r)
         rhs = (H @ psi).round(eps=1e-12, rmax=r * 2)
         m.regularize(psi, rhs)
-        assert m._momentum is not None
+        assert m.has_momentum
         m.reset()
-        assert m._momentum is None
+        assert not m.has_momentum
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +229,7 @@ class TestBugWithMomentum:
         bug_with_momentum(psi, H, 0.001, momentum=m,
                           threshold=1e-10, max_bond_dim=r)
         assert len(psi.cores) == d
+        assert all(rank <= r for rank in _core_ranks(psi)), _core_ranks(psi)
 
     def test_bug_with_momentum_dfo_runs(self):
         """bug_with_momentum with DFO momentum runs without error."""
@@ -231,3 +243,4 @@ class TestBugWithMomentum:
         bug_with_momentum(psi, H, 0.001, momentum=m,
                           threshold=1e-10, max_bond_dim=r)
         assert len(psi.cores) == d
+        assert all(rank <= r for rank in _core_ranks(psi)), _core_ranks(psi)

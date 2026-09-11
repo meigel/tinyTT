@@ -15,9 +15,11 @@ Produces the accuracy-vs-parameter-count figure for Paper~2.
 
 import argparse
 import time
+
 import numpy as np
+
 import tinytt._backend as tn
-from tinytt.functional_tt import FunctionalTT, random_ftt
+from tinytt.functional_tt import FunctionalTT
 from tinytt.manifold import (
     FunctionalTTLinearization,
     TangentBlockJacobi,
@@ -275,8 +277,8 @@ def reference_solution(x_grid, kappa, t_final, n_spectral=256):
 
     # Time-stepping with Crank-Nicolson
     # ∂_t u = ∂_x(κ(x) ∂_x u)
-    # 
-    # FD: (u^{n+1}_j - u^n_j)/dt = 
+    #
+    # FD: (u^{n+1}_j - u^n_j)/dt =
     #   (κ_{j+1/2}(u^{n+1/2}_{j+1} - u^{n+1/2}_j) - κ_{j-1/2}(u^{n+1/2}_j - u^{n+1/2}_{j-1}))/h²
     #
     # Crank-Nicolson: (I - 0.5·dt·A) u^{n+1} = (I + 0.5·dt·A) u^n

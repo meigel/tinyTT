@@ -7,16 +7,19 @@ abstraction.  The reference matrices are constructed in numpy for comparison.
 from __future__ import annotations
 
 import numpy as np
-import tinytt._backend as tn
-import pytest
 
+import tinytt._backend as tn
 from tinytt._ttm_base import (
-    ttm_multiply, ttm_add, ttm_neg, ttm_sub,
-    ttm_round, ttm_from_matrix, ttm_to_matrix, ttm_apply,
+    ttm_add,
+    ttm_apply,
+    ttm_from_matrix,
+    ttm_multiply,
+    ttm_neg,
+    ttm_round,
+    ttm_sub,
+    ttm_to_matrix,
 )
 from tinytt._ttm_construct import ttm_kron, ttm_kronsum, ttm_rank1
-from tinytt._decomposition import SVD
-
 
 # -------------------------------------------------------------------
 # Helpers

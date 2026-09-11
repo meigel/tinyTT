@@ -1,4 +1,5 @@
 import math
+
 import numpy as np
 import numpy.polynomial.legendre as leg
 import pytest
@@ -46,7 +47,7 @@ def _basis_vals(x, degree, basis):
         return _legendre_basis_vals(x, degree)
     if basis == uq.PolynomBasis.Hermite:
         return _hermite_basis_vals(x, degree)
-    raise ValueError("Unknown basis {}".format(basis))
+    raise ValueError(f"Unknown basis {basis}")
 
 
 def _eval_tt_scalar(cores, y, basis):

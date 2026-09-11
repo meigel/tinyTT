@@ -6,6 +6,7 @@ multiple output modes survive QTT roundtrip.
 """
 
 import numpy as np
+
 import tinytt as tt
 import tinytt._backend as tn
 

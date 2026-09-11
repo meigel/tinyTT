@@ -10,9 +10,9 @@ Usage:  PYTHONPATH=. python examples/tt_qtt_functional.py
 """
 
 import numpy as np
+
 import tinytt as tt
 import tinytt._backend as tn
-
 
 print("=" * 60)
 print("  QTT function regression")
@@ -85,7 +85,7 @@ print(f"  Vector QTT rel_err:     {rel_err_vec:.3e}")
 
 # Sample some values
 print()
-print(f"  Sample values (i=j slice):")
+print("  Sample values (i=j slice):")
 for k in range(0, n, 8):
     v_true = F_vec[k, k, :]
     v_pred = recon_vec[k, k, :]

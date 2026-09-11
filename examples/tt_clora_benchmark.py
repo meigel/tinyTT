@@ -9,12 +9,17 @@ Each TT core is factorized as B*C (SVD-based). After each step-truncate
 step, cores are re-factorized and only C factors are stored (B frozen).
 """
 
-import argparse, time, json, numpy as np
-import tinytt._backend as tn
+import argparse
+import json
+import time
+
+import numpy as np
+
 import tinytt as tt
-from tinytt.bug import bug
-from tinytt.clora import _factorize_core, _merge_factors
+import tinytt._backend as tn
 from tinytt._extras import inner
+from tinytt.bug import bug
+from tinytt.clora import _factorize_core
 
 
 def build_dD_hamiltonian(d, n, alpha=0.1):

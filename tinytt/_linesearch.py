@@ -64,7 +64,8 @@ def armijo_ls(loss_fn, x, direction, loss0=None, grad=None,
     Returns
     -------
     gamma : float
-        Accepted step size.
+        Accepted step size, or ``0.0`` if no acceptable step was found (in
+        which case ``x_new is x`` and ``loss_new == loss0``).
     x_new : object
         New iterate after retraction.
     loss_new : float
@@ -96,7 +97,12 @@ def armijo_ls(loss_fn, x, direction, loss0=None, grad=None,
     x_new = None
     loss_new_val = None
 
-    for step in range(max_steps):
+    if slope is not None and slope >= 0.0:
+        # Not a descent direction: the Armijo bound loss0 + sigma*gamma*slope
+        # *grows* with gamma, so any step would be "accepted".  Report failure.
+        return 0.0, x, loss0
+
+    for _ in range(max_steps):
         x_new = retract_fn(x, direction, gamma)
         loss_new_t = loss_fn(x_new)
         loss_new_val = _scalar(loss_new_t)
@@ -112,5 +118,9 @@ def armijo_ls(loss_fn, x, direction, loss0=None, grad=None,
 
         gamma *= beta
 
-    # Accept the last tried step
-    return gamma, x_new, loss_new_val
+    # No step satisfied the acceptance test.  Returning the last (tiny) trial
+    # step would let the caller move *uphill*; report failure with a zero step
+    # and the unchanged iterate instead.
+    if loss_new_val is not None and loss_new_val < loss0:
+        return gamma, x_new, loss_new_val
+    return 0.0, x, loss0

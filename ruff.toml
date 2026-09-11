@@ -1,12 +1,31 @@
-[tool.ruff]
-line-length = 88
+line-length = 100
 target-version = "py311"
 
 [lint]
 select = ["E", "F", "W", "I", "N", "UP", "B"]
+ignore = [
+    # Numerical code follows the notation of the literature, where a matrix is
+    # `A`, its factors are `U`, `S`, `V`, mode sizes are `N` and ranks are `R`.
+    # Renaming those to snake_case would make the code harder to check against
+    # the papers it implements, not easier.
+    "N803",  # argument name should be lowercase
+    "N806",  # variable in function should be lowercase
+    "N802",  # function name should be lowercase (SVD, QR)
+    # zip(...) without strict= : the lengths are structural invariants here and
+    # are validated where they are not.
+    "B905",
+    # Long einsum subscript strings and long docstring formulae; wrapping them
+    # hurts readability more than the overflow does.
+    "E501",
+    # The four tinyTT exceptions predate the Error suffix convention and are
+    # part of the public API; renaming them is a breaking change for callers
+    # that catch them by name.
+    "N818",
+]
 
 [lint.per-file-ignores]
-"tests/*" = ["N"]
+"tests/*" = ["N", "E501", "E731", "E741", "F841", "B007", "B011", "B017", "E402"]
+"examples/*" = ["N", "E501"]
 
 [format]
 quote-style = "double"

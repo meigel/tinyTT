@@ -5,37 +5,28 @@ the compatibility tangent projector, and gauge alignment.
 
 import os
 import sys
+
 import numpy as np
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import tinytt._backend as tn
-from tinytt._riemannian import (
-    _qr_move_lr,
-    _qr_move_rl,
-    left_orthogonalize,
-    right_orthogonalize,
-    mixed_canonical,
-    tangent_project,
+from tinytt.manifold.canonical import (
     check_left_orthogonal,
     check_right_orthogonal,
+    left_orthogonalize,
+    mixed_canonical,
+    qr_move_lr,
+    qr_move_rl,
+    right_orthogonalize,
 )
 
 
-def _has_clang():
-    if not tn._is_cpu_device(tn.default_device()):
-        return True
-    try:
-        import subprocess
-        subprocess.run(["clang", "--version"], capture_output=True, check=True)
-        return True
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return False
+def tangent_project(cores, Z):
+    """Legacy signature, on the current projector (see tinytt._riemannian)."""
+    from tinytt._riemannian import tangent_project as _legacy
 
-
-NEEDS_CLANG = pytest.mark.skipif(
-    not _has_clang(), reason="CPU backend requires clang for kernel compilation"
-)
+    return _legacy(cores, Z)
 
 
 def _make_tt_cores(d, n, r, seed=0):
@@ -75,70 +66,63 @@ def _tt_full(cores):
 # ======================================================================
 
 class TestQRMoveLR:
-    @NEEDS_CLANG
     def test_left_orthogonalises_middle(self):
         cores = _make_tt_cores(d=3, n=4, r=3, seed=10)
-        _qr_move_lr(cores, pos=1)
+        qr_move_lr(cores, pos=1)
         assert check_left_orthogonal(cores[1]), "Core 1 should be left-orthogonal"
 
-    @NEEDS_CLANG
     def test_left_orthogonalises_first(self):
         cores = _make_tt_cores(d=3, n=4, r=3, seed=11)
-        _qr_move_lr(cores, pos=0)
+        qr_move_lr(cores, pos=0)
         assert check_left_orthogonal(cores[0]), "Core 0 should be left-orthogonal"
 
-    @NEEDS_CLANG
     def test_preserves_tensor(self):
         cores = _make_tt_cores(d=3, n=4, r=3, seed=12)
         full_before = _tt_full(cores)
-        _qr_move_lr(cores, pos=0)
+        qr_move_lr(cores, pos=0)
         full_after = _tt_full(cores)
         np.testing.assert_allclose(full_before, full_after, atol=1e-10)
 
-    @NEEDS_CLANG
     def test_rank_may_change(self):
         """QR may truncate rank when core is not full column-rank."""
         cores = _make_tt_cores(d=3, n=3, r=5, seed=13)
-        _qr_move_lr(cores, pos=0)
+        qr_move_lr(cores, pos=0)
         new_r = cores[0].shape[2]
         assert new_r <= 5, f"Rank should not increase (was 5, got {new_r})"
 
     def test_invalid_pos(self):
         cores = _make_tt_cores(d=3, n=4, r=3, seed=14)
         with pytest.raises(ValueError):
-            _qr_move_lr(cores, pos=2)  # last core can't be LR
+            qr_move_lr(cores, pos=2)  # last core can't be LR
 
     def test_invalid_pos_neg(self):
         cores = _make_tt_cores(d=3, n=4, r=3, seed=15)
         with pytest.raises(ValueError):
-            _qr_move_lr(cores, pos=-1)
+            qr_move_lr(cores, pos=-1)
 
 
 class TestQRMoveRL:
-    @NEEDS_CLANG
     def test_right_orthogonalises_middle(self):
         cores = _make_tt_cores(d=3, n=4, r=3, seed=20)
-        _qr_move_rl(cores, pos=1)
+        qr_move_rl(cores, pos=1)
         assert check_right_orthogonal(cores[1]), "Core 1 should be right-orthogonal"
 
-    @NEEDS_CLANG
     def test_right_orthogonalises_last(self):
         cores = _make_tt_cores(d=3, n=4, r=3, seed=21)
-        _qr_move_rl(cores, pos=2)
+        qr_move_rl(cores, pos=2)
         assert check_right_orthogonal(cores[2]), "Core 2 should be right-orthogonal"
 
-    @NEEDS_CLANG
     def test_preserves_tensor(self):
         cores = _make_tt_cores(d=3, n=4, r=3, seed=22)
         full_before = _tt_full(cores)
-        _qr_move_rl(cores, pos=2)
+        qr_move_rl(cores, pos=2)
         full_after = _tt_full(cores)
         np.testing.assert_allclose(full_before, full_after, atol=1e-10)
 
     def test_invalid_pos_zero(self):
         cores = _make_tt_cores(d=3, n=4, r=3, seed=23)
         with pytest.raises(ValueError):
-            _qr_move_rl(cores, pos=0)  # first core can't be RL
+            qr_move_rl(cores, pos=0)  # first core can't be RL
 
 
 # ======================================================================
@@ -146,14 +130,12 @@ class TestQRMoveRL:
 # ======================================================================
 
 class TestLeftOrthogonalize:
-    @NEEDS_CLANG
     def test_all_but_last_left_orthogonal(self):
         cores = _make_tt_cores(d=4, n=3, r=3, seed=30)
         lo = left_orthogonalize(cores)
         for k in range(len(lo) - 1):
             assert check_left_orthogonal(lo[k]), f"Core {k} should be left-orthogonal"
 
-    @NEEDS_CLANG
     def test_preserves_tensor(self):
         cores = _make_tt_cores(d=4, n=3, r=3, seed=31)
         full_before = _tt_full(cores)
@@ -161,7 +143,6 @@ class TestLeftOrthogonalize:
         full_after = _tt_full(lo)
         np.testing.assert_allclose(full_before, full_after, atol=1e-10)
 
-    @NEEDS_CLANG
     def test_does_not_modify_original(self):
         cores = _make_tt_cores(d=3, n=4, r=3, seed=32)
         orig_shapes = [tuple(c.shape) for c in cores]
@@ -169,7 +150,6 @@ class TestLeftOrthogonalize:
         for k, s in enumerate(orig_shapes):
             assert tuple(cores[k].shape) == s, f"Core {k} shape changed"
 
-    @NEEDS_CLANG
     def test_d2(self):
         cores = _make_tt_cores(d=2, n=5, r=4, seed=33)
         full_before = _tt_full(cores)
@@ -180,14 +160,12 @@ class TestLeftOrthogonalize:
 
 
 class TestRightOrthogonalize:
-    @NEEDS_CLANG
     def test_all_but_first_right_orthogonal(self):
         cores = _make_tt_cores(d=4, n=3, r=3, seed=40)
         ro = right_orthogonalize(cores)
         for k in range(1, len(ro)):
             assert check_right_orthogonal(ro[k]), f"Core {k} should be right-orthogonal"
 
-    @NEEDS_CLANG
     def test_preserves_tensor(self):
         cores = _make_tt_cores(d=4, n=3, r=3, seed=41)
         full_before = _tt_full(cores)
@@ -195,7 +173,6 @@ class TestRightOrthogonalize:
         full_after = _tt_full(ro)
         np.testing.assert_allclose(full_before, full_after, atol=1e-10)
 
-    @NEEDS_CLANG
     def test_d2(self):
         cores = _make_tt_cores(d=2, n=5, r=4, seed=42)
         full_before = _tt_full(cores)
@@ -204,7 +181,6 @@ class TestRightOrthogonalize:
         full_after = _tt_full(ro)
         np.testing.assert_allclose(full_before, full_after, atol=1e-10)
 
-    @NEEDS_CLANG
     def test_inplace(self):
         cores = _make_tt_cores(d=3, n=4, r=3, seed=43)
         cores_copy = [c.clone() for c in cores]
@@ -218,7 +194,6 @@ class TestRightOrthogonalize:
 # ======================================================================
 
 class TestMixedCanonical:
-    @NEEDS_CLANG
     def test_centre_at_every_site_preserves_tensor(self):
         cores = _make_tt_cores(d=4, n=3, r=3, seed=50)
         full_before = _tt_full(cores)
@@ -227,7 +202,6 @@ class TestMixedCanonical:
             full_after = _tt_full(mc)
             np.testing.assert_allclose(full_before, full_after, atol=1e-10)
 
-    @NEEDS_CLANG
     def test_left_block_left_orthogonal(self):
         cores = _make_tt_cores(d=4, n=3, r=3, seed=51)
         k = 2
@@ -235,7 +209,6 @@ class TestMixedCanonical:
         for j in range(k):
             assert check_left_orthogonal(mc[j]), f"Core {j} should be left-orthogonal"
 
-    @NEEDS_CLANG
     def test_right_block_right_orthogonal(self):
         cores = _make_tt_cores(d=4, n=3, r=3, seed=52)
         k = 1
@@ -299,7 +272,6 @@ def _tt_dense_from_cores(cores):
 
 
 class TestTangentProject:
-    @NEEDS_CLANG
     def test_residual_orthogonal_to_any_tangent(self):
         """Defining property of the orthogonal projection:
         <P(Z2), Z - P(Z)> = 0 for any Z2."""
@@ -318,7 +290,6 @@ class TestTangentProject:
             f"|<P(Z2), Z-P(Z)>| = {abs(inner):.2e}, denom={denom:.2e}"
         )
 
-    @NEEDS_CLANG
     def test_projection_idempotent_on_tangent(self):
         """P(P(Z)) == P(Z) for any Z."""
         rng = np.random.default_rng(1)
@@ -331,7 +302,6 @@ class TestTangentProject:
         d2 = _tt_dense_from_cores(proj2)
         np.testing.assert_allclose(d2, d1, atol=1e-9)
 
-    @NEEDS_CLANG
     def test_accepts_dense_tensor_input(self):
         cores = _make_tt_cores(d=3, n=3, r=2, seed=72)
         ns = [int(c.shape[1]) for c in cores]
@@ -342,8 +312,7 @@ class TestTangentProject:
         np.testing.assert_allclose(proj_np, proj_tn, atol=1e-12)
 
 class TestRankAdmissibilityAndProcrustes:
-    @NEEDS_CLANG
-    def test_qr_move_lr_rejects_impossible_rank(self):
+    def testqr_move_lr_rejects_impossible_rank(self):
         """Verify that left-to-right QR move rejects impossible target ranks during sweeps.
 
         If r_left * n < r_right, the coordinate space dimension is too small to support the target
@@ -356,10 +325,9 @@ class TestRankAdmissibilityAndProcrustes:
         cores = [c0, c1, c2]
 
         with pytest.raises(ValueError, match="inadmissible TT rank"):
-            _qr_move_lr(cores, pos=1, preserve_rank=True)
+            qr_move_lr(cores, pos=1, preserve_rank=True)
 
-    @NEEDS_CLANG
-    def test_qr_move_rl_rejects_impossible_rank(self):
+    def testqr_move_rl_rejects_impossible_rank(self):
         """Verify that right-to-left QR move rejects impossible target ranks during sweeps.
 
         If n * r_right < r_left, the coordinate space dimension is too small to support the target
@@ -372,16 +340,15 @@ class TestRankAdmissibilityAndProcrustes:
         cores = [c0, c1, c2]
 
         with pytest.raises(ValueError, match="inadmissible TT rank"):
-            _qr_move_rl(cores, pos=1, preserve_rank=True)
+            qr_move_rl(cores, pos=1, preserve_rank=True)
 
-    @NEEDS_CLANG
     def test_gauge_align_cores_preserves_tensor(self):
         """Verify that gauge_align_cores aligns two mismatched gauges without changing the represented tensor.
 
         Applies a random orthogonal matrix U to simulate gauge mismatch, aligns the core list to the reference,
         and asserts that the represented dense tensor matches the reference exactly.
         """
-        from tinytt._riemannian import gauge_align_cores
+        from tinytt.manifold.canonical import gauge_align_cores
 
         # Build two identical tensors with different gauges (by applying random orthogonal matrices)
         rng = np.random.default_rng(42)
@@ -395,7 +362,7 @@ class TestRankAdmissibilityAndProcrustes:
         cores = [cores_ref[0].clone(), cores_ref[1].clone(), cores_ref[2].clone()]
         # apply transformation at interface 1
         cores[0] = tn.einsum('lna,ab->lnb', cores[0], U)
-        cores[1] = tn.einsum('ba,anr->bnr', U, cores[1])
+        cores[1] = tn.einsum('ab,anr->bnr', U, cores[1])
 
         # Align cores to cores_ref
         cores_aligned = gauge_align_cores(cores_ref, cores)
@@ -409,9 +376,8 @@ class TestRankAdmissibilityAndProcrustes:
         for c_ref, c_al in zip(cores_ref, cores_aligned):
             np.testing.assert_allclose(tn.to_numpy(c_ref), tn.to_numpy(c_al), rtol=1e-4, atol=1e-4)
 
-    @NEEDS_CLANG
     def test_gauge_align_rank_three_nonsymmetric_gauges(self):
-        from tinytt._riemannian import gauge_align_cores
+        from tinytt.manifold.canonical import gauge_align_cores
 
         rng = np.random.default_rng(91)
         cores_ref = _make_tt_cores(d=4, n=4, r=3, seed=5)
@@ -424,7 +390,7 @@ class TestRankAdmissibilityAndProcrustes:
                 device=cores[k].device,
             )
             cores[k] = tn.einsum('lna,ab->lnb', cores[k], gauge)
-            cores[k + 1] = tn.einsum('ba,anr->bnr', gauge, cores[k + 1])
+            cores[k + 1] = tn.einsum('ab,anr->bnr', gauge, cores[k + 1])
 
         aligned = gauge_align_cores(cores_ref, cores)
         np.testing.assert_allclose(
@@ -441,9 +407,8 @@ class TestRankAdmissibilityAndProcrustes:
                 atol=1e-4,
             )
 
-    @NEEDS_CLANG
     def test_gauge_align_validates_shapes(self):
-        from tinytt._riemannian import gauge_align_cores
+        from tinytt.manifold.canonical import gauge_align_cores
 
         cores = _make_tt_cores(d=3, n=3, r=2, seed=2)
         with pytest.raises(ValueError, match="same number"):

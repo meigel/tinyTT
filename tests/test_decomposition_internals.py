@@ -11,32 +11,14 @@ import numpy as np
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-import tinytt._backend as tn
 import tinytt as tt
+import tinytt._backend as tn
 from tinytt._decomposition import (
+    lr_orthogonal,
+    mat_to_tt,
+    rl_orthogonal,
     round_tt,
     to_tt,
-    mat_to_tt,
-    lr_orthogonal,
-    rl_orthogonal,
-)
-
-
-def _has_clang():
-    """Check if clang is available for tinygrad CPU compilation."""
-    if not tn._is_cpu_device(tn.default_device()):
-        return True
-    try:
-        import subprocess
-
-        subprocess.run(["clang", "--version"], capture_output=True, check=True)
-        return True
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return False
-
-
-NEEDS_CLANG = pytest.mark.skipif(
-    not _has_clang(), reason="CPU backend requires clang for kernel compilation"
 )
 
 rng = np.random.RandomState(42)
@@ -44,7 +26,6 @@ rng = np.random.RandomState(42)
 
 class TestDecompositionInternals:
 
-    @NEEDS_CLANG
     def test_to_tt_small(self):
         """to_tt on a small 3D array: cores are 3D and reconstruct the original."""
         arr = np.arange(8, dtype=np.float64).reshape(2, 2, 2)
@@ -64,7 +45,6 @@ class TestDecompositionInternals:
 
         assert np.allclose(tn.to_numpy(tfull), arr, atol=1e-10)
 
-    @NEEDS_CLANG
     def test_lr_rl_orthogonal(self):
         """LR and RL orthogonalization preserve the original tensor."""
         t = tt.ones([2, 3, 4])
@@ -90,7 +70,6 @@ class TestDecompositionInternals:
         assert np.allclose(tn.to_numpy(tfull_lr), expected, atol=1e-10)
         assert np.allclose(tn.to_numpy(tfull_rl), expected, atol=1e-10)
 
-    @NEEDS_CLANG
     def test_mat_to_tt_identity(self):
         """mat_to_tt on the identity TTM produces 4D cores that reconstruct correctly."""
         full = np.eye(6, dtype=np.float64).reshape(2, 3, 2, 3)
@@ -117,7 +96,6 @@ class TestDecompositionInternals:
 
         assert np.allclose(tn.to_numpy(tfull), full, atol=1e-10)
 
-    @NEEDS_CLANG
     def test_mat_to_tt_accepts_scipy_sparse_matrix(self):
         """Sparse matrix inputs can be converted to TT-matrix form."""
         scipy_sparse = pytest.importorskip("scipy.sparse")
@@ -127,7 +105,6 @@ class TestDecompositionInternals:
         assert A_tt.is_ttm
         assert np.allclose(tn.to_numpy(A_tt.full()).reshape(4, 4), A_sparse.toarray(), atol=1e-10)
 
-    @NEEDS_CLANG
     def test_round_tt_basic(self):
         """round_tt reduces extra rank while preserving the tensor within tolerance."""
         t = tt.random([2, 3, 4], [1, 4, 4, 1])

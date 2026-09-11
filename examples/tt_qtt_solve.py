@@ -12,6 +12,7 @@ Usage:  PYTHONPATH=. python3 examples/tt_qtt_solve.py
 """
 
 import numpy as np
+
 import tinytt as tt
 import tinytt._backend as tn
 

@@ -3,6 +3,7 @@ Tests for the AMEn solver and AMEn TTM–TTM multiplication.
 """
 
 import numpy as np
+
 import tinytt as tt
 import tinytt._backend as tn
 

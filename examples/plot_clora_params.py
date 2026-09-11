@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """Generate accuracy-vs-params figure for tt-CLoRA paper."""
-import sys, os, json, numpy as np
+import json
+import os
+import sys
+
+import numpy as np
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Inline the needed functions from tt_clora_benchmark
 
 import tinytt as tt
 import tinytt._backend as tn
+from tinytt._extras import inner
 from tinytt.bug import bug
 from tinytt.clora import _factorize_core
-from tinytt._extras import inner
-
-# Inline the needed functions from tt_clora_benchmark
-import numpy as np
 
 
 def build_dD_hamiltonian(d, n, alpha=0.1):
@@ -108,6 +112,7 @@ with open("/tmp/clora_results.json", "w") as f:
 
 # Plot
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
@@ -117,13 +122,13 @@ for r in tt_ranks:
     pts = [p for p in results if p["tt_rank"] == r and p["lo_rank"] != r]
     fp = max(p["full_params"] for p in results if p["tt_rank"] == r)
     l2_full = max(p["l2_error"] for p in results if p["tt_rank"] == r and p["params"] == fp)
-    
+
     params = sorted(set(p["params"] for p in pts))
     errors = []
     for p in params:
         e = min(x["l2_error"] for x in pts if x["params"] == p)
         errors.append(e)
-    
+
     ax1.plot(params, errors, "o-", label=f"TT rank={r}", markersize=8)
     ax1.axvline(fp, color="gray", linestyle=":", alpha=0.4)
     ax1.annotate(f"full (r={r})", (fp, l2_full), (fp*1.3, l2_full), fontsize=8)
@@ -160,4 +165,4 @@ os.makedirs(out_dir, exist_ok=True)
 path = os.path.join(out_dir, "tt_clora_params.pdf")
 plt.savefig(path, dpi=150)
 print(f"\nFigure saved to {path}")
-print(f"Data saved to /tmp/clora_results.json")
+print("Data saved to /tmp/clora_results.json")

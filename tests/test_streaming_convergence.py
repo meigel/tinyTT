@@ -1,7 +1,9 @@
 import numpy as np
+
 import tinytt as tt
-from tinytt.streaming import StreamingTT
 import tinytt._backend as tn
+from tinytt.streaming import StreamingTT
+
 
 def generate_decaying_tensor(shape, decay=0.5):
     """Generate a tensor with decaying singular values for convergence testing."""
@@ -11,7 +13,7 @@ def generate_decaying_tensor(shape, decay=0.5):
     # Use a fixed high rank for the 'true' tensor
     true_rank = 20
     R = [1] + [true_rank]*(d-1) + [1]
-    
+
     for k in range(d):
         core = np.random.randn(R[k], shape[k], R[k+1])
         # Apply decay to 'singular' values within the core
@@ -22,7 +24,7 @@ def generate_decaying_tensor(shape, decay=0.5):
         if R[k+1] > 1:
             core = core * s[None, None, :R[k+1]]
         cores.append(core)
-    
+
     return tt.TT(cores).full()
 
 def test_rank_convergence():
@@ -30,17 +32,17 @@ def test_rank_convergence():
     shape = [8, 8, 8]
     A = generate_decaying_tensor(shape, decay=0.5)
     A_norm = tn.to_numpy(tn.linalg.norm(A))
-    
+
     # Sweep target ranks
     for r in [2, 4, 8, 12]:
         stt = StreamingTT(shape, ranks=r, oversampling=5)
         stt.update(A)
         approx = stt.finalize()
-        
+
         diff = approx.full() - A
         error = tn.to_numpy(tn.linalg.norm(diff)) / A_norm
         print(f"Target Rank: {r:2d} | Relative Error: {error:.2e}")
-        
+
         # SVD for comparison
         svd_approx = tt.TT(A, rmax=r)
         svd_error = tn.to_numpy(tn.linalg.norm(svd_approx.full() - A)) / A_norm
@@ -53,7 +55,7 @@ def test_oversampling_impact():
     A = generate_decaying_tensor(shape, decay=0.8)
     A_norm = tn.to_numpy(tn.linalg.norm(A))
     target_rank = 4
-    
+
     for p in [0, 2, 5, 10]:
         # Run multiple times to average randomized effect
         errors = []
@@ -63,7 +65,7 @@ def test_oversampling_impact():
             approx = stt.finalize()
             diff = approx.full() - A
             errors.append(tn.to_numpy(tn.linalg.norm(diff)) / A_norm)
-        
+
         avg_error = np.mean(errors)
         print(f"Oversampling: {p:2d} | Avg Relative Error: {avg_error:.2e}")
 

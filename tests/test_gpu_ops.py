@@ -6,14 +6,12 @@ import pytest
 import tinytt as tt
 import tinytt._backend as tn
 
-
 DEVICE = os.getenv("TINYTT_DEVICE", "").strip()
 if not DEVICE or DEVICE.lower() in ("cpu", "clang", "llvm"):
     pytest.skip("GPU tests require TINYTT_DEVICE", allow_module_level=True)
 
 try:
     probe = tn.tensor([1.0], device=DEVICE)
-    tn.realize(probe)
     DEVICE_RESOLVED = probe.device
 except Exception:
     pytest.skip("Requested TINYTT_DEVICE is unavailable", allow_module_level=True)

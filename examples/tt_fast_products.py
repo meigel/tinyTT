@@ -1,4 +1,5 @@
 import numpy as np
+
 import tinytt as tt
 
 rng = np.random.RandomState(1)

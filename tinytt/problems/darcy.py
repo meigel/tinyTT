@@ -15,11 +15,15 @@ from __future__ import annotations
 import numpy as np
 from scipy import sparse as sp
 from scipy.sparse.linalg import spsolve
-
-from skfem import BilinearForm, ElementQuad1, InteriorBasis, LinearForm
-from skfem import MeshQuad, condense
+from skfem import (
+    BilinearForm,
+    ElementQuad1,
+    InteriorBasis,
+    LinearForm,
+    MeshQuad,
+    condense,
+)
 from skfem.helpers import dot, grad
-
 
 # -------------------------------------------------------------------
 #  FEM forms (compiled once at module load)

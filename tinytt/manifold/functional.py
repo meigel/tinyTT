@@ -49,7 +49,7 @@ class FunctionalTTLinearization:
         left[1] = output_core.expand(self.batch_size, -1, -1) if d > 1 else None
         for site in range(1, d - 1):
             phi = self.phi_list[site - 1]
-            left[site + 1] = tn.realize(
+            left[site + 1] = (
                 tn.einsum(
                     "boa,anr,bn->bor",
                     left[site],
@@ -70,7 +70,7 @@ class FunctionalTTLinearization:
         )
         for site in range(d - 1, 0, -1):
             phi = self.phi_list[site - 1]
-            before = tn.realize(
+            before = (
                 tn.einsum(
                     "anr,bn,br->ba",
                     self.frame.right_cores[site],
@@ -99,7 +99,7 @@ class FunctionalTTLinearization:
                 self.phi_list[site - 1],
                 self._right_environments[site],
             )
-        return tn.realize(output)
+        return (output)
 
     def vjp(self, output_weights):
         """Apply the adjoint model differential to batched output weights."""
@@ -122,10 +122,10 @@ class FunctionalTTLinearization:
             output_weights,
             self._right_environments[0],
         ).unsqueeze(0)
-        blocks = [tn.realize(output_block)]
+        blocks = [(output_block)]
         for site in range(1, self.frame.order):
             blocks.append(
-                tn.realize(
+
                     tn.einsum(
                         "boa,bo,bn,br->anr",
                         self._left_environments[site],
@@ -133,7 +133,7 @@ class FunctionalTTLinearization:
                         self.phi_list[site - 1],
                         self._right_environments[site],
                     )
-                )
+
             )
         return self.frame.tangent(blocks, project_gauge=True)
 
@@ -208,7 +208,7 @@ class FunctionalTTLinearization:
             self._right_environments[0],
         )
         blocks = [
-            tn.realize(
+            (
                 (scale * output_block).reshape(
                     1,
                     output_dimension,
@@ -226,13 +226,13 @@ class FunctionalTTLinearization:
                 self._right_environments[site],
             )
             blocks.append(
-                tn.realize(
+
                     (scale * block).reshape(
                         self.frame.ranks[site],
                         self.frame.modes[site],
                         self.frame.ranks[site + 1],
                         self.batch_size * output_dimension,
                     )
-                )
+
             )
         return TTTangentBatch(self.frame, blocks, project_gauge=True)

@@ -4,9 +4,8 @@
 
 Core functionality lives in `tinytt/` (TT classes, solvers, helpers,
 backends, autograd, and manifold geometry). Key supporting areas:
-- `tests/` — 40 test files covering core and advanced features.
-- `examples/` — 18 runnable scripts covering core features.
-- `tinygrad/` — pinned tinygrad submodule (optional if you use pip `tinygrad`).
+- `tests/` — 49 test files, 588 tests.
+- `examples/` — 23 runnable scripts covering core features.
 
 ### Module overview
 
@@ -15,9 +14,9 @@ backends, autograd, and manifold geometry). Key supporting areas:
 | `TT` (class) | `_tt_base.py` | Core TT tensor / TT-matrix class |
 | Core ops | `_decomposition.py`, `_extras.py`, `_aux_ops.py` | SVD, QR, rounding, eye/zeros/kron, reshape, cat, pad, permute, meshgrid |
 | Fast products | `_fast_mult.py` | Fast Hadamard, matvec, matmat |
-| Solvers | `solvers.py`, `_iterative_solvers.py`, `_dmrg.py` | ALS, AMEn, DMRG, GMRES, BiCGSTAB, CG |
-| Time evolution | `tdvp.py`, `bug.py` | TDVP sweep, BUG time evolution |
-| Riemannian (legacy) | `_riemannian.py` | QR gauge sweeps, gauged tangent projection, QR retraction |
+| Solvers | `solvers/` (package), `_iterative_solvers.py`, `_dmrg.py` | AMEn and ALS (one sweep, `kickrank=0` gives ALS), DMRG; GMRES/BiCGSTAB/CG for the local systems |
+| **Time evolution** | **`dynamics/`** | **Real TDVP (with the back-propagation substep), Lubich-Oseledets KSL, rank-adaptive BUG.  `tdvp.py`, `bug.py`, `projector_splitting.py` are compatibility shims.** |
+| Canonicalisation | `manifold/canonical.py` | QR gauge moves, left/right/mixed canonical sweeps, gauge alignment.  `_riemannian.py` is a deprecation shim over it. |
 | **Manifold (matrix-free)** | `manifold/` | `TTManifoldFrame`, `TTTangent`, `TTTangentBatch`, `project_tt`, `projection_transport`, tangent-CG, Ritz extraction, block-Jacobi/adjacent-pair preconditioners |
 | Line search | `_linesearch.py` | Armijo backtracking |
 | Functional (basis) | `_functional.py` | Polynomial feature maps (monomial, Legendre, Hermite), `DifferentiableHermiteBasis` |
@@ -30,8 +29,7 @@ backends, autograd, and manifold geometry). Key supporting areas:
 | Truncation | `truncation.py` | Threshold, Dörfler, adaptive truncation rules |
 | **Problems** | **`problems/`** | **DarcySampler — parametric 2D Darcy flow (FEM+KL)** |
 | Autograd | `grad.py` | `watch`/`unwatch`/`grad` helpers |
-| **Backend facade** | `_backend.py` | Dispatches to tinygrad or PyTorch via `TINYTT_BACKEND` |
-| **Backend impls** | `_backend_tinygrad.py`, `_backend_pytorch.py` | Backend-specific tensor wrappers |
+| **Backend** | `_backend.py` | The PyTorch backend.  Everything goes through `import tinytt._backend as tn`; nothing imports `torch` directly. |
 | Errors | `errors.py` | Exception classes |
 
 ### Test files
@@ -46,9 +44,9 @@ backends, autograd, and manifold geometry). Key supporting areas:
 | Interpolation | `test_interpolate.py` |
 | ALS reliability | `test_als_reliability.py` |
 | UQ-ADF | `test_uq_adf.py`, `test_uq_adf_fast.py`, `test_uq_adf_skfem.py`, `test_uq_adf_fast_skfem.py` |
-| TDVP | `test_tdvp_mpo_smoke.py` |
+| **Integrators** | **`test_dynamics.py`** (exactness, order, norm conservation, time reversal), `test_tdvp_mpo_smoke.py`, `test_bug.py` |
 | GPU | `test_gpu_ops.py`, `test_gpu_smoke.py` |
-| Riemannian (legacy) | `test_riemannian.py` |
+| Canonicalisation | `test_riemannian.py` |
 | **Manifold** | `test_manifold.py` |
 | **Manifold Functional** | `test_manifold_functional.py` |
 | **Manifold Krylov** | `test_manifold_krylov.py` |
@@ -71,7 +69,10 @@ backends, autograd, and manifold geometry). Key supporting areas:
 | Streaming | `test_streaming.py`, `test_streaming_convergence.py` |
 | Truncation | `test_truncation.py` |
 | Randomized SVD | `test_randomized_svd.py` |
-| **Backend** | `test_backend.py` (302 lines, both backends) |
+| **Backend / core** | `test_backend.py`, `test_core_consolidation.py` |
+| **Solvers** | `test_solver_consolidation.py` |
+| **Manifold fixes** | `test_manifold_fixes.py` |
+| **Review regressions** | `test_review_regressions.py` |
 | Example regression | `test_examples_regression.py` |
 
 ### Example scripts
@@ -100,21 +101,15 @@ backends, autograd, and manifold geometry). Key supporting areas:
 ## Build, Test, and Development Commands
 
 - `python3 -m venv venv && source venv/bin/activate` creates/activates the venv.
-- `pip install -r requirements.txt` installs tinyTT runtime deps.
-- `pip install -r requirements-dev.txt` installs pytest and dev tooling.
-- `PYTHONPATH=. pytest -q tests` runs tinyTT test suite.
+- `pip install -r requirements.txt` installs numpy and PyTorch.
+- `pip install -r requirements-dev.txt` installs pytest and ruff.
+- `PYTHONPATH=. pytest -q tests` runs the suite (588 tests, ~55 s on CPU).
+- `ruff check tinytt tests` must be clean before a commit.
 
-To run a focused subset of manifold, solver, and functional tests:
+To run a focused subset:
 ```
-PYTHONPATH=. DEV=PYTHON pytest tests/test_manifold.py tests/test_manifold_functional.py \
-  tests/test_manifold_krylov.py tests/test_manifold_preconditioner.py \
-  tests/test_cg.py tests/test_linesearch.py -q
-```
-
-Backend-agnostic tests (run on both tinygrad and PyTorch):
-```
-TINYTT_BACKEND=tinygrad PYTHONPATH=. pytest tests/test_backend.py -q
-TINYTT_BACKEND=pytorch PYTHONPATH=. pytest tests/test_backend.py -q
+PYTHONPATH=. pytest tests/test_manifold.py tests/test_dynamics.py \
+  tests/test_solver_consolidation.py tests/test_core_consolidation.py -q
 ```
 
 ## Coding Style & Naming Conventions
@@ -124,8 +119,16 @@ Use 4-space indentation and follow standard Python style (PEP 8). Prefer
 `UPPER_SNAKE_CASE` for constants. Match existing patterns in the file you are
 editing and keep public APIs documented with concise docstrings.
 
-**Always use `tinytt._backend` (`import as tn`)** rather than reaching into
-tinygrad or PyTorch directly — all code must be backend-agnostic.
+**Always use `tinytt._backend` (`import as tn`)** rather than importing
+`torch` directly.  The facade is where device, dtype and complex-promotion
+policy live; reaching around it is how the 0.4 tree ended up with a
+`_mode_ops` helper that forced float64 on CPU regardless of the input.
+
+**Match the docstring to the code.**  The 0.5 release had to rewrite three
+integrators that were all the same `round(Y + dt F(Y))` under the names TDVP,
+KSL and BUG, and several docstrings that described behaviour the code did not
+have.  If you cannot make the code do what the docstring says, change the
+docstring and say why in a comment.
 
 ## Testing Guidelines
 

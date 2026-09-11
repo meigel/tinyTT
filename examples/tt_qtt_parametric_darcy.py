@@ -15,12 +15,21 @@ paper2/fe_qtt_discretisation.md.
 Usage:  PYTHONPATH=. python3 examples/tt_qtt_parametric_darcy.py
 """
 
-import sys, math, time, numpy as np
+import math
+import sys
+import time
+
+import numpy as np
+
 sys.path.insert(0, '.')
 import tinytt as tt
 import tinytt._backend as tn
-from tinytt.fem import (stiffness_1d, mass_1d,
-    weighted_stiffness_1d, weighted_mass_1d, fe_rhs)
+from tinytt.fem import (
+    mass_1d,
+    stiffness_1d,
+    weighted_mass_1d,
+    weighted_stiffness_1d,
+)
 
 # -------------------------------------------------------------------
 # Parameters
@@ -103,6 +112,7 @@ b = tt.TT(spatial_rhs + param_rhs)
 h = 1.0 / (n + 1)
 import scipy.sparse as sp
 from scipy.sparse.linalg import spsolve
+
 K1d_sp = sp.diags([-1/h, 2/h, -1/h], [-1, 0, 1], shape=(n, n), format='csr')
 M1d_sp = sp.diags([h/6, 4*h/6, h/6], [-1, 0, 1], shape=(n, n), format='csr')
 A0_sp = (sp.kron(K1d_sp, M1d_sp) + sp.kron(M1d_sp, K1d_sp)).tocsc()
@@ -159,4 +169,4 @@ for _ in range(10):
     errors.append(err * 100)
 
 print(f"  H¹ error: mean={np.mean(errors):.4f}%, max={np.max(errors):.4f}%")
-print(f"\n✓ QTT parametric Darcy solver works correctly.")
+print("\n✓ QTT parametric Darcy solver works correctly.")

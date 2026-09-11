@@ -5,7 +5,7 @@ Fast products in TT (matrix-vector, matrix-matrix, Hadamard).
 from __future__ import annotations
 
 import tinytt._backend as tn
-from tinytt._decomposition import rank_chop, QR, SVD
+from tinytt._decomposition import SVD, rank_chop
 from tinytt.errors import InvalidArguments, ShapeMismatch
 
 
@@ -18,28 +18,41 @@ def _rank_from_svd(s, eps):
 
 
 def swap_cores(core_a, core_b, eps):
+    """Swap two consecutive TT or TTM cores.
+
+    The pair is first brought into a locally orthogonal gauge (QR on the
+    left core, so its left interface is orthonormal), which is what makes
+    the ``eps`` rank chop on the supercore an actual bound on the induced
+    error.  Truncating a supercore in a non-orthogonal environment -- as
+    this used to -- gives no error control at all, and ``fast_hadamard`` /
+    ``fast_mv`` / ``fast_mm`` chain O(d^2) of these swaps.
     """
-    Swap two consecutive TT or TTM cores.
-    """
-    if len(core_a.shape) == 3 and len(core_b.shape) == 3:
-        supercore = tn.einsum("rms,snR->rnmR", core_a, core_b)
-        U, S, V = SVD(tn.reshape(supercore, (core_a.shape[0] * core_b.shape[1], -1)))
-    elif len(core_a.shape) == 4 and len(core_b.shape) == 4:
-        supercore = tn.einsum("rmas,snbR->rnbmaR", core_a, core_b)
-        U, S, V = SVD(
-            tn.reshape(
-                supercore,
-                (core_a.shape[0] * core_b.shape[1] * core_b.shape[2], -1),
-            )
-        )
-    else:
+    ndim = len(core_a.shape)
+    if ndim not in (3, 4) or len(core_b.shape) != ndim:
         raise InvalidArguments("The cores must be either 3D or 4D tensors.")
 
+    # Left-orthogonalise core_a and push its triangular factor into core_b,
+    # so that the supercore's row space is measured in an orthonormal basis.
+    a_shape = list(core_a.shape)
+    Q, Rmat = tn.linalg.qr(tn.reshape(core_a, (-1, a_shape[-1])))
+    keep = min(Q.shape[1], Rmat.shape[0])
+    Q, Rmat = Q[:, :keep], Rmat[:keep, :]
+    core_a = tn.reshape(Q, a_shape[:-1] + [keep])
+    core_b = tn.einsum("rs,s...->r...", Rmat, core_b)
+
+    if ndim == 3:
+        supercore = tn.einsum("rms,snR->rnmR", core_a, core_b)
+        rows = core_a.shape[0] * core_b.shape[1]
+    else:
+        supercore = tn.einsum("rmas,snbR->rnbmaR", core_a, core_b)
+        rows = core_a.shape[0] * core_b.shape[1] * core_b.shape[2]
+    U, S, V = SVD(tn.reshape(supercore, (rows, -1)))
+
     r_now = _rank_from_svd(S, eps)
-    US = U[:, :r_now] @ tn.diag(S[:r_now])
+    US = tn.scale_cols(U[:, :r_now], S[:r_now])
     V = V[:r_now, :]
 
-    if len(core_a.shape) == 3:
+    if ndim == 3:
         return (
             tn.reshape(US, (core_a.shape[0], core_b.shape[1], -1)),
             tn.reshape(V, (-1, core_a.shape[1], core_b.shape[2])),
@@ -63,9 +76,10 @@ def fast_hadamard(tt_a, tt_b, eps=1e-10):
         d = len(tt_a.N)
         cores = [tn.permute(c, [3, 1, 2, 0]) for c in tt_b.cores[::-1]]
         for i in range(d):
-            eye_n = tn.eye(tt_a.N[d - i - 1], dtype=cores[0].dtype, device=cores[0].device)
-            eye_m = tn.eye(tt_a.M[d - i - 1], dtype=cores[0].dtype, device=cores[0].device)
-            cores[0] = tn.einsum("maAk,kbBn,AB,ab->maAn", tt_a.cores[d - i - 1], cores[0], eye_n, eye_m)
+            # Contracting against identities is just index renaming; doing it
+            # explicitly allocated two n x n eyes per iteration and forced a
+            # 4-operand contraction path.
+            cores[0] = tn.einsum("maAk,kaAn->maAn", tt_a.cores[d - i - 1], cores[0])
             if i != d - 1:
                 for j in range(i, -1, -1):
                     cores[j], cores[j + 1] = swap_cores(cores[j], cores[j + 1], eps)
@@ -77,8 +91,7 @@ def fast_hadamard(tt_a, tt_b, eps=1e-10):
     d = len(tt_a.N)
     cores = [tn.permute(c, [2, 1, 0]) for c in tt_b.cores[::-1]]
     for i in range(d):
-        eye_n = tn.eye(tt_a.N[d - i - 1], dtype=cores[0].dtype, device=cores[0].device)
-        cores[0] = tn.einsum("mak,kbn,ab->man", tt_a.cores[d - i - 1], cores[0], eye_n)
+        cores[0] = tn.einsum("mak,kan->man", tt_a.cores[d - i - 1], cores[0])
         if i != d - 1:
             for j in range(i, -1, -1):
                 cores[j], cores[j + 1] = swap_cores(cores[j], cores[j + 1], eps)

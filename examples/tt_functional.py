@@ -14,10 +14,10 @@ Demonstrates:
 """
 
 import numpy as np
-import tinytt._backend as tn
-from tinytt.functional_tt import random_ftt
-from tinytt._functional import legendre_features
 
+import tinytt._backend as tn
+from tinytt._functional import legendre_features
+from tinytt.functional_tt import random_ftt
 
 # ---------------------------------------------------------------------------
 # Data helpers
@@ -61,7 +61,7 @@ def train(ftt, x_train, y_train, x_test, y_test,
             g_norm = float(tn.to_numpy(tn.linalg.norm(grad.reshape(-1))))
             if g_norm > 2.0:
                 grad = grad * (2.0 / g_norm)
-            c.assign(c.detach() - lr_step * grad)
+            tn.assign(c, c.detach() - lr_step * grad)
         ftt.unwatch()
 
     if verbose and (step + 1) % 100 == 0:
@@ -127,7 +127,7 @@ pred, final_mse2, final_rel2 = train(ftt2, x_train2, y_train2, x_test2, y_test2,
                                       degree=degree, lr=1.0, steps=800)
 
 print(f"\n  Final test MSE (per component): {final_mse2 / 2:.6e}  |  rel_err: {final_rel2:.6f}")
-print(f"    x        sin(2πx)  pred_sin  cos(2πx)  pred_cos")
+print("    x        sin(2πx)  pred_sin  cos(2πx)  pred_cos")
 x_dense = tn.tensor(np.linspace(-1, 1, 100, dtype=np.float64).reshape(-1, 1))
 phi_dense = legendre_features(x_dense, degree=degree, orthonormal=True)
 y_pred = tn.to_numpy(ftt2.forward(phi_dense))

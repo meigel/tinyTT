@@ -4,28 +4,12 @@ Tests for Armijo backtracking line search.
 
 import os
 import sys
+
 import numpy as np
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import tinytt._backend as tn
 from tinytt._linesearch import armijo_ls
-
-
-def _has_clang():
-    if not tn._is_cpu_device(tn.default_device()):
-        return True
-    try:
-        import subprocess
-        subprocess.run(["clang", "--version"], capture_output=True, check=True)
-        return True
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return False
-
-
-NEEDS_CLANG = pytest.mark.skipif(
-    not _has_clang(), reason="CPU backend requires clang for kernel compilation"
-)
 
 
 class TestArmijoLS:

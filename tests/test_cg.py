@@ -4,28 +4,12 @@ Tests for the conjugate gradient (CG) solver.
 
 import os
 import sys
+
 import numpy as np
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import tinytt._backend as tn
-from tinytt._iterative_solvers import cg, _scalar
-
-
-def _has_clang():
-    if not tn._is_cpu_device(tn.default_device()):
-        return True
-    try:
-        import subprocess
-        subprocess.run(["clang", "--version"], capture_output=True, check=True)
-        return True
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return False
-
-
-NEEDS_CLANG = pytest.mark.skipif(
-    not _has_clang(), reason="CPU backend requires clang for kernel compilation"
-)
+from tinytt._iterative_solvers import _scalar, cg
 
 
 def _make_spd(n, seed=0):
@@ -65,7 +49,6 @@ class TestCG:
         x = cg(matvec, b_tn, reg=0.0, tol=1e-12, maxiter=5)
         np.testing.assert_allclose(tn.to_numpy(x), tn.to_numpy(b_tn), atol=1e-8)
 
-    @NEEDS_CLANG
     def test_on_random_spd(self):
         """CG should approximately solve a random SPD system."""
         n = 10
@@ -80,7 +63,6 @@ class TestCG:
         x_ref = np.linalg.solve(A_np + 1e-6 * np.eye(n), b_np)
         np.testing.assert_allclose(tn.to_numpy(x), x_ref, atol=1e-5)
 
-    @NEEDS_CLANG
     def test_with_regularization(self):
         """Regularization should improve conditioning."""
         n = 8
@@ -103,7 +85,6 @@ class TestCG:
         res = float(tn.to_numpy(tn.linalg.norm(r)))
         assert res < 1e-3, f"Residual too large: {res}"
 
-    @NEEDS_CLANG
     def test_2d_batch_rhs(self):
         """CG should handle matrix RHS (batched)."""
         n = 6

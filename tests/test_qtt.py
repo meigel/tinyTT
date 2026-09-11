@@ -1,8 +1,8 @@
 import numpy as np
 
 import tinytt as tntt
-import tinytt._tt_base as tt_base
 import tinytt._backend as tn
+import tinytt._tt_base as tt_base
 
 
 def test_qtt_roundtrip():

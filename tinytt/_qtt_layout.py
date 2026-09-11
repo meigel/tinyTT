@@ -6,8 +6,9 @@ and any commuting argument (e.g. ``d_i d_j = d_j d_i``) depend on knowing that
 distinct dimensions occupy DISJOINT core ranges. ``QTTLayout`` records it.
 """
 from __future__ import annotations
-from dataclasses import dataclass, field
+
 import math
+from dataclasses import dataclass, field
 
 __all__ = ["QTTLayout"]
 

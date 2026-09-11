@@ -4,47 +4,28 @@ Tests for auxiliary operations: apply_mask, dense_matvec, bilinear_form_aux.
 
 import os
 import sys
+
 import numpy as np
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-import tinytt._backend as tn
 import tinytt as tt
-from tinytt._aux_ops import apply_mask, dense_matvec, bilinear_form_aux
-
-
-def _has_clang():
-    if not tn._is_cpu_device(tn.default_device()):
-        return True
-    try:
-        import subprocess
-        subprocess.run(["clang", "--version"], capture_output=True, check=True)
-        return True
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return False
-
-
-NEEDS_CLANG = pytest.mark.skipif(
-    not _has_clang(), reason="CPU backend requires clang for kernel compilation"
-)
-
+import tinytt._backend as tn
+from tinytt._aux_ops import apply_mask, bilinear_form_aux, dense_matvec
 
 rng = np.random.RandomState(42)
 
 
 class TestAuxOps:
 
-    @NEEDS_CLANG
     def test_apply_mask(self):
         """Select entries of a 3D TT tensor by index set."""
         full = np.arange(8, dtype=np.float64).reshape(2, 2, 2)
         t = tt.TT(full, eps=1e-12)
         indices = tn.tensor(np.array([[0, 0, 0], [1, 0, 1], [0, 1, 1]]).astype(np.int32))
-        vals = apply_mask(t.cores, t.R, indices)
+        vals = apply_mask(t.cores, indices)
         expected = np.array([full[0, 0, 0], full[1, 0, 1], full[0, 1, 1]])
         np.testing.assert_allclose(tn.to_numpy(vals), expected, atol=1e-10)
 
-    @NEEDS_CLANG
     def test_dense_matvec_ttm_full(self):
         """TTM x dense tensor multiplication matches TT evaluation."""
         a = tt.eye([2, 3])
@@ -56,7 +37,6 @@ class TestAuxOps:
         ref = tn.to_numpy((a @ tt.TT(x, eps=1e-12)).full())
         np.testing.assert_allclose(tn.to_numpy(y), ref, atol=1e-8)
 
-    @NEEDS_CLANG
     def test_dense_matvec_broadcast(self):
         """TTM x batched dense tensor with trailing dim broadcasting."""
         a = tt.eye([2, 3])
@@ -72,7 +52,6 @@ class TestAuxOps:
                 tn.to_numpy(y)[b], tn.to_numpy(expected), atol=1e-10
             )
 
-    @NEEDS_CLANG
     def test_bilinear_form(self):
         """x^T A y computed via bilinear_form_aux matches dense evaluation."""
         d = 2

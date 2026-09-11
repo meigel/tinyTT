@@ -1,24 +1,11 @@
 import numpy as np
 import pytest
+
 import tinytt._backend as tn
 from tinytt._decomposition import SVD, randomized_svd
 
-def _has_clang():
-    if not tn._is_cpu_device(tn.default_device()):
-        return True
-    try:
-        import subprocess
-        subprocess.run(["clang", "--version"], capture_output=True, check=True)
-        return True
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return False
-
-NEEDS_CLANG = pytest.mark.skipif(
-    not _has_clang(), reason="CPU backend requires clang for kernel compilation"
-)
 
 class TestRandomizedSVD:
-    @NEEDS_CLANG
     def test_randomized_svd_low_rank(self):
         """Verify that randomized SVD recovers a low-rank matrix of rank r=5 exactly.
 
@@ -44,7 +31,6 @@ class TestRandomizedSVD:
         # Should be a very good approximation because rank is 5
         np.testing.assert_allclose(reconstructed, mat_np, rtol=1e-5, atol=1e-5)
 
-    @NEEDS_CLANG
     def test_svd_explicit_randomized_truncation(self):
         """Verify that global SVD interface delegates to randomized_svd when k is specified.
 
@@ -60,7 +46,6 @@ class TestRandomizedSVD:
         assert s.shape == (10,)
         assert v.shape == (10, 20)
 
-    @NEEDS_CLANG
     def test_randomized_svd_seed_is_reproducible(self):
         """Verify that passing a seed produces identical random sketches and factorizations.
 
@@ -73,7 +58,6 @@ class TestRandomizedSVD:
         for a, b in zip(first, second):
             np.testing.assert_allclose(tn.to_numpy(a), tn.to_numpy(b), atol=1e-10)
 
-    @NEEDS_CLANG
     def test_randomized_svd_validates_rank(self):
         """Verify that randomized_svd raises a ValueError if the rank constraint k is out of bounds."""
         mat = tn.tensor(np.eye(5), dtype=tn.float64)

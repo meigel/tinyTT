@@ -20,14 +20,14 @@ Usage:  PYTHONPATH=. python3 examples/tt_compositional.py
 """
 
 import numpy as np
-import tinytt as tt
+
 import tinytt._backend as tn
 from tinytt.compositional import (
-    CTTLayer,
     CompositionalTT,
-    random_ctt,
-    pad_lift,
+    CTTLayer,
     first_coord_retraction,
+    pad_lift,
+    random_ctt,
 )
 from tinytt.functional_tt import FunctionalTT
 
@@ -68,7 +68,7 @@ x = tn.tensor([3.0, 4.0])
 y = f_id(x)
 print("=== Identity CTT ===")
 print(f"  f({tn.to_numpy(x).tolist()}) = {tn.to_numpy(y).item():.1f}")
-print(f"  (expected 0.0, since L(x)=(0,3,4), ψ≡0, R→first coord)")
+print("  (expected 0.0, since L(x)=(0,3,4), ψ≡0, R→first coord)")
 
 
 # -----------------------------------------------------------------------
@@ -91,7 +91,7 @@ f_c = CompositionalTT([layer_c], const_basis, lift, retract)
 y_c = f_c(x)
 print("\n=== Constant-ψ CTT ===")
 print(f"  f({tn.to_numpy(x).tolist()}) = {tn.to_numpy(y_c).item():.1f}")
-print(f"  (expected 10.0)")
+print("  (expected 10.0)")
 
 
 # -----------------------------------------------------------------------
@@ -102,7 +102,7 @@ f_2 = CompositionalTT([layer_c, layer_c], const_basis, lift, retract)
 y_2 = f_2(x)
 print("\n=== Two-layer CTT ===")
 print(f"  f({tn.to_numpy(x).tolist()}) = {tn.to_numpy(y_2).item():.1f}")
-print(f"  (expected 20.0 = 10 + 10)")
+print("  (expected 20.0 = 10 + 10)")
 
 
 # -----------------------------------------------------------------------
@@ -144,7 +144,7 @@ y_lin = f_lin(x2)
 # (Id+ψ)(y) = [0, 2, 5]; R(y) = y₀ → f(x) = 0
 print("\n=== Affine {1, x} basis CTT ===")
 print(f"  f({tn.to_numpy(x2).tolist()}) = {tn.to_numpy(y_lin).item():.1f}")
-print(f"  (expected 0.0 since lifted y₀=0 → ψ(y)=0)")
+print("  (expected 0.0 since lifted y₀=0 → ψ(y)=0)")
 
 
 # -----------------------------------------------------------------------
@@ -157,7 +157,7 @@ f_rand = random_ctt(
     ranks=[1, 1, 1, 1], basis_size=1, seed=42,
 )
 out_rand = f_rand(tn.tensor([1.0, 2.0]))
-print(f"\n=== Random CTT (factory) ===")
+print("\n=== Random CTT (factory) ===")
 print(f"  width={f_rand.width}, layers={f_rand.n_layers}")
 print(f"  output shape: {out_rand.shape}")
 

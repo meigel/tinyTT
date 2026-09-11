@@ -13,7 +13,7 @@ Usage:  PYTHONPATH=. python3 examples/tt_ftt_als.py
 """
 
 import numpy as np
-import tinytt as tt
+
 import tinytt._backend as tn
 from tinytt._functional import LegendreFeatures, evaluate
 from tinytt.regression import als_regression

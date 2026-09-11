@@ -4,12 +4,16 @@ Tests for tinytt.fem FE building blocks and tinytt.kron_sum.
 
 import numpy as np
 import pytest
+
 import tinytt as tt
-import tinytt._backend as tn
 from tinytt.fem import (
-    stiffness_1d, mass_1d,
-    weighted_stiffness_1d, weighted_mass_1d,
-    laplacian_2d, fe_rhs, fe_rhs_1d,
+    fe_rhs,
+    fe_rhs_1d,
+    laplacian_2d,
+    mass_1d,
+    stiffness_1d,
+    weighted_mass_1d,
+    weighted_stiffness_1d,
 )
 
 

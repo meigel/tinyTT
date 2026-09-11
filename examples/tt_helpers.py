@@ -1,4 +1,5 @@
 import numpy as np
+
 import tinytt as tt
 
 ones = tt.ones([2, 3, 4])

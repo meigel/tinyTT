@@ -22,7 +22,6 @@ import tinytt._backend as tn
 from tinytt.bug import bug, bug_with_momentum
 from tinytt.manifold import DFIMomentum, DFOMomentum
 
-
 # ---------------------------------------------------------------------------
 # MPO construction (Laplacian, bond-dimension 2)
 # ---------------------------------------------------------------------------

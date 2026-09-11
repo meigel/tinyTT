@@ -1,8 +1,10 @@
 import numpy as np
 import pytest
+
 import tinytt as tt
-from tinytt.streaming import StreamingTT, streaming_tt
 import tinytt._backend as tn
+from tinytt.streaming import StreamingTT, streaming_tt
+
 
 def test_streaming_tt_full_update():
     """Test StreamingTT with a full tensor update."""
@@ -66,6 +68,7 @@ def test_streaming_tt_incremental_update():
     assert error < error_svd * 10.0 # Loose bound
 
 from tinytt.streaming import StreamingCurvature
+
 
 def test_streaming_curvature_spectral_certificate():
     """Verify that compression has a one-sided operator-norm certificate."""

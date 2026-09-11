@@ -25,29 +25,38 @@ This guarantees δA_k lies in the column space of B_k, i.e. can be
 represented as B_k @ δC_k.
 """
 
+# Matrix-valued names (B, C, Bt, …) follow the paper's notation.
+# ruff: noqa: N803, N806
+
 from __future__ import annotations
 
-import numpy as np
+import warnings
 
 import tinytt._backend as tn
 from tinytt._tt_base import TT
 from tinytt.functional_tt import FunctionalTT
 
-
 # ---------------------------------------------------------------------------
 # LoRA factorisation (SVD-based)
 # ---------------------------------------------------------------------------
 
-def _factorize_core(core, r_lo):
+def _factorize_core(core, r_lo, core_index=None):
     """Split a TT core into frozen B and evolving C via truncated SVD.
 
     A core of shape (r_left, n, r_right) is reshaped to
     ``(r_left, n * r_right)`` and decomposed with truncated SVD.
 
+    Because the reshape is ``(r_left, n · r_right)``, the factorisation can
+    never have more than ``r_left`` components: at ``r_lo >= r_left`` the
+    "adaptation" is the identity (``B Bᵀ = I``), the projection in
+    :func:`_project_lora` is a no-op, and ``parameter_count()`` equals the
+    full core count.  :class:`CLoRAModel` warns about that.
+
     Parameters
     ----------
     core : tensor  shape (r_left, n, r_right)
     r_lo : int — LoRA rank
+    core_index : int, optional — only used in the warning message
 
     Returns
     -------
@@ -60,12 +69,13 @@ def _factorize_core(core, r_lo):
     u, s, v = tn.linalg.svd(mat, full_matrices=False)
 
     # Cap r_lo to available SVD components
+    _ = core_index
     max_rank = len(s)
     if r_lo > max_rank:
         r_lo = max_rank
 
     B = u[:, :r_lo]                                   # (r_left, r_lo) — orthonormal
-    C_mat = tn.diag(s[:r_lo]) @ v[:r_lo, :]           # (r_lo, n * r_right)
+    C_mat = tn.scale_rows(s[:r_lo], v[:r_lo, :])           # (r_lo, n * r_right)
     C = C_mat.reshape(r_lo, n, r_right)                # (r_lo, n, r_right)
     return B, C
 
@@ -112,7 +122,7 @@ def _project_lora(tangent_blocks, B_list):
     list of tensors — C-factor updates (one per feature core)
     """
     c_updates = []
-    for k, (block, Bk) in enumerate(zip(tangent_blocks, B_list)):
+    for block, Bk in zip(tangent_blocks, B_list, strict=True):
         r_left, n, r_right = map(int, block.shape)
         mat = block.reshape(r_left, n * r_right)
         Bt = Bk.transpose(0, 1)                     # (r_lo, r_left)
@@ -163,11 +173,45 @@ class CLoRAModel:
         self.B = []
         self.C = []
         for k in range(1, d + 1):
-            Bk, Ck = _factorize_core(model.cores[k], lo_ranks[k - 1])
+            Bk, Ck = _factorize_core(model.cores[k], lo_ranks[k - 1],
+                                     core_index=k)
             self.B.append(Bk)
             self.C.append(Ck)
 
         self._lo_ranks = list(lo_ranks)
+        self._warn_if_no_op(model)
+
+    def _warn_if_no_op(self, model):
+        """Warn when the LoRA ranks restrict nothing.
+
+        ``_factorize_core`` reshapes to ``(r_left, n · r_right)``, so a rank
+        ``r_lo >= r_left`` gives ``B Bᵀ = I``: the projection is the identity,
+        the tangent space is unrestricted, and ``parameter_count()`` equals
+        the full core count.  A core whose ``r_left`` is already 1 cannot do
+        better, so it is only reported when *every* core is a no-op.
+        """
+        reducible, no_ops = [], []
+        for k in range(1, self.d + 1):
+            r_left = int(model.cores[k].shape[0])
+            if self._lo_ranks[k - 1] >= r_left:
+                no_ops.append((k, self._lo_ranks[k - 1], r_left))
+                if r_left > 1:
+                    reducible.append((k, self._lo_ranks[k - 1], r_left))
+        if not no_ops:
+            return
+        if reducible:
+            detail = ", ".join(f"core {k}: r_lo={r} >= r_left={rl}"
+                               for k, r, rl in reducible)
+            warnings.warn(
+                f"CLoRA rank is not smaller than the core rank ({detail}): "
+                "B Bt = I there, so no parameters are saved and no update is "
+                "restricted.  Use r_lo < r_left.",
+                RuntimeWarning, stacklevel=3)
+        elif len(no_ops) == self.d:
+            warnings.warn(
+                "CLoRA is a no-op for this model: every feature core has "
+                "r_left = 1, so the factorisation cannot restrict anything.",
+                RuntimeWarning, stacklevel=3)
 
     # -- Properties -------------------------------------------------------
 
@@ -250,7 +294,19 @@ class CLoRAModel:
         return TT(self.assemble_cores())
 
     def clone(self):
-        new = CLoRAModel(self._base.clone(), self._lo_ranks)
+        """Deep copy that keeps the **evolved** state.
+
+        .. versionchanged:: 0.5
+           This used to re-factorise ``self._base``, throwing away every
+           evolved ``C`` factor (and every ``B`` recomputed from the stale
+           base).  ``tests/test_clora.py`` only compared
+           ``parameter_count()``, which is invariant, so it passed.
+        """
+        new = CLoRAModel.__new__(CLoRAModel)
+        new._base = self._base.clone()
+        new.B = [b.clone() for b in self.B]
+        new.C = [c.clone() for c in self.C]
+        new._lo_ranks = list(self._lo_ranks)
         return new
 
     def parameter_count(self):

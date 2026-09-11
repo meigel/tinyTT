@@ -9,18 +9,18 @@ Validates:
 - Exact reconstruction when lo_rank = full rank
 """
 
+import warnings
+
 import numpy as np
 import pytest
 
 import tinytt._backend as tn
-from tinytt.functional_tt import FunctionalTT
 from tinytt.clora import (
     CLoRAModel,
     _factorize_core,
     _merge_factors,
-    _project_lora,
 )
-
+from tinytt.functional_tt import FunctionalTT
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -46,7 +46,8 @@ class TestFactorise:
         """factorize then merge should recover a rank-2 core exactly."""
         # Build a core of exact rank 2: B_true (3x2) @ C_true (2x16)
         B_true = tn.tensor(np.random.randn(3, 2).astype(np.float64), dtype=tn.float64)
-        C_true = tn.tensor(np.random.randn(2, 8, 2).astype(np.float64), dtype=tn.float64)
+        C_true = tn.tensor(np.random.randn(2, 8, 2).astype(np.float64),
+                           dtype=tn.float64)
         core = _merge_factors(B_true, C_true)
         B, C = _factorize_core(core, r_lo=2)
         recovered = _merge_factors(B, C)
@@ -103,10 +104,14 @@ class TestCLoRAModel:
         assert tuple(out.shape) == (m, n0), f"Expected (m, n0), got {out.shape}"
 
     def test_exact_reconstruction(self):
-        """With lo_rank = full rank, forward should match original model."""
+        """With lo_rank = full rank, forward should match original model.
+
+        That is also a silent no-op — B Bt = I — so the model warns.
+        """
         r = 4
         model = _simple_model(r=r)
-        clo = CLoRAModel(model, lo_ranks=[1, r])
+        with pytest.warns(RuntimeWarning, match="no parameters are saved"):
+            clo = CLoRAModel(model, lo_ranks=[1, r])
         m, n1, n2 = 16, 8, 8
         phi_list = [
             tn.tensor(np.random.randn(m, n1).astype(np.float64), dtype=tn.float64),
@@ -133,7 +138,7 @@ class TestCLoRAModel:
         tang = lin.frame.random_tangent()
         c_updates = clo.project_update(tang)
         assert len(c_updates) == clo.d
-        for k, (dC, Ck) in enumerate(zip(c_updates, clo.C)):
+        for k, (dC, Ck) in enumerate(zip(c_updates, clo.C, strict=True)):
             assert tuple(dC.shape) == tuple(Ck.shape), (
                 f"Update {k} shape {dC.shape} != C shape {Ck.shape}"
             )
@@ -171,6 +176,42 @@ class TestCLoRAModel:
         clo2 = clo.clone()
         assert clo.parameter_count() == clo2.parameter_count()
         assert clo.lo_ranks == clo2.lo_ranks
+
+    def test_clone_preserves_evolved_factors(self):
+        """clone() must carry the evolved C factors, not re-factorise the base.
+
+        Before 0.5 clone() rebuilt the model from ``self._base``, discarding
+        every evolution step.  ``parameter_count()`` is invariant under that,
+        which is why the old test did not notice.
+        """
+        model = _simple_model()
+        clo = CLoRAModel(model, lo_ranks=[1, 2])
+        before = tn.to_numpy(clo.assemble_cores()[2]).copy()
+
+        # Evolve the C factors, as a DF step would.
+        clo.C = [c + 0.5 for c in clo.C]
+        evolved = tn.to_numpy(clo.assemble_cores()[2]).copy()
+        assert not np.allclose(before, evolved)
+
+        clo2 = clo.clone()
+        np.testing.assert_allclose(
+            tn.to_numpy(clo2.assemble_cores()[2]), evolved, rtol=1e-12,
+            err_msg="clone() dropped the evolved C factors")
+        for a, b in zip(clo.B, clo2.B, strict=True):
+            np.testing.assert_allclose(tn.to_numpy(a), tn.to_numpy(b))
+
+        # …and it must be a real copy: mutating the clone leaves the original.
+        clo2.C[0] = clo2.C[0] * 0.0
+        assert not np.allclose(tn.to_numpy(clo.C[0]), 0.0)
+
+    def test_no_op_warning_lists_the_reducible_core(self):
+        model = _simple_model(r=4)
+        with pytest.warns(RuntimeWarning, match=r"core 2: r_lo=4 >= r_left=4"):
+            CLoRAModel(model, lo_ranks=[1, 4])
+        # A genuine restriction must NOT warn.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            CLoRAModel(_simple_model(r=4), lo_ranks=[1, 2])
 
     def test_to_tt(self):
         model = _simple_model()

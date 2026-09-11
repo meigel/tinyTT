@@ -1,8 +1,9 @@
 name: Continuous Integration
 on: [push]
 jobs:
-  buildandtest:
+  test:
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.11", "3.12"]
         os: [ubuntu-latest]
@@ -10,13 +11,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Install PyTorch (CPU wheel)
+        # Before requirements.txt, so its `torch>=2.0` is already satisfied
+        # and pip does not pull the much larger default wheel.
+        run: python -m pip install --upgrade pip torch --index-url https://download.pytorch.org/whl/cpu
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -r requirements-dev.txt
-      - name: Run Test
-        run: PYTHONPATH=. python -m pytest tests/ -v
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Drop the stub backend directory if checkout left one
+        # An empty `tinygrad/` directory (left by an uninitialised submodule in
+        # older checkouts) shadows the installed package under PYTHONPATH=.
+        run: rmdir tinygrad || true
+      - name: Run tests
+        run: PYTHONPATH=. python -m pytest tests/ -q
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff
+      - run: ruff check tinytt tests

@@ -7,9 +7,9 @@ import numpy as np
 import tinytt._backend as tn
 from tinytt.functional_tt import random_ftt
 from tinytt.manifold import (
-    TTManifoldFrame,
     TangentAdjacentPair,
     TangentBlockJacobi,
+    TTManifoldFrame,
     tangent_conjugate_gradient,
 )
 

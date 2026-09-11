@@ -6,10 +6,10 @@
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Tensor-Train (TT) tensors, operators, and solvers — with dual backend support
-(**tinygrad** or **PyTorch**), a full matrix-free Riemannian manifold layer,
+(**PyTorch**), a full matrix-free Riemannian manifold layer,
 and certified Krylov methods on the fixed-rank TT tangent bundle.
 
-Supports CPU (default), CUDA, Metal, and OpenCL backends (via tinygrad), plus
+Supports CPU (default), CUDA and MPS, plus
 native CUDA/MPS via PyTorch.
 
 📖 **Documentation: [meigel.github.io/tinyTT](https://meigel.github.io/tinyTT/)** — tutorials, API reference, and examples.
@@ -28,10 +28,11 @@ b = A @ x                          # matvec
 print((b - x).norm().numpy())      # ≈ 0
 ```
 
-**Backend selection** — set `TINYTT_BACKEND` (default: `tinygrad`):
+**Device selection** — set `TINYTT_DEVICE` (default: CPU):
 
 ```bash
-TINYTT_BACKEND=pytorch python my_script.py
+TINYTT_DEVICE=cuda python my_script.py
+TINYTT_FORCE_FP32=1 python my_script.py   # force single precision
 ```
 
 ## Representations
@@ -391,7 +392,7 @@ Accepts optional custom retraction for manifold optimisation.
 
 ### 11. Autograd Helpers
 
-`tinytt.grad` module wraps tinygrad's autograd for TT objects:
+`tinytt.grad` module wraps PyTorch autograd for TT objects:
 
 ```python
 tt.grad.watch(x)        # mark all TT cores as leaf variables
@@ -402,39 +403,27 @@ tt.grad.unwatch(x)      # detach (optional)
 
 ### 12. Dual Backend
 
-tinyTT supports **tinygrad** (default) and **PyTorch** via a common facade
-at `tinytt._backend`:
+tinyTT runs on **PyTorch**.  Every module goes through the facade in
+`tinytt/_backend.py` (`import tinytt._backend as tn`) rather than importing
+`torch` directly, so device and dtype policy live in one place.
 
-```python
-import tinytt._backend as tn    # works identically for both backends
-x = tn.tensor([1.0, 2.0])
-tn.einsum("ij,jk->ik", A, B)
-```
+The tinygrad backend was removed in 0.5.  Setting `TINYTT_BACKEND=tinygrad`
+now raises a `DeprecationWarning` and uses PyTorch; any other value is an
+error.  See `CHANGELOG.md`.
 
-Switch with the `TINYTT_BACKEND` environment variable:
-
-```bash
-TINYTT_BACKEND=pytorch python my_script.py
-TINYTT_BACKEND=tinygrad python my_script.py     # default
-```
-
-Both backends expose the same API surface: `Tensor`, `einsum`, `tensordot`,
-`linalg.svd`, `linalg.solve`, `linalg.qr`, `linalg.norm`, `eye`, `zeros`,
-`ones`, `stack`, `cat`, `pad`, `tile`, `reshape`, `permute`, `transpose`,
-`unsqueeze`, `squeeze`, `arange`, `linspace`, etc.
-
-The PyTorch backend enables native CUDA/MPS support and access to PyTorch's
-ecosystem (torch.compile, torch.jit, custom autograd functions).
+Complex tensors (`complex64`/`complex128`) are supported throughout:
+decomposition, rounding, norms, inner products (sesquilinear), the tangent
+layer and the Krylov solvers.
 
 ## Setup
 
-**Requirements:** Python 3.11+, tinygrad (or PyTorch), numpy
+**Requirements:** Python 3.11+, PyTorch 2.0+, numpy
 
 ```bash
 git clone https://github.com/meigel/tinyTT.git
 cd tinyTT
 python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt        # tinygrad + numpy
+pip install -r requirements.txt        # torch + numpy
 pip install -e .
 ```
 
@@ -444,24 +433,14 @@ Optional development dependencies:
 pip install -r requirements-dev.txt    # pytest
 ```
 
-**GPU acceleration:** install the pinned tinygrad submodule from source
-rather than the PyPI wheel:
+**GPU acceleration:** install a CUDA or MPS build of PyTorch and set
+`TINYTT_DEVICE`:
 
 ```bash
-git submodule update --init tinygrad
-pip install ./tinygrad
+TINYTT_DEVICE=cuda python my_script.py
 ```
 
-`requirements.txt` uses the PyPI `tinygrad` package. When the submodule is
-present, tinyTT prefers that checkout at import time so you stay pinned to
-the repository version.
 
-**PyTorch backend:** install PyTorch separately, then set `TINYTT_BACKEND`:
-
-```bash
-pip install torch
-TINYTT_BACKEND=pytorch python my_script.py
-```
 
 ## Repository Layout
 
@@ -489,19 +468,28 @@ tinytt/                    # main library
 ├── truncation.py          # Rank truncation rules
 ├── grad.py                # Autograd helpers
 ├── errors.py              # Exception classes
-├── _backend.py            # Backend facade (tinygrad | pytorch)
-├── _backend_tinygrad.py   # tinygrad implementation
-├── _backend_pytorch.py    # PyTorch implementation
+├── _backend.py            # PyTorch backend facade (the only one)
+├── solvers/               # Sweeping solvers
+│   ├── _local_op.py       #   local effective operator + preconditioners
+│   ├── _environments.py   #   interface tensors
+│   ├── _amen.py           #   AMEn and ALS (one sweep, two settings)
+│   └── _neumann.py        #   parametric Neumann expansion
+├── dynamics/              # Time integrators
+│   ├── _mpo.py            #   mixed-canonical state + MPO environments
+│   ├── _expm.py           #   exp(c A) v, dense or Krylov
+│   ├── _tdvp.py           #   TDVP (one-/two-site) and linear flows
+│   ├── _ksl.py            #   Lubich-Oseledets projector splitting
+│   └── _bug.py            #   rank-adaptive Basis-Update & Galerkin
 ├── manifold/              # Matrix-free manifold geometry
 │   ├── frame.py           #   TTManifoldFrame
 │   ├── tangent.py         #   TTTangent, TTTangentBatch
 │   ├── projection.py      #   project_tt, projection_transport
 │   ├── krylov.py          #   tangent_conjugate_gradient, Ritz
 │   ├── preconditioner.py  #   TangentBlockJacobi, TangentAdjacentPair
+│   ├── canonical.py       #   QR gauge moves, canonical sweeps
 │   └── functional.py      #   FunctionalTTLinearization
-tinygrad/                  # Pinned tinygrad submodule (optional)
-tests/                     # Test suite (40 test files)
-examples/                  # Runnable example scripts (18 examples)
+tests/                     # Test suite (49 files, 588 tests)
+examples/                  # Runnable example scripts (23 examples)
 ```
 
 ## Usage Examples
@@ -589,7 +577,7 @@ TINYTT_DEVICE=NV pytest -q tests/test_gpu_ops.py    # 7/7 pass
 TINYTT_DEVICE=NV pytest -q tests/test_gpu_smoke.py
 ```
 
-- All 7 GPU tests pass when tinygrad is built from the submodule.
+- The GPU tests run when `TINYTT_DEVICE` names an available accelerator.
 - First-run GPU JIT compilation adds ~0.4 s per kernel pattern
   (cache with `TINYTT_TINYJIT=1`).
 - `test_interpolate.py` (TT-cross) hangs on GPU — use CPU backend.
@@ -603,35 +591,28 @@ TINYTT_DEVICE=NV pytest -q tests/test_gpu_smoke.py
 
 | Flag | Effect |
 |---|---|
-| `TINYTT_BACKEND=tinygrad\|pytorch` | Tensor backend (default: tinygrad) |
-| `TINYTT_DEVICE=NV\|METAL\|CL\|…` | Default tinygrad device |
-| `TINYTT_TINYJIT=1` | Enable `TinyJit` kernel caching |
-| `TINYTT_SVD_BACKEND=numpy\|tinygrad` | SVD backend (auto-fallback on GPU) |
+| `TINYTT_DEVICE=cpu\|cuda\|cuda:1\|mps` | Compute device (default: cpu) |
 | `TINYTT_FORCE_FP32=1` | Force float32 on devices without usable float64 |
 
-## NumPy Fallbacks
+## NumPy interop
 
-Several routines copy data to CPU, compute, and copy back because tinygrad
-lacks a matching primitive:
+A few routines drop to NumPy on deliberately small problems: `maxvol` pivot
+selection in `interpolate.py`, the dense regression subproblems in `uq_adf.py`
+and the projected tridiagonal/Hessenberg matrices inside the Krylov solvers.
+These are all O(r) or O(k) work on matrices of Krylov or rank size, not on the
+tensor, so they do not gate GPU throughput.
 
-- **SVD**: automatically falls back to NumPy when tinygrad's GPU SVD
-  is unavailable or fails (all core operations work on GPU).
-- **Interpolation** (`maxvol`, dense solves): CPU recommended (may hang on GPU).
-- **UQ-ADF**: NumPy dense linear algebra for the small regression subproblems;
-  FEM sample generation should use SciPy sparse matrices and sparse solves.
-- Some solver helpers use NumPy on small dense systems.
-
-This makes tinyTT CPU-first today, with functional GPU support for most
-core operations. With `TINYTT_BACKEND=pytorch` the PyTorch-native SVD and
-dense linear algebra avoid these fallbacks.
+Everything on the tensor itself — SVD, QR, einsum, dense linear algebra on the
+local systems — goes through `torch.linalg` and stays on the configured
+device.  The 0.4 release additionally round-tripped GPU SVDs through NumPy to
+work around tinygrad; that path is gone.
 
 ## Troubleshooting
 
-- **Python 3.10 not supported** — requires 3.11+ for `Self` type annotation.
-- **Clang required** (tinygrad backend) — tinygrad's CPU backend compiles kernels with `clang`.
-  Install via package manager: `apt install clang` (Debian/Ubuntu).
-- **tinygrad version** — the pinned `tinygrad/` submodule is the recommended
-  version for GPU support.  PyPI `tinygrad>=0.10` works for CPU-only.
-- **PyTorch backend** — install `torch` separately; the `TINYTT_BACKEND=pytorch`
-  flag activates it. The backend facade automatically falls through to an
-  informative error if PyTorch is not installed.
+- **Python 3.10 not supported** — 3.11+ is required.
+- **`TINYTT_BACKEND=tinygrad`** — the tinygrad backend was removed in 0.5.
+  The variable is still read so that 0.4 scripts get a clear
+  `DeprecationWarning` rather than a silent behaviour change; unset it.
+- **float64 on MPS** — Apple's Metal backend has no float64.  tinyTT detects
+  this and falls back to float32; set `TINYTT_FORCE_FP32=1` to make that
+  explicit.

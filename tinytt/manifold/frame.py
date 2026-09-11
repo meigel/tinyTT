@@ -7,8 +7,8 @@ from dataclasses import dataclass
 import numpy as np
 
 import tinytt._backend as tn
-from tinytt._riemannian import left_orthogonalize, right_orthogonalize
 from tinytt._tt_base import TT
+from tinytt.manifold.canonical import left_orthogonalize, right_orthogonalize
 
 
 def _coerce_cores(tt_or_cores) -> list:
@@ -61,7 +61,7 @@ def _suffix_cross_grams(left_cores: list, right_cores: list) -> list:
     ref = left_cores[0]
     suffix[d] = tn.ones((1, 1), dtype=ref.dtype, device=ref.device)
     for k in range(d - 1, -1, -1):
-        suffix[k] = tn.realize(
+        suffix[k] = (
             tn.einsum(
                 "anb,bq,pnq->ap",
                 left_cores[k],
@@ -89,18 +89,24 @@ class TTManifoldFrame:
         base_cores: list,
         left_cores: list,
         right_cores: list,
-        interface_singular_values: list,
+        interface_singular_values: list | None = None,
     ):
         self._base_cores = tuple(base_cores)
         self._left_cores = tuple(left_cores)
         self._right_cores = tuple(right_cores)
-        self._interface_singular_values = tuple(interface_singular_values)
+        # Computed on demand: the suffix chain plus d-1 SVDs is only needed by
+        # regularity(), and from_tt used to pay for it on every construction
+        # (i.e. on every Riemannian step).
+        self._interface_singular_values = (
+            None if interface_singular_values is None
+            else tuple(interface_singular_values)
+        )
         self.modes, self.ranks = _validate_cores(list(base_cores))
         self.dtype = base_cores[0].dtype
         self.device = base_cores[0].device
 
     @classmethod
-    def from_tt(cls, tt_or_cores) -> "TTManifoldFrame":
+    def from_tt(cls, tt_or_cores) -> TTManifoldFrame:
         cores = _coerce_cores(tt_or_cores)
         _validate_cores(cores)
         try:
@@ -116,12 +122,7 @@ class TTManifoldFrame:
             _validate_cores(cores)
             left = left_orthogonalize(cores, inplace=False)
             right = right_orthogonalize(cores, inplace=False)
-        suffix = _suffix_cross_grams(left, right)
-        singular_values = []
-        for bond in range(1, len(cores)):
-            _, values, _ = tn.linalg.svd(suffix[bond], full_matrices=False)
-            singular_values.append(tn.realize(values))
-        return cls(cores, left, right, singular_values)
+        return cls(cores, left, right)
 
     @property
     def order(self) -> int:
@@ -141,6 +142,18 @@ class TTManifoldFrame:
 
     @property
     def interface_singular_values(self) -> tuple:
+        """Interface singular values per bond, computed on first access."""
+        if self._interface_singular_values is None:
+            suffix = _suffix_cross_grams(
+                list(self._left_cores), list(self._right_cores)
+            )
+            values = []
+            for bond in range(1, self.order):
+                _, singular, _ = tn.linalg.svd(
+                    suffix[bond], full_matrices=False
+                )
+                values.append(singular)
+            self._interface_singular_values = tuple(values)
         return self._interface_singular_values
 
     @property
@@ -155,12 +168,13 @@ class TTManifoldFrame:
     def regularity(self, tolerance: float = 1e-12) -> TTRegularity:
         if tolerance < 0:
             raise ValueError("tolerance must be nonnegative")
-        if not self._interface_singular_values:
+        singular_values = self.interface_singular_values
+        if not singular_values:
             return TTRegularity(np.inf, 1.0, True)
 
         minimum = np.inf
         maximum_condition = 1.0
-        for values in self._interface_singular_values:
+        for values in singular_values:
             values_np = np.asarray(tn.to_numpy(values), dtype=float)
             local_minimum = float(np.min(values_np))
             local_maximum = float(np.max(values_np))
@@ -208,7 +222,36 @@ class TTManifoldFrame:
         rounding_tolerance: float = 0.0,
         regularity_tolerance: float = 1e-12,
     ) -> TT:
-        """Retract by fixed-rank rounding of the exact affine tensor."""
+        """Retract by fixed-rank rounding of the exact affine tensor.
+
+        See :meth:`retract_with_frame` if you also need the frame at the new
+        point -- this method builds it (to check regularity) and then throws
+        it away, so a Riemannian iteration that rebuilds it immediately pays
+        for two QR sweeps and ``d - 1`` SVDs per step instead of one.
+        """
+        return self.retract_with_frame(
+            tangent,
+            step,
+            rounding_tolerance=rounding_tolerance,
+            regularity_tolerance=regularity_tolerance,
+        )[0]
+
+    def retract_with_frame(
+        self,
+        tangent,
+        step: float = 1.0,
+        *,
+        rounding_tolerance: float = 0.0,
+        regularity_tolerance: float = 1e-12,
+    ) -> tuple[TT, TTManifoldFrame]:
+        """Retract, returning both the new point and its frame.
+
+        Returns
+        -------
+        (TT, TTManifoldFrame)
+            The retracted point and the canonical frame at it, so the caller
+            can continue iterating without re-orthogonalising.
+        """
         if tangent.frame is not self:
             raise ValueError("the tangent vector must belong to this frame")
         if rounding_tolerance < 0:
@@ -234,4 +277,4 @@ class TTManifoldFrame:
                 "retraction reached the TT rank boundary: minimum interface "
                 f"singular value {regularity.minimum_singular_value:.3e}"
             )
-        return rounded
+        return rounded, result_frame

@@ -4,9 +4,6 @@ Autograd helpers for tinygrad-backed TT tensors.
 
 from __future__ import annotations
 
-import tinytt._backend as tn
-from tinytt import TT
-
 
 def _backward(x):
     """Backward, retrying with ``retain_graph=True`` on PyTorch if needed.

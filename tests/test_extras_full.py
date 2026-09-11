@@ -6,28 +6,12 @@ Covers: meshgrid, diag, permute, cat, pad, rank1TT, numel.
 
 import os
 import sys
+
 import numpy as np
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-import tinytt._backend as tn
 import tinytt as tt
-
-
-def _has_clang():
-    if not tn._is_cpu_device(tn.default_device()):
-        return True
-    try:
-        import subprocess
-        subprocess.run(["clang", "--version"], capture_output=True, check=True)
-        return True
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return False
-
-
-NEEDS_CLANG = pytest.mark.skipif(
-    not _has_clang(), reason="CPU backend requires clang for kernel compilation"
-)
+import tinytt._backend as tn
 
 rng = np.random.RandomState(42)
 
@@ -66,7 +50,6 @@ class TestExtrasFull:
         assert d.N == [3, 4]
         np.testing.assert_allclose(tn.to_numpy(d.full()), np.ones((3, 4)), atol=1e-12)
 
-    @NEEDS_CLANG
     def test_permute_simple(self):
         """Permute dimensions of a 3D TT tensor."""
         full = np.arange(24, dtype=np.float64).reshape(2, 3, 4)
@@ -75,7 +58,6 @@ class TestExtrasFull:
         expected = np.transpose(full, [2, 0, 1])
         np.testing.assert_allclose(tn.to_numpy(p.full()), expected, atol=1e-10)
 
-    @NEEDS_CLANG
     def test_cat_simple(self):
         """Concatenate two TT tensors along mode 0."""
         a = tt.ones([2, 3])
@@ -84,7 +66,6 @@ class TestExtrasFull:
         assert tn.to_numpy(c.full()).shape == (6, 3)
         np.testing.assert_allclose(tn.to_numpy(c.full()), np.ones((6, 3)), atol=1e-12)
 
-    @NEEDS_CLANG
     def test_pad_simple(self):
         """Pad a TT tensor with zeros."""
         x = tt.ones([2, 3])

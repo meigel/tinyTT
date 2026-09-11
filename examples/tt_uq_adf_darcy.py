@@ -22,11 +22,12 @@ Usage:  PYTHONPATH=. python examples/tt_uq_adf_darcy.py
 
 import sys
 import time
+
 import numpy as np
 
-from tinytt._backend import float64, tensor
-from tinytt import uq_adf as uq
 import tinytt._backend as tn
+from tinytt import uq_adf as uq
+from tinytt._backend import float64
 
 # ---------------------------------------------------------------------------
 # FEM solver for one parametric sample
@@ -34,8 +35,14 @@ import tinytt._backend as tn
 try:
     from scipy import sparse as sp
     from scipy.sparse.linalg import spsolve
-    from skfem import MeshQuad, ElementQuad1, InteriorBasis
-    from skfem import BilinearForm, LinearForm, condense
+    from skfem import (
+        BilinearForm,
+        ElementQuad1,
+        InteriorBasis,
+        LinearForm,
+        MeshQuad,
+        condense,
+    )
     from skfem.helpers import dot, grad
 except ImportError:
     sys.exit("This example requires scikit-fem (pip install scikit-fem)")
@@ -138,7 +145,7 @@ print(f"  Sample generation done ({t_gen:.1f}s)", flush=True)
 # ---------------------------------------------------------------------------
 # Run UQ-ADF
 # ---------------------------------------------------------------------------
-print(f"\n  Running UQ-ADF (ALS update, adaptive rank, max 60 iterations) ...", flush=True)
+print("\n  Running UQ-ADF (ALS update, adaptive rank, max 60 iterations) ...", flush=True)
 t1 = time.perf_counter()
 
 
@@ -194,7 +201,7 @@ def eval_tt(cores, y):
     return np.squeeze(val)
 
 
-print(f"\n  Evaluating surrogate accuracy ...", flush=True)
+print("\n  Evaluating surrogate accuracy ...", flush=True)
 cores = [tn.to_numpy(c) for c in res.cores]
 
 # Training error (first 5)

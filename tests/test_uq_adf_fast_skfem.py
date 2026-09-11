@@ -6,6 +6,7 @@ using UQ-ADF with 40 training samples and relaxed tolerances.
 """
 
 import time
+
 import numpy as np
 import pytest
 
@@ -21,8 +22,14 @@ def test_uq_adf_darcy_fast():
     skfem = pytest.importorskip("skfem")
     scipy_sparse = pytest.importorskip("scipy.sparse")
     spsolve = pytest.importorskip("scipy.sparse.linalg").spsolve
-    from skfem import (MeshQuad, ElementQuad1, InteriorBasis,
-                        BilinearForm, LinearForm, condense)
+    from skfem import (
+        BilinearForm,
+        ElementQuad1,
+        InteriorBasis,
+        LinearForm,
+        MeshQuad,
+        condense,
+    )
     from skfem.helpers import dot, grad
 
     np.random.seed(0)

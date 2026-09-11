@@ -12,9 +12,13 @@ Core shapes (tinyTT convention):
   A_d  : (r_d, n_d,  1)        -- last feature core
 """
 
+# Core/environment matrices keep their mathematical names (A_k, R, L, …).
+# ruff: noqa: N806
+
 from __future__ import annotations
 
 import numpy as np
+
 import tinytt._backend as tn
 
 
@@ -32,7 +36,8 @@ class FunctionalTT:
     """
 
     def __init__(self, cores: list):
-        self.cores = [c.clone() if tn.is_tensor(c) else tn.tensor(np.asarray(c)) for c in cores]
+        self.cores = [c.clone() if tn.is_tensor(c) else tn.tensor(np.asarray(c))
+                      for c in cores]
 
     @property
     def d(self):
@@ -181,40 +186,75 @@ class FunctionalTT:
     # Analytic integral
     # ------------------------------------------------------------------
 
-    def integrate(self, basis):
-        """Analytic integral over [-1, 1]^d.
+    def integrate(self, basis, nodes=None):
+        r"""Integrate the model over ``[-1, 1]^d`` by Gauss-Legendre quadrature.
 
-        ∫_[-1,1]^d f(x) dx = TT(∫ φ(x₁) dx₁, ..., ∫ φ(x_d) dx_d)
+        .. math::
+            \int_{[-1,1]^d} f(x)\,dx
+            = \bigl\langle A, \textstyle\bigotimes_k \int \phi(x_k)\,dx_k
+              \bigr\rangle
 
-        Uses 2-point Gauss-Legendre quadrature to compute ∫ φ_i for
-        each basis function.
+        The one-dimensional integrals ``∫ φ_i dx`` are computed with an
+        ``n``-node Gauss-Legendre rule, which is **exact** for polynomials up
+        to degree ``2n - 1``.  By default ``n = ceil(n_features / 2)``, i.e.
+        exact for a polynomial basis of degree ``n_features - 1`` — the
+        Legendre/Hermite/monomial bases in :mod:`tinytt._functional`.  For a
+        non-polynomial basis this is a quadrature approximation, not an
+        analytic integral; raise *nodes* if you need more accuracy.
+
+        .. versionchanged:: 0.5
+           Used to hard-code a 2-node rule (exact only to degree 3) while
+           claiming to be analytic, and silently assumed every feature mode
+           had the same size.
 
         Parameters
         ----------
         basis : callable
-            Basis function with attribute ``n_features``.
+            Univariate basis with attribute ``n_features``.  It must produce
+            the same number of features as every feature core's mode size.
+        nodes : int, optional
+            Number of Gauss-Legendre nodes.  Defaults to
+            ``ceil(n_features / 2)`` (minimum 1).
 
         Returns
         -------
         float
-            Analytic integral.
         """
-        import numpy as np
         d = self.d
-        bdim = self.cores[1].shape[1] if d > 0 else self.cores[0].shape[2]
+        if d < 1:
+            raise ValueError("integrate needs at least one feature core.")
 
-        # 2-point Gauss-Legendre on [-1, 1]: weights = 1, nodes = ±1/√3
-        x_gq = np.array([-1.0 / np.sqrt(3.0), 1.0 / np.sqrt(3.0)])
+        dims = {int(self.cores[k].shape[1]) for k in range(1, d + 1)}
+        if len(dims) > 1:
+            raise ValueError(
+                "integrate assumes one shared univariate basis, so every "
+                f"feature core must have the same mode size; got {sorted(dims)}."
+            )
+        bdim = dims.pop()
+
+        n_basis = getattr(basis, "n_features", None)
+        if n_basis is not None and int(n_basis) != bdim:
+            raise ValueError(
+                f"basis has n_features={int(n_basis)} but the feature cores "
+                f"have mode size {bdim}."
+            )
+
+        n_nodes = int(nodes) if nodes is not None else max(1, -(-bdim // 2))
+        x_gq, w_gq = np.polynomial.legendre.leggauss(n_nodes)
         phi_gq = tn.to_numpy(basis(tn.tensor(x_gq, dtype=tn.float64)))
-        phi_int = phi_gq.sum(axis=0)                 # (bdim,) — ∫ φ_i dx
+        if phi_gq.shape != (n_nodes, bdim):
+            raise ValueError(
+                f"basis returned {phi_gq.shape} at {n_nodes} nodes; expected "
+                f"{(n_nodes, bdim)}."
+            )
+        phi_int = w_gq @ phi_gq                       # (bdim,) — ∫ φ_i dx
 
         phi_1d = tn.tensor(phi_int.reshape(1, bdim), dtype=tn.float64)
 
         Ad = self.cores[d]
         R = tn.einsum('mb,ab->ma', phi_1d, Ad.squeeze(2))
         for k in range(d - 1, 0, -1):
-            Ak = self.cores[k]
-            R = tn.einsum('mb,abc,mc->ma', phi_1d, Ak, R)
+            R = tn.einsum('mb,abc,mc->ma', phi_1d, self.cores[k], R)
         result = tn.einsum('ma,na->mn', R, self.cores[0].squeeze(0))
         return float(tn.to_numpy(result)[0, 0])
 

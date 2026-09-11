@@ -185,11 +185,6 @@ class TestWrappers:
         assert t32.dtype == tn.float32
         np.testing.assert_array_equal(tn.to_numpy(t32), tn.to_numpy(t))
 
-    def test_realize(self):
-        t = tn.tensor([1.0, 2.0])
-        r = tn.realize(t + t)  # should not raise
-        assert tn.is_tensor(r)
-
 
 class TestUtilities:
     def test_is_tensor(self):

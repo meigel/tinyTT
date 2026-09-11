@@ -1,11 +1,9 @@
 import numpy as np
-import pytest
 
 import tinytt as tt
 import tinytt._backend as tn
-from tinytt._decomposition import rank_chop, round_tt
+from tinytt._decomposition import round_tt
 from tinytt.truncation import (
-    AdaptiveThreshold,
     Doerfler,
     DoerflerAdaptivity,
     Threshold,

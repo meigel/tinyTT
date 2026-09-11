@@ -1,16 +1,20 @@
 """Tests for the mixed/H(div) extensions: QTTLayout, apply_mode, periodic FEM, expsum."""
 import numpy as np
 import pytest
+
 import tinytt as tt
-from tinytt.fem import blocks_periodic
 from tinytt.expsum import expsum_inv
+from tinytt.fem import blocks_periodic
 
 
 def _quad_gram(n, kind, nq=400):
     h = 1.0 / n
-    xs = (np.arange(n * nq) + 0.5) / (n * nq); w = 1.0 / (n * nq)
-    cell = np.minimum((xs / h).astype(int), n - 1); t = xs / h - cell
-    P0 = np.zeros((n, xs.size)); P0[cell, np.arange(xs.size)] = 1.0
+    xs = (np.arange(n * nq) + 0.5) / (n * nq)
+    w = 1.0 / (n * nq)
+    cell = np.minimum((xs / h).astype(int), n - 1)
+    t = xs / h - cell
+    P0 = np.zeros((n, xs.size))
+    P0[cell, np.arange(xs.size)] = 1.0
     P1 = np.zeros((n, xs.size))
     P1[cell, np.arange(xs.size)] = 1.0 - t
     P1[(cell + 1) % n, np.arange(xs.size)] += t
@@ -20,7 +24,8 @@ def _quad_gram(n, kind, nq=400):
 
 @pytest.mark.parametrize("n", [8, 16, 32])
 def test_periodic_grams_match_quadrature(n):
-    B = blocks_periodic(n); h = B['h']
+    B = blocks_periodic(n)
+    h = B['h']
     assert np.max(np.abs(B['G00'] - _quad_gram(n, '00'))) / h < 1e-13
     assert np.max(np.abs(B['G01'] - _quad_gram(n, '01'))) / h < 1e-13
     assert np.max(np.abs(B['G11'] - _quad_gram(n, '11'))) / h < 1e-5
@@ -29,7 +34,8 @@ def test_periodic_grams_match_quadrature(n):
 @pytest.mark.parametrize("n", [8, 16, 32])
 def test_derivative_antiderivative_inverse(n):
     B = blocks_periodic(n)
-    g = np.random.default_rng(0).standard_normal(n); g -= g.mean()
+    g = np.random.default_rng(0).standard_normal(n)
+    g -= g.mean()
     assert np.max(np.abs(B['D'] @ (B['A'] @ g) - g)) < 1e-12
     assert np.max(np.abs(B['D'] @ np.ones(n))) < 1e-12
 
@@ -45,7 +51,7 @@ def test_qtt_layout_core_ranges():
 
 def test_qtt_layout_rejects_non_power_of_two():
     with pytest.raises(ValueError):
-        tt.QTTLayout(dims=[16, 5, 16]).levels
+        _ = tt.QTTLayout(dims=[16, 5, 16]).levels
 
 
 @pytest.mark.parametrize("name", ["D", "A", "G00", "G11", "G01"])

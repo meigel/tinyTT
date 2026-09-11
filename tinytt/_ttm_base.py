@@ -41,7 +41,6 @@ from __future__ import annotations
 import tinytt._backend as tn
 from tinytt._decomposition import SVD
 
-
 # -------------------------------------------------------------------
 # Core TTM algebra
 # -------------------------------------------------------------------
@@ -242,7 +241,7 @@ def ttm_from_matrix(
         keep = max(int(tn.numel(s[s > tol * (s[0] if s.numel() else 1.0)])), 1)
         u = u[:, :keep]
         cores4.append(u.reshape(r_prev, ms, keep))
-        cur = tn.diag(s[:keep]) @ vt[:keep]
+        cur = tn.scale_rows(s[:keep], vt[:keep])
         r_prev = keep
     cores4.append(cur.reshape(r_prev, merged_sizes[-1], 1))
 
@@ -296,7 +295,7 @@ def ttm_round(cores: list[tn.Tensor], tol: float = 0.0) -> list[tn.Tensor]:
     for k in range(P):
         perm += [k, P + k]
     res = tn.permute(res, perm)
-    merged = [m * n for m, n in zip(mode_sizes_m, mode_sizes_n)]
+    _merged = [m * n for m, n in zip(mode_sizes_m, mode_sizes_n)]
     if hasattr(res, 'contiguous'):
         res = res.contiguous()
     A = res.reshape(M, N)

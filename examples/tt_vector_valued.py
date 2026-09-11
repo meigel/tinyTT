@@ -84,7 +84,7 @@ for step in range(500):
         g_norm = float(tn.to_numpy(tn.linalg.norm(grad.reshape(-1))))
         if g_norm > 1.0:
             grad = grad * (1.0 / g_norm)
-        c.assign(c.detach() - lr_step * grad)
+        tn.assign(c, c.detach() - lr_step * grad)
     for c in A_hat.cores:
         c.requires_grad_(False)
         c.grad = None

@@ -1,27 +1,27 @@
-"""
-BUG (Basis-Update and Galerkin) — rank-adaptive TT time evolution.
+"""Explicit step-and-truncate evolution, and the real BUG integrator.
 
-The public :func:`bug` routine performs one step of time evolution for a TT
-tensor under a linear MPO operator:
+Two different things live here, and 0.4 conflated them:
 
-    ψ_{n+1} = round(ψ_n + sign·dt·H·ψ_n, ε, r_max)
+:func:`step_truncate` (exported as :func:`bug` for backwards compatibility)
+    ``round(Y + dt F(Y))``.  Cheap, first order, and *not* the
+    Basis-Update & Galerkin method -- it has neither a basis augmentation
+    nor a Galerkin stage.
+:func:`tinytt.dynamics.bug_step`
+    The actual rank-adaptive BUG: augment the interface bases with the
+    directions a projector-splitting predictor produces, take the step for
+    the coefficients in that enlarged space by solving the projected ODE
+    exactly, then truncate.
 
-where sign = -1 for real-valued dissipative PDEs and -i for Schrödinger
-dynamics.  This is the **step-truncate** (or "proper BUG") approach: the
-operator is applied globally via TT arithmetic and the result is projected
-back onto the TT manifold via SVD rounding.  No sequential site-by-site
-local exponentials are involved, so it is stable for both quantum
-Hamiltonians and dissipative PDEs.
+They are measurably different: under a rank cap that bites, ``bug_step`` is
+several times more accurate than ``step_truncate`` on the same problem (see
+``tests/test_dynamics.py``).
 """
 
 from __future__ import annotations
 
-import numpy as np
-import tinytt._backend as tn
+import warnings
+
 from tinytt._tt_base import TT
-from tinytt.manifold import DFIMomentum, DFOMomentum
-from tinytt.manifold.frame import TTManifoldFrame
-from tinytt.manifold.projection import projection_transport
 
 
 def _linear_rhs(mpo, state, eps=1e-12, rmax=1024):
@@ -31,11 +31,23 @@ def _linear_rhs(mpo, state, eps=1e-12, rmax=1024):
 
 
 def _copy_back(dst, src):
-    dst.cores = [c.clone() for c in src.cores]
+    """Write ``src``'s cores into ``dst``, keeping ``dst``'s metadata valid.
+
+    This used to assign ``dst.cores`` directly, which left ``dst.R``/``dst.N``
+    describing the cores from *before* the step -- so any rank check a caller
+    made afterwards was meaningless.
+    """
+    dst.replace_cores(src.cores)
 
 
-def bug(state, mpo, dt, threshold=1e-10, max_bond_dim=1024, real_time=False):
-    """Evolve a TT state by one step under a linear MPO operator.
+def step_truncate(state, mpo, dt, threshold=1e-10, max_bond_dim=1024,
+                  real_time=False):
+    """Evolve a TT state by one explicit step, then truncate.
+
+    ``Y <- round(Y + dt (-1)^... H Y)``.  First order and cheap.  For the
+    rank-adaptive Basis-Update & Galerkin integrator -- which augments the
+    bases before truncating and is substantially more accurate under a rank
+    cap -- use :func:`tinytt.dynamics.bug_step`.
 
     Parameters
     ----------
@@ -143,8 +155,34 @@ def bug_with_momentum(
     return evolved
 
 
+def bug(state, mpo, dt, threshold=1e-10, max_bond_dim=1024, real_time=False):
+    """Deprecated alias for :func:`step_truncate`.
+
+    The name is misleading: this is step-and-truncate, not Basis-Update &
+    Galerkin.  Use :func:`step_truncate` for the same behaviour, or
+    :func:`tinytt.dynamics.bug_step` for the real BUG integrator.
+    """
+    return step_truncate(state, mpo, dt, threshold=threshold,
+                         max_bond_dim=max_bond_dim, real_time=real_time)
+
+
 def bug_like_sweep(state, mpo, dt, threshold=1e-10, max_bond_dim=1024,
-                   numiter_lanczos=25, real_time=False):
-    """Alias for :func:`bug` (right-to-left naming retained for compatibility)."""
-    return bug(state, mpo, dt, threshold=threshold,
-               max_bond_dim=max_bond_dim, real_time=real_time)
+                   numiter_lanczos=None, real_time=False):
+    """Deprecated alias for :func:`step_truncate`."""
+    if numiter_lanczos is not None:
+        warnings.warn(
+            "numiter_lanczos has never had an effect here (there is no "
+            "Lanczos step in step-and-truncate) and is ignored.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+    return step_truncate(state, mpo, dt, threshold=threshold,
+                         max_bond_dim=max_bond_dim, real_time=real_time)
+
+
+__all__ = [
+    "step_truncate",
+    "bug",
+    "bug_like_sweep",
+    "bug_with_momentum",
+]

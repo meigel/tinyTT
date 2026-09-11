@@ -1,7 +1,7 @@
 import pytest
 
 import tinytt as tt
-from tinytt.errors import ShapeMismatch, InvalidArguments
+from tinytt.errors import InvalidArguments, ShapeMismatch
 
 
 def test_dot_invalid_axis():

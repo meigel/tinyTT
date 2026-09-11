@@ -1,4 +1,5 @@
 import time
+
 import numpy as np
 import pytest
 
@@ -64,7 +65,14 @@ def test_uq_adf_darcy_log_normal_skfem():
     pytest.importorskip("scipy")
     from scipy import sparse as sp
     from scipy.sparse.linalg import spsolve
-    from skfem import MeshQuad, ElementQuad1, InteriorBasis, BilinearForm, LinearForm, condense
+    from skfem import (
+        BilinearForm,
+        ElementQuad1,
+        InteriorBasis,
+        LinearForm,
+        MeshQuad,
+        condense,
+    )
     from skfem.helpers import dot, grad
 
     np.random.seed(0)

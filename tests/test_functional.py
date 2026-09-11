@@ -4,23 +4,24 @@ Tests for functional feature-map (basis) functions.
 
 import os
 import sys
+
 import numpy as np
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import tinytt._backend as tn
 from tinytt._functional import (
-    monomial_features,
-    legendre_features,
-    hermite_features,
-    LegendreFeatures,
     HermiteFeatures,
+    LegendreFeatures,
     MonomialFeatures,
+    divergence,
     evaluate,
     gradient,
+    hermite_features,
     jacobian,
-    divergence,
     laplace,
+    legendre_features,
+    monomial_features,
 )
 
 
@@ -40,30 +41,41 @@ def X_small():
 
 class TestMonomial:
     def test_shape(self, X_small):
-        phi = monomial_features(X_small, degree=4)
+        # ``degree`` is the maximum polynomial degree: degree + 1 columns.
+        phi = monomial_features(X_small, degree=3)
         assert len(phi) == 3
+        for p in phi:
+            assert _np(p).shape == (20, 4)
+
+    def test_n_features_keyword(self, X_small):
+        phi = monomial_features(X_small, n_features=4)
         for p in phi:
             assert _np(p).shape == (20, 4)
 
     def test_values(self):
         X = np.array([[2.0, 3.0]])
-        phi = monomial_features(X, degree=3)
+        phi = monomial_features(X, degree=2)
         np.testing.assert_allclose(_np(phi[0]), [[1.0, 2.0, 4.0]], atol=1e-12)
         np.testing.assert_allclose(_np(phi[1]), [[1.0, 3.0, 9.0]], atol=1e-12)
 
-    def test_degree1(self):
+    def test_degree0(self):
         X = np.array([[0.5, -0.5]])
-        phi = monomial_features(X, degree=1)
+        phi = monomial_features(X, degree=0)
         for p in phi:
             assert _np(p).shape == (1, 1)
             np.testing.assert_allclose(_np(p), [[1.0]], atol=1e-12)
 
     def test_single_sample(self):
         X = np.array([[0.5, 0.2, -0.3]])
-        phi = monomial_features(X, degree=5)
+        phi = monomial_features(X, degree=4)
         assert len(phi) == 3
         for p in phi:
             assert _np(p).shape == (1, 5)
+
+    def test_high_degree_warns(self):
+        X = np.array([[0.5]])
+        with pytest.warns(RuntimeWarning, match="ill-conditioned"):
+            monomial_features(X, degree=20)
 
     def test_from_tensor(self, X_small):
         X_t = tn.tensor(X_small)
@@ -78,33 +90,45 @@ class TestMonomial:
 
 class TestLegendre:
     def test_shape(self, X_small):
-        phi = legendre_features(X_small, degree=5)
+        phi = legendre_features(X_small, degree=4)
         assert len(phi) == 3
         for p in phi:
             assert _np(p).shape == (20, 5)
 
     def test_orthonormality(self):
-        """Normalised Legendre basis should be approximately orthonormal on U[-1,1]."""
+        """The default (probability) scaling is orthonormal for U(-1,1).
+
+        No stray factor of 2: the Monte-Carlo Gram of the features is the
+        identity as written, whereas before 0.5 the Legendre basis was
+        normalised for Lebesgue dx and this test had to multiply by 2.
+        """
         n_pts = 5000
         rng = np.random.default_rng(0)
         X = rng.uniform(-1, 1, (n_pts, 1))
-        degree = 5
-        phi = legendre_features(X, degree=degree, orthonormal=True)
+        n_feat = 5
+        phi = legendre_features(X, n_features=n_feat, orthonormal=True)
         P = _np(phi[0])
-        gram = P.T @ P / n_pts * 2
-        np.testing.assert_allclose(gram, np.eye(degree), atol=0.05)
+        gram = P.T @ P / n_pts
+        np.testing.assert_allclose(gram, np.eye(n_feat), atol=0.05)
+
+    def test_lebesgue_measure_is_legacy_scaling(self):
+        """measure="lebesgue" reproduces the pre-0.5 sqrt((2n+1)/2) scaling."""
+        X = np.array([[0.3]])
+        prob = _np(legendre_features(X, degree=4, measure="probability")[0])
+        leb = _np(legendre_features(X, degree=4, measure="lebesgue")[0])
+        np.testing.assert_allclose(prob, leb * np.sqrt(2.0), rtol=1e-12)
 
     def test_p0_p1(self):
         """P0 = 1, P1 = x (un-normalised)."""
         X = np.array([[-0.5], [0.0], [0.5]])
-        phi = legendre_features(X, degree=2, orthonormal=False)
+        phi = legendre_features(X, degree=1, orthonormal=False)
         P = _np(phi[0])
         np.testing.assert_allclose(P[:, 0], [1.0, 1.0, 1.0], atol=1e-12)
         np.testing.assert_allclose(P[:, 1], [-0.5, 0.0, 0.5], atol=1e-12)
 
     def test_single_sample(self):
         X = np.array([[0.5]])
-        phi = legendre_features(X, degree=4, orthonormal=False)
+        phi = legendre_features(X, degree=3, orthonormal=False)
         assert _np(phi[0]).shape == (1, 4)
 
     def test_from_tensor(self, X_small):
@@ -120,7 +144,7 @@ class TestLegendre:
 
 class TestHermite:
     def test_shape(self, X_small):
-        phi = hermite_features(X_small, degree=4)
+        phi = hermite_features(X_small, degree=3)
         assert len(phi) == 3
         for p in phi:
             assert _np(p).shape == (20, 4)
@@ -128,7 +152,7 @@ class TestHermite:
     def test_h0_h1_h2(self):
         """H0=1, H1=x, H2=x^2-1 (probabilist Hermite, un-normalised)."""
         X = np.array([[2.0]])
-        phi = hermite_features(X, degree=3, orthonormal=False)
+        phi = hermite_features(X, degree=2, orthonormal=False)
         H = _np(phi[0])
         np.testing.assert_allclose(H[0, 0], 1.0, atol=1e-12)
         np.testing.assert_allclose(H[0, 1], 2.0, atol=1e-12)
@@ -137,8 +161,8 @@ class TestHermite:
     def test_orthonormal_vs_raw(self):
         """Orthonormal Hermite should produce different scalings."""
         X = np.array([[2.0]])
-        phi_raw = hermite_features(X, degree=3, orthonormal=False)
-        phi_onb = hermite_features(X, degree=3, orthonormal=True)
+        phi_raw = hermite_features(X, degree=2, orthonormal=False)
+        phi_onb = hermite_features(X, degree=2, orthonormal=True)
         H_raw = _np(phi_raw[0])     # [1, 2, 3]
         H_onb = _np(phi_onb[0])     # scaled versions
         # H0=1 scaled by exp(-0.5*lgamma(1))=1, so raw[0]==onb[0]
@@ -150,7 +174,7 @@ class TestHermite:
 
     def test_single_sample(self):
         X = np.array([[0.5, -0.2]])
-        phi = hermite_features(X, degree=3)
+        phi = hermite_features(X, degree=2)
         assert len(phi) == 2
         for p in phi:
             assert _np(p).shape == (1, 3)
@@ -174,7 +198,18 @@ class TestConsistency:
             phi = fn(X, degree=degree)
             assert len(phi) == 2
             for p in phi:
-                assert _np(p).shape == (10, degree), f"{fn.__name__} wrong shape"
+                assert _np(p).shape == (10, degree + 1), f"{fn.__name__} wrong shape"
+
+    def test_free_functions_match_classes(self):
+        """The free functions and the classes agree column-for-column."""
+        X = np.random.default_rng(3).uniform(-1, 1, (7, 1))
+        for fn, cls in [(monomial_features, MonomialFeatures),
+                        (legendre_features, LegendreFeatures),
+                        (hermite_features, HermiteFeatures)]:
+            free = _np(fn(X, degree=4)[0])
+            obj = _np(cls(degree=4)(X[:, 0]))
+            assert free.shape == obj.shape == (7, 5)
+            np.testing.assert_allclose(free, obj, rtol=1e-12, atol=1e-12)
 
 
 # ======================================================================
@@ -208,7 +243,8 @@ class TestBasisLaplace:
 
     def test_laplace_shape_matches_call(self):
         X = np.random.default_rng(42).uniform(-1, 1, (10, 1))
-        for B in [LegendreFeatures(degree=3), HermiteFeatures(degree=3), MonomialFeatures(degree=3)]:
+        for B in [LegendreFeatures(degree=3), HermiteFeatures(degree=3),
+                  MonomialFeatures(degree=3)]:
             x_t = tn.tensor(X[:, 0])
             phi = _np(B(x_t))
             d2 = _np(B.laplace(x_t))
@@ -314,8 +350,8 @@ class TestLaplace:
         bases = [LegendreFeatures(degree=3)]
         core = tn.tensor(rng.randn(1, 4, 1).astype(np.float64))
         x = tn.tensor(np.linspace(-0.9, 0.9, 5)[:, None], dtype=tn.float64)
-        l = laplace([core], bases, x)
-        assert l.shape == (5,)
+        lap = laplace([core], bases, x)
+        assert lap.shape == (5,)
 
     def test_raises_on_vector(self):
         rng = np.random.RandomState(0)

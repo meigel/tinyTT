@@ -10,6 +10,7 @@ maximum relative error on ``[1, 200]`` goes from 3.1e-2 at ``R=16`` to 4.3e-2 at
 ``R=48``. Optimising it gives 5.7e-4, 4.8e-5 and 1.2e-7 at ``R = 16, 24, 48``.
 """
 from __future__ import annotations
+
 import numpy as np
 
 __all__ = ["expsum_inv", "expsum_symbol"]
@@ -80,7 +81,7 @@ def expsum_symbol(R: int, eigvals_1d, d: int, eps: float = 1e-11,
         lower end should be the smallest attainable NONZERO value, typically
         ``min(l[l > 0])``. Pass it explicitly in that case.
     """
-    from tinytt import kron, kron_sum, from_dense
+    from tinytt import from_dense, kron, kron_sum
 
     lam = np.asarray(eigvals_1d, dtype=float)
     n = lam.size

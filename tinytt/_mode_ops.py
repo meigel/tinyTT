@@ -6,24 +6,24 @@ Without it the only route is to build a full d-dimensional Kronecker operator
 with identities on the remaining dimensions, which is wasteful.
 """
 from __future__ import annotations
+
 import numpy as np
 
 import tinytt._backend as tn
-from tinytt._tt_base import TT
-from tinytt._qtt_layout import QTTLayout
 from tinytt._decomposition import SVD, _scalar
+from tinytt._qtt_layout import QTTLayout
+from tinytt._tt_base import TT
 
 __all__ = ["apply_mode"]
 
 
-def _as_tensor(m):
-    try:
-        import torch
-        if torch.is_tensor(m):
-            return m
-    except Exception:
-        pass
-    return tn.tensor(np.asarray(m, dtype=np.float64))
+def _as_tensor(m, like=None):
+    if tn.is_tensor(m):
+        return m
+    arr = np.asarray(m, dtype=np.float64)
+    if like is not None:
+        return tn.tensor(arr, dtype=like.dtype, device=like.device)
+    return tn.tensor(arr)
 
 
 def apply_mode(x: TT, dim: int, matrix, *, layout: QTTLayout | None = None,
@@ -91,7 +91,7 @@ def _resplit(blk, ncores, mode_size, eps, rmax):
         if rmax:
             keep = min(keep, rmax)
         out.append(U[:, :keep].reshape(left, mode_size, keep))
-        M = tn.diag(s[:keep]) @ Vh[:keep]
+        M = tn.scale_rows(s[:keep], Vh[:keep])
         left = keep
     out.append(M.reshape(left, mode_size, r1))
     return out

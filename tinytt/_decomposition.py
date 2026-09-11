@@ -4,9 +4,10 @@ Basic decomposition and orthogonalization.
 @author: ion
 """
 
-import os
-import tinytt._backend as tn
 import numpy as np
+
+import tinytt._backend as tn
+from tinytt.errors import ShapeMismatch
 from tinytt.truncation import apply_truncation_rule
 
 
@@ -36,29 +37,11 @@ def QR(mat):
     return Q[:, :r], R[:r, :]
 
 
-_SVD_BACKEND = os.getenv("TINYTT_SVD_BACKEND", "numpy").lower()
-
-
 def _device_is_cpu(device):
     if device is None:
         return True
     dev = str(device).lower()
-    return dev.startswith("cpu") or dev == "clang" or dev == "llvm"
-
-
-def _svd_numpy(mat):
-    u, s, v = np.linalg.svd(tn.to_numpy(mat), full_matrices=False)
-    return (
-        tn.tensor(u, dtype=mat.dtype, device=mat.device),
-        tn.tensor(s, dtype=mat.dtype, device=mat.device),
-        tn.tensor(v, dtype=mat.dtype, device=mat.device),
-    )
-
-
-def _svd_tinygrad(mat):
-    u, s, v = tn.linalg.svd(mat, full_matrices=False)
-    s = tn.cast(s, v.dtype)
-    return u, s, v
+    return dev.startswith("cpu")
 
 
 def randomized_svd(
@@ -79,27 +62,27 @@ def randomized_svd(
     2. Computing the sketch matrix :math:`Y = A \\Omega \\in \\mathbb{R}^{m \\times r}`.
     3. Performing :math:`q` subspace power iterations to improve approximation quality for matrices with
        decaying singular spectra:
-       
+
        .. math::
            Y \\leftarrow A (A^T Q) \\quad \\text{where} \\quad Q, R = \\text{QR}(Y)
-           
+
     4. Orthonormalizing the final sketch matrix to obtain an orthonormal basis :math:`Q \\in \\mathbb{R}^{m \\times r}`:
-    
+
        .. math::
            Q, R = \\text{QR}(Y)
-           
+
     5. Projecting the matrix :math:`A` onto the column space of :math:`Q`:
-    
+
        .. math::
            B = Q^T A \\in \\mathbb{R}^{r \\times n}
-           
+
     6. Computing the standard SVD of the small matrix :math:`B`:
-    
+
        .. math::
            B = \\tilde{U} \\Sigma V^T
-           
+
     7. Recovering the singular vectors of the original matrix :math:`A`:
-    
+
        .. math::
            U = Q \\tilde{U} \\in \\mathbb{R}^{m \\times r}
 
@@ -158,61 +141,38 @@ def randomized_svd(
     return U[:, :k], S[:k], V[:k, :]
 
 
-def SVD(mat, k: int | None = None):
-    """
-    Computes the SVD of a matrix.
+def SVD(mat, k: int | None = None, *, oversampling: int = 5,
+        n_iter: int = 1, seed: int | None = None):
+    """Singular value decomposition of a matrix.
 
-    Args:
-        mat (tinygrad.Tensor): the matrix
-        k (int, optional): target rank for randomized SVD
+    Parameters
+    ----------
+    mat : Tensor
+        The matrix to decompose.
+    k : int, optional
+        Target rank.  When given and strictly below ``min(mat.shape)`` a
+        *randomized* SVD is used, which is only reproducible if ``seed`` is
+        also given.
+    oversampling, n_iter, seed
+        Forwarded to :func:`randomized_svd`.
 
-    Returns:
-        U, S, V: the SVD factors.
+    Returns
+    -------
+    U, S, V
+        With ``S`` real-valued even for a complex ``mat``.
     """
     m, n = mat.shape
     if k is not None:
-        if k < min(m, n):
-            return randomized_svd(mat, k)
         if k > min(m, n):
             raise ValueError(f"k must not exceed min(mat.shape)={min(m, n)}")
-
-    is_gpu = not _device_is_cpu(mat.device)
-    prefer_tinygrad = _SVD_BACKEND == "tinygrad" or is_gpu
-
-    if prefer_tinygrad:
-        # On GPU, tinygrad uses an O(n³) Jacobi-like SVD that is
-        # extremely slow for matrices above ~100×100. Fall back to
-        # numpy to avoid multi-minute stalls.
-        if is_gpu and mat.shape[0] * mat.shape[1] > 10000:
-            return _svd_numpy(mat)
-        try:
-            if mat.shape[0] < 10 * mat.shape[1]:
-                return _svd_tinygrad(mat)
-            u, s, v = _svd_tinygrad(mat.T)
-            return v.T, s, u.T
-        except Exception:
-            if is_gpu:
-                # tinygrad SVD can fail on GPU (contiguity bugs). Fall back
-                # to numpy: copy to CPU, compute, copy result back to GPU.
-                try:
-                    return _svd_numpy(mat)
-                except Exception:
-                    mat_cpu = tn.to_numpy(mat)
-                    u_cpu, s_cpu, v_cpu = np.linalg.svd(mat_cpu, full_matrices=False)
-                    return (
-                        tn.tensor(u_cpu, dtype=mat.dtype, device=mat.device),
-                        tn.tensor(s_cpu, dtype=mat.dtype, device=mat.device),
-                        tn.tensor(v_cpu, dtype=mat.dtype, device=mat.device),
-                    )
-            return _svd_numpy(mat)
-    else:
-        if mat.shape[0] < 10 * mat.shape[1]:
-            return _svd_numpy(mat)
-        u, s, v = _svd_numpy(mat.T)
-        return v.T, s, u.T
+        if k < min(m, n):
+            return randomized_svd(
+                mat, k, oversampling=oversampling, n_iter=n_iter, seed=seed
+            )
+    return tn.linalg.svd(mat, full_matrices=False)
 
 
-def lr_orthogonal(tt_cores, R, is_ttm, no_gpu=False):
+def lr_orthogonal(tt_cores, R, is_ttm):
     """
     Orthogonalize the TT-cores left to right.
 
@@ -230,10 +190,13 @@ def lr_orthogonal(tt_cores, R, is_ttm, no_gpu=False):
 
     d = len(tt_cores)
 
-    rank_next = R[0]
-
     core_now = tt_cores[0]
     cores_new = d * [None]
+    if d == 1:
+        # A one-core TT is already left-orthogonal up to its norm; returning
+        # [None] here used to break every unguarded caller.
+        cores_new[0] = tt_cores[0].clone()
+        return cores_new, R
     for i in range(d - 1):
         if is_ttm:
             mode_shape = [core_now.shape[1], core_now.shape[2]]
@@ -266,7 +229,7 @@ def lr_orthogonal(tt_cores, R, is_ttm, no_gpu=False):
     return cores_new, R
 
 
-def rl_orthogonal(tt_cores, R, is_ttm, no_gpu=False):
+def rl_orthogonal(tt_cores, R, is_ttm):
     """
     Orthogonalize the TT-cores right to left.
 
@@ -285,7 +248,7 @@ def rl_orthogonal(tt_cores, R, is_ttm, no_gpu=False):
     d = len(tt_cores)
 
     cores_new = d * [None]
-    cores_new[-1] = tt_cores[-1] + 0
+    cores_new[-1] = tt_cores[-1].clone()
     for i in range(d - 1, 0, -1):
         if is_ttm:
             mode_shape = [cores_new[i].shape[1], cores_new[i].shape[2]]
@@ -408,7 +371,7 @@ def round_tt(tt_cores, R, eps, rmax=None, is_ttm=False, rule=None, **kwargs):
         S = S[:r_now]
         V = V[:r_now, :]
 
-        U = U @ tn.diag(S)
+        U = tn.scale_cols(U, S)
         R[i] = r_now
         core_next = core_next @ U
         core_now = V
@@ -455,8 +418,9 @@ def mat_to_tt(A, M, N, eps, rmax=1000, is_sparse=False):
     """
     d = len(M)
     if len(M) != len(N):
-        raise ("Dimension mismatch")
-        return
+        raise ShapeMismatch(
+            f"Dimension mismatch: len(M)={len(M)} != len(N)={len(N)}"
+        )
 
     if is_sparse:
         # SciPy sparse matrices are accepted for interoperability with FEM
@@ -488,59 +452,38 @@ def mat_to_tt(A, M, N, eps, rmax=1000, is_sparse=False):
     return cores, R
 
 
-def _rank_chop_tinygrad(s, eps):
-    norm_s = _scalar(tn.linalg.norm(s))
-    if norm_s == 0.0:
-        return 1
-    if eps <= 0.0:
-        return int(s.shape[0])
-    n = int(s.shape[0])
-    # Convert to numpy to avoid __bool__ on Tensor in comparisons
-    # Build tail energy from the smallest SV upward, matching numpy's:
-    #   sc = np.cumsum(np.abs(s[::-1]) ** 2)[::-1]; R = np.argmax(sc < eps**2)
-    s_sq_np = tn.to_numpy(s * s)
-    tail_energy = 0.0
-    for r in range(n - 1, -1, -1):
-        tail_energy += float(s_sq_np[r])
-        if tail_energy <= eps * eps:
-            continue
-        return max(1, r + 1)
-    return 1
-
-
 def rank_chop(s, eps):
-    """
-    Chop the rank.
+    """Smallest rank whose discarded tail energy stays within ``eps``.
 
     Parameters
     ----------
-    s : numpy vector or tinygrad tensor
-        Vector of singular values.
-    eps : double
-        Desired accuracy.
+    s : Tensor or numpy vector
+        Singular values, descending.
+    eps : float
+        Absolute tolerance on the 2-norm of the discarded tail.
 
     Returns
     -------
-    R : int
-        Rank.
+    int
+        The retained rank (at least 1).
     """
-    if tn.is_tensor(s):
-        return _rank_chop_tinygrad(s, float(eps))
-    if np.linalg.norm(s) == 0.0:
+    s_np = tn.to_numpy(s) if tn.is_tensor(s) else np.asarray(s)
+    s_np = np.abs(s_np).astype(np.float64, copy=False)
+    if s_np.size == 0 or np.linalg.norm(s_np) == 0.0:
         return 1
-
+    eps = float(eps)
     if eps <= 0.0:
-        return s.size
+        return int(s_np.size)
+    # tail_energy[r] = sum_{j >= r} s_j^2 -- keep the smallest r with
+    # tail_energy[r] <= eps^2.
+    tail_energy = np.cumsum(s_np[::-1] ** 2)[::-1]
+    admissible = np.flatnonzero(tail_energy <= eps * eps)
+    return int(admissible[0]) if admissible.size else int(s_np.size)
 
-    R = s.size - 1
 
-    sc = np.cumsum(np.abs(s[::-1]) ** 2)[::-1]
-    R = np.argmax(sc < eps**2)
-
-    R = R if R > 0 else 1
-    R = s.size if sc[-1] > eps**2 else R
-
-    return R
+# Backwards-compatible alias (the name predates the tinygrad removal).
+_rank_chop_tinygrad = rank_chop
+_rank_chop_np = rank_chop
 
 
 def to_tt(A, N=None, eps=1e-14, rmax=100, is_sparse=False):
@@ -577,16 +520,6 @@ def to_tt(A, N=None, eps=1e-14, rmax=100, is_sparse=False):
 
     if d == 1:
         return [tn.reshape(A, [1, N[0], 1])], [1, 1]
-
-    # ── GPU safety: copy to CPU, decompose in numpy, copy cores back ──────
-    is_gpu = tn.is_tensor(A) and not _device_is_cpu(A.device)
-    if is_gpu:
-        A_np = tn.to_numpy(A)
-        rmax_list = rmax if isinstance(rmax, list) else [1] + (d - 1) * [rmax] + [1]
-        cores_np, r = _to_tt_np(A_np, N, eps, rmax_list)
-        device = A.device
-        cores = [tn.tensor(c, dtype=A.dtype, device=device) for c in cores_np]
-        return cores, r
 
     r = [1] * (d + 1)
 
@@ -629,7 +562,7 @@ def to_tt(A, N=None, eps=1e-14, rmax=100, is_sparse=False):
         v = v[:r1, :]
 
         # update the core
-        v = tn.diag(s) @ v
+        v = tn.scale_rows(s, v)
 
         C = v
         # tme = datetime.datetime.now()-tme
@@ -638,37 +571,6 @@ def to_tt(A, N=None, eps=1e-14, rmax=100, is_sparse=False):
     return cores, r
 
 
-def _to_tt_np(A_np, N, eps, rmax):
-    """NumPy-only TT decomposition (no tinygrad ops)."""
-    d = len(N)
-    r = [1] * (d + 1)
-    cores = []
-    ep = eps / np.sqrt(d - 1)
-
-    C = A_np
-    for i in range(d - 1):
-        m = N[i] * r[i]
-        C = C.reshape(m, -1)
-        u, s, v = np.linalg.svd(C, full_matrices=False)
-        # rank_chop using numpy directly
-        r1 = _rank_chop_np(s, np.linalg.norm(s) * ep)
-        r1 = min(r1, rmax[i + 1])
-        r1 = int(r1)
-        u = u[:, :r1]
-        s = s[:r1]
-        r[i + 1] = r1
-        cores.append(u.reshape(r[i], N[i], r1))
-        v = v[:r1, :]
-        C = np.diag(s) @ v
-    cores.append(C.reshape(r[-2], N[-1], -1))
-    return cores, r
-
-
-def _rank_chop_np(s, eps):
-    """NumPy rank chopping (no tinygrad)."""
-    norm_s = np.linalg.norm(s)
-    if norm_s == 0.0:
-        return 1
     if eps <= 0.0:
         return s.size
     n = s.size

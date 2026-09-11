@@ -1,8 +1,7 @@
-import numpy as np
 
 import tinytt as tt
-from tinytt.tdvp import build_ising_mpo, tdvp_imag_time
 import tinytt._backend as tn
+from tinytt.tdvp import build_ising_mpo, tdvp_imag_time
 
 
 def main():

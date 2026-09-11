@@ -25,15 +25,19 @@ The key difference from the older "stack of TT-matrices" approach is the
 **residual** connection :math:`\\operatorname{Id} + \\psi_\\ell` at every layer.
 """
 
+# Data matrices keep their mathematical names (X_data, C_j, W_j, U, S, V).
+# ruff: noqa: N803, N806
+
 from __future__ import annotations
 
 import sys
+
 import numpy as np
+
 import tinytt._backend as tn
 from tinytt._decomposition import round_tt
 from tinytt.errors import InvalidArguments, ShapeMismatch
 from tinytt.functional_tt import FunctionalTT, random_ftt
-
 
 # ======================================================================
 # CTTLayer — a single residual functional-TT layer
@@ -159,12 +163,18 @@ class CTTLayer:
         return self
 
     def detach(self) -> CTTLayer:
-        """Detach from autograd graph."""
-        for c in self._psi.cores:
+        """Return a **new** layer whose cores are off the autograd graph.
+
+        .. versionchanged:: 0.5
+           This used to be byte-identical to :meth:`unwatch` — it mutated the
+           layer and returned ``self``, so ``CompositionalTT.detach()`` handed
+           back a "copy" that shared every core with the original.  Use
+           :meth:`unwatch` for the in-place variant.
+        """
+        cores = [c.detach().clone() for c in self._psi.cores]
+        for c in cores:
             c.requires_grad_(False)
-            if c.grad is not None:
-                c.grad = None
-        return self
+        return CTTLayer(FunctionalTT(cores))
 
     @property
     def params(self) -> list[tn.Tensor]:
@@ -219,7 +229,9 @@ class CTTLayer:
 # ======================================================================
 
 class CompositionalTT:
-    """Compositional Tensor Train — :math:`v(x) = R \\circ (\\operatorname{Id} + \\psi_L) \\circ \\cdots
+    """Compositional Tensor Train.
+
+    :math:`v(x) = R \\circ (\\operatorname{Id} + \\psi_L) \\circ \\cdots
     \\circ (\\operatorname{Id} + \\psi_1) \\circ L(x)`.
 
     Represents a function :math:`v: \\mathbb{R}^d \\to \\mathbb{R}^{d_o}` as
@@ -318,14 +330,22 @@ class CompositionalTT:
         return self.forward(x)
 
     def forward(self, x):
-        """Alias for ``__call__``."""
-        x = self._prepare_input(x)
+        """Alias for ``__call__``.
+
+        A single point ``(d,)`` in gives a single point out; a batch
+        ``(m, d)`` in always gives ``(m, d_o)`` out — **including m = 1**.
+
+        .. versionchanged:: 0.5
+           The batch axis used to be dropped whenever the output had one row,
+           so a legitimate batch of one silently changed rank.
+        """
+        x, was_single = self._prepare_input(x, report=True)
         y = self.lift(x)
         for layer in self.layers:
             y = layer.forward(y, self.basis_fn)
         if self.retraction is not None:
             y = self.retraction(y)
-        if y.shape[0] == 1:
+        if was_single:
             y = y.squeeze(0)
         return y
 
@@ -372,39 +392,56 @@ class CompositionalTT:
             lyr.to(device)
         return self
 
-    def round(self, eps: float = 1e-12, rmax=sys.maxsize, X_data=None) -> CompositionalTT:
+    def round(self, eps: float = 1e-12, rmax=sys.maxsize,
+              X_data=None) -> CompositionalTT:
         """Round (compress) every layer's ``ψ`` via TT‑SVD.
 
-        If `X_data` is not provided, rounds each layer's coefficient tensor independently.
-        If `X_data` is provided, performs data-driven covariance-weighted compositional rounding to minimize
-        the error in function space.
+        If `X_data` is not provided, rounds each layer's coefficient tensor
+        independently.  If `X_data` is provided, performs data-driven
+        covariance-weighted compositional rounding to minimize the error in
+        function space.
 
         The covariance-weighted algorithm proceeds as follows:
-        1. Propagate the input data :math:`X \\in \\mathbb{R}^{B \\times d}` up to layer :math:`\\ell` to get the current state activations :math:`y \\in \\mathbb{R}^{B \\times p}`.
-        2. For each state coordinate :math:`j = 1, \\dots, p`, evaluate the univariate basis functions on the activations :math:`y_{:, j}` to get the feature matrix :math:`\\Phi_j \\in \\mathbb{R}^{B \\times n}`.
-        3. Compute the empirical feature covariance (Gram) matrix for each coordinate:
-        
+
+        1. Propagate the input data :math:`X \\in \\mathbb{R}^{B \times d}` up
+           to layer :math:`\\ell` to get the current state activations
+           :math:`y \\in \\mathbb{R}^{B \times p}`.
+        2. For each state coordinate :math:`j = 1, \\dots, p`, evaluate the
+           univariate basis functions on the activations :math:`y_{:, j}` to
+           get the feature matrix :math:`\\Phi_j \\in \\mathbb{R}^{B \times n}`.
+        3. Compute the empirical feature covariance (Gram) matrix for each
+           coordinate:
+
            .. math::
-               C_j = \\frac{1}{B} \\Phi_j^T \\Phi_j + \\epsilon I_n
-               
+               C_j = \frac{1}{B} \\Phi_j^T \\Phi_j + \\epsilon I_n
+
            where :math:`\\epsilon = 10^{-8}` is a regularization parameter.
-        4. Compute the symmetric matrix square root :math:`W_j = C_j^{1/2}` and its inverse :math:`W_j^{-1} = C_j^{-1/2}` using the SVD :math:`C_j = U \\Sigma V^T`:
-        
+        4. Compute the symmetric matrix square root :math:`W_j = C_j^{1/2}`
+           and its inverse :math:`W_j^{-1} = C_j^{-1/2}` using the SVD
+           :math:`C_j = U \\Sigma V^T`:
+
            .. math::
                W_j = U \\Sigma^{1/2} V^T, \\quad W_j^{-1} = V \\Sigma^{-1/2} U^T
-               
-        5. Transform the target coefficient cores of :math:`\\psi_\\ell` by applying the weight :math:`W_j` to the feature mode of core :math:`j+1`:
-        
+
+        5. Transform the target coefficient cores of :math:`\\psi_\\ell` by
+           applying the weight :math:`W_j` to the feature mode of core
+           :math:`j+1`:
+
            .. math::
-               \\tilde{G}_{j+1} = W_j \\cdot_2 G_{j+1}
-               
-        6. Perform standard SVD rounding on the weighted cores :math:`\\{\\tilde{G}_{j+1}\\}` to obtain the compressed cores :math:`\\{\\tilde{G}_{j+1}^{\\text{rounded}}\\}`.
-        7. Transform the rounded cores back to the original scale by applying the inverse weight :math:`W_j^{-1}`:
-        
+               \tilde{G}_{j+1} = W_j \\cdot_2 G_{j+1}
+
+        6. Perform standard SVD rounding on the weighted cores
+           :math:`\\{\tilde{G}_{j+1}\\}` to obtain the compressed cores
+           :math:`\\{\tilde{G}_{j+1}^{\text{rounded}}\\}`.
+        7. Transform the rounded cores back to the original scale by applying
+           the inverse weight :math:`W_j^{-1}`:
+
            .. math::
-               G_{j+1}^{\\text{rounded}} = W_j^{-1} \\cdot_2 \\tilde{G}_{j+1}^{\\text{rounded}}
-               
-        8. Propagate the activations through this newly rounded layer to obtain the input for the next layer.
+               G_{j+1}^{\text{rounded}} =
+               W_j^{-1} \\cdot_2 \tilde{G}_{j+1}^{\text{rounded}}
+
+        8. Propagate the activations through this newly rounded layer to
+           obtain the input for the next layer.
 
         Parameters
         ----------
@@ -441,19 +478,21 @@ class CompositionalTT:
             for j in range(p):
                 C_j = (phi_list[j].transpose(0, 1) @ phi_list[j]) / B
                 # Regularize
-                C_j = C_j + 1e-8 * tn.eye(int(C_j.shape[0]), dtype=C_j.dtype, device=C_j.device)
+                C_j = C_j + 1e-8 * tn.eye(int(C_j.shape[0]), dtype=C_j.dtype,
+                                          device=C_j.device)
 
                 # Compute matrix square root via SVD
                 U, S, V = tn.linalg.svd(C_j)
-                W_j = U @ tn.diag(tn.sqrt(S)) @ V.transpose(0, 1)
-                W_inv_j = V @ tn.diag(1.0 / tn.sqrt(S)) @ U.transpose(0, 1)
+                W_j = tn.scale_cols(U, tn.sqrt(S)) @ V.transpose(0, 1)
+                W_inv_j = tn.scale_cols(V, 1.0 / tn.sqrt(S)) @ U.transpose(0, 1)
                 W_list.append(W_j)
                 W_inv_list.append(W_inv_j)
 
             # Transform coefficient cores G_{j+1} of psi
             cores_trans = [c.clone() for c in lyr.psi.cores]
             for j in range(p):
-                cores_trans[j + 1] = tn.einsum('ab,lbr->lar', W_list[j], cores_trans[j + 1])
+                cores_trans[j + 1] = tn.einsum('ab,lbr->lar', W_list[j],
+                                               cores_trans[j + 1])
 
             # Perform standard independent SVD rounding on the weighted cores
             ranks = list(lyr.psi.ranks)
@@ -466,13 +505,15 @@ class CompositionalTT:
 
             # Transform rounded cores back by applying W_inv_j
             for j in range(p):
-                rounded_cores[j + 1] = tn.einsum('ab,lbr->lar', W_inv_list[j], rounded_cores[j + 1])
+                rounded_cores[j + 1] = tn.einsum('ab,lbr->lar', W_inv_list[j],
+                                                 rounded_cores[j + 1])
 
             rounded_layer = CTTLayer(FunctionalTT(rounded_cores))
             rounded_layers.append(rounded_layer)
             y = rounded_layer.forward(y, self.basis_fn)
 
-        return CompositionalTT(rounded_layers, self.basis_fn, self.lift, self.retraction)
+        return CompositionalTT(rounded_layers, self.basis_fn, self.lift,
+                               self.retraction)
 
     @property
     def params(self) -> list[tn.Tensor]:
@@ -516,12 +557,14 @@ class CompositionalTT:
     # --------------------------------------------------------------
 
     @staticmethod
-    def _prepare_input(x):
+    def _prepare_input(x, report=False):
+        """Coerce to a ``(m, d)`` tensor; report whether the input was 1-D."""
         if not tn.is_tensor(x):
             x = tn.tensor(np.asarray(x, dtype=np.float64))
-        if x.ndim == 1:
+        was_single = x.ndim == 1
+        if was_single:
             x = x.unsqueeze(0)  # (d,) → (1, d)
-        return x
+        return (x, was_single) if report else x
 
 
 # ======================================================================
@@ -555,18 +598,35 @@ def prepend_lift(d: int):
     return lift
 
 
-def projection_retraction(do: int):
-    """Return a retraction ``R(y) = y[:, :do]``."""
-    def retract(y):
+def projection_readout(do: int):
+    """Return the linear read-out ``R(y) = y[:, :do]``  (``R^p → R^{d_o}``).
+
+    .. versionchanged:: 0.5
+       Renamed from ``projection_retraction``.  It is a linear read-out, not
+       a *retraction* in the Riemannian sense the rest of the library
+       (``tinytt.manifold``) uses that word for.  The old name still works.
+    """
+    def readout(y):
         return y[:, :do]
-    return retract
+    return readout
 
 
-def first_coord_retraction():
-    """Return a retraction ``R(y) = y[:, 0:1]`` (first coordinate only)."""
-    def retract(y):
+def first_coord_readout():
+    """Return the linear read-out ``R(y) = y[:, 0:1]`` (first coordinate).
+
+    .. versionchanged:: 0.5
+       Renamed from ``first_coord_retraction``; see
+       :func:`projection_readout`.
+    """
+    def readout(y):
         return y[:, 0:1]
-    return retract
+    return readout
+
+
+#: Deprecated aliases kept for backwards compatibility.  These read out of
+#: the lifted space; they are not manifold retractions.
+projection_retraction = projection_readout
+first_coord_retraction = first_coord_readout
 
 
 # ======================================================================
@@ -612,6 +672,11 @@ def random_ctt(
     scale : float
         Standard deviation for random normal initialisation.
     seed : int or None
+        Base seed.  Layer ``i`` is drawn with ``seed + i``.
+
+        .. versionchanged:: 0.5
+           Every layer used to be drawn with the *same* seed, so an
+           ``n_layers`` CTT was ``n_layers`` identical copies of one map.
 
     Returns
     -------
@@ -640,7 +705,10 @@ def random_ctt(
     feature_dims = [basis_size] * width
 
     layers = []
-    for _ in range(n_layers):
+    for i in range(n_layers):
+        # Distinct seed per layer: passing the same one to every layer made an
+        # n_layers CTT n identical copies of a single map.
+        layer_seed = None if seed is None else int(seed) + i
         psi = random_ftt(
             n0=width,
             feature_dims=feature_dims,
@@ -648,7 +716,7 @@ def random_ctt(
             dtype=dtype,
             device=device,
             scale=scale,
-            seed=seed,
+            seed=layer_seed,
         )
         layers.append(CTTLayer(psi))
 

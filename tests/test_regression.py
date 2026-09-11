@@ -8,19 +8,20 @@ import os
 import sys
 
 import numpy as np
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import tinytt._backend as tn
 from tinytt._functional import (
     LegendreFeatures,
     evaluate,
+)
+from tinytt._functional import (
     divergence as divergence_fn,
 )
 from tinytt.regression import (
-    als_regression,
-    als_continuity_fit,
     ContinuityFitResult,
+    als_continuity_fit,
+    als_regression,
 )
 
 
@@ -151,7 +152,7 @@ class TestContinuityFit:
         fitted = als_continuity_fit(x, y, f_grad, bases, sweeps=2)
         assert hasattr(fitted, 'cores')
         assert hasattr(fitted, 'bases')
-        assert hasattr(fitted, '__call__')
+        assert callable(fitted)
         assert hasattr(fitted, 'divergence')
         assert len(fitted.cores) == 1
         assert fitted(x).shape == (10,)

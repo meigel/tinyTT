@@ -5,9 +5,13 @@ Inspired by TT-Toolbox from MATLAB.
 
 from __future__ import annotations
 
+import logging
+
 import tinytt._backend as tn
-from tinytt._decomposition import rank_chop, QR, SVD
+from tinytt._decomposition import QR, SVD, rank_chop
 from tinytt._extras import random
+
+logger = logging.getLogger(__name__)
 
 
 def dmrg_matvec(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4, verb=False):
@@ -18,14 +22,13 @@ def dmrg_matvec_python(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4
     if y0 is None:
         y0 = random(A.M, 2, dtype=A.cores[0].dtype, device=A.cores[0].device)
 
-    y_cores = y0.cores
+    y_cores = list(y0.cores)  # never mutate the caller's initial guess
     Ry = y0.R.copy()
 
     d = len(x.N)
     if isinstance(rmax, int):
         rmax = [1] + [rmax] * (d - 1) + [1]
 
-    N = x.N
     M = A.M
     r_enlarge = [2] * d
 
@@ -38,7 +41,7 @@ def dmrg_matvec_python(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4
 
     for i in range(nswp):
         if verb:
-            print('sweep ', i)
+            logger.info('sweep ', i)
 
         for k in range(d - 1, 0, -1):
             core = y_cores[k]
@@ -62,7 +65,7 @@ def dmrg_matvec_python(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4
 
         for k in range(d - 1):
             if verb:
-                print('\tcore ', k)
+                logger.info('\tcore ', k)
             W_prev = tn.einsum('ijk,klm->ijlm', y_cores[k], y_cores[k + 1])
 
             if not last:
@@ -103,7 +106,7 @@ def dmrg_matvec_python(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4
             r_new = max(1, int(r_new))
 
             W1 = U[:, :r_new]
-            W2 = tn.transpose(V[:r_new, :], 0, 1) @ tn.diag(S[:r_new])
+            W2 = tn.scale_cols(tn.transpose(V[:r_new, :], 0, 1), S[:r_new])
 
             if i < nswp - 1:
                 W1, Rmat = QR(
@@ -122,7 +125,7 @@ def dmrg_matvec_python(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4
                 W2 = tn.transpose(W2, 0, 1)
 
             if verb:
-                print('\tcore ', k, ': delta ', delta_cores[k], ' rank ', Ry[k + 1], ' ->', r_new)
+                logger.info('\tcore ', k, ': delta ', delta_cores[k], ' rank ', Ry[k + 1], ' ->', r_new)
             Ry[k + 1] = r_new
             y_cores[k] = tn.conj(tn.reshape(W1, [Ry[k], M[k], r_new]))
             y_cores[k + 1] = tn.conj(tn.reshape(W2, [r_new, M[k + 1], Ry[k + 2]]))
@@ -149,14 +152,13 @@ def dmrg_hadamard(x, y, z0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4, ver
 def dmrg_hadamard_python(z, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4, verb=False):
     if y0 is None:
         y0 = random(z.N, 2, dtype=z.cores[0].dtype, device=z.cores[0].device)
-    y_cores = y0.cores
+    y_cores = list(y0.cores)  # never mutate the caller's initial guess
     Ry = y0.R.copy()
 
     d = len(x.N)
     if isinstance(rmax, int):
         rmax = [1] + [rmax] * (d - 1) + [1]
 
-    N = x.N
     M = z.N
     r_enlarge = [2] * d
 
@@ -169,7 +171,7 @@ def dmrg_hadamard_python(z, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank
 
     for i in range(nswp):
         if verb:
-            print('sweep ', i)
+            logger.info('sweep ', i)
 
         for k in range(d - 1, 0, -1):
             core = y_cores[k]
@@ -191,7 +193,7 @@ def dmrg_hadamard_python(z, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank
 
         for k in range(d - 1):
             if verb:
-                print('\tcore ', k)
+                logger.info('\tcore ', k)
             W_prev = tn.einsum('ijk,klm->ijlm', y_cores[k], y_cores[k + 1])
 
             if not last:
@@ -232,7 +234,7 @@ def dmrg_hadamard_python(z, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank
             r_new = max(1, int(r_new))
 
             W1 = U[:, :r_new]
-            W2 = tn.transpose(V[:r_new, :], 0, 1) @ tn.diag(S[:r_new])
+            W2 = tn.scale_cols(tn.transpose(V[:r_new, :], 0, 1), S[:r_new])
 
             if i < nswp - 1:
                 W1, Rmat = QR(
@@ -251,7 +253,7 @@ def dmrg_hadamard_python(z, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank
                 W2 = tn.transpose(W2, 0, 1)
 
             if verb:
-                print('\tcore ', k, ': delta ', delta_cores[k], ' rank ', Ry[k + 1], ' ->', r_new)
+                logger.info('\tcore ', k, ': delta ', delta_cores[k], ' rank ', Ry[k + 1], ' ->', r_new)
             Ry[k + 1] = r_new
             y_cores[k] = tn.conj(tn.reshape(W1, [Ry[k], M[k], r_new]))
             y_cores[k + 1] = tn.conj(tn.reshape(W2, [r_new, M[k + 1], Ry[k + 2]]))

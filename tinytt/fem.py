@@ -25,8 +25,10 @@ degree).
 """
 
 from __future__ import annotations
-import numpy as np
+
 import math
+
+import numpy as np
 
 
 def _gll_nodes(k: int) -> np.ndarray:

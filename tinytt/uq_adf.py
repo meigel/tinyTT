@@ -3,21 +3,22 @@ Adaptive TT regression (UQ-ADF) ported to tinyTT/tinygrad.
 """
 from __future__ import annotations
 
-import math
 import sys
+
 import numpy as np
 
 import tinytt
 import tinytt._backend as tn
 from tinytt._decomposition import rl_orthogonal, round_tt
+from tinytt._functional import basis_matrix
 
 
-class PolynomBasis(object):
+class PolynomBasis:
     Hermite = 'hermite'
     Legendre = 'legendre'
 
 
-class UQMeasurementSet(object):
+class UQMeasurementSet:
     def __init__(self):
         self.randomVectors = []
         self.solutions = []
@@ -38,7 +39,7 @@ def _normalize_basis(basis):
         return PolynomBasis.Hermite
     if basis in (PolynomBasis.Legendre, 'legendre', 'Legendre'):
         return PolynomBasis.Legendre
-    raise ValueError("Unknown basis '{}'".format(basis))
+    raise ValueError(f"Unknown basis '{basis}'")
 
 
 def _to_tensor(data, dtype, device):
@@ -57,7 +58,7 @@ def _to_device_dtype(tensor, device, dtype):
 def _stack(tensors, dim=0):
     if len(tensors) == 0:
         raise ValueError('stack expects a non-empty list')
-    return tensors[0].stack(*tensors[1:], dim=dim)
+    return tn.stack(tensors, dim=dim)
 
 
 def _outer(a, b):
@@ -72,46 +73,33 @@ def _solve(a, b):
     return tn.linalg.solve(a, b)
 
 
-def _hermite_matrix(x, degree):
-    n_samples = x.shape[0]
-    if degree == 0:
-        return tn.zeros((n_samples, 0), dtype=x.dtype, device=x.device)
-    if degree == 1:
-        return tn.ones((n_samples, 1), dtype=x.dtype, device=x.device)
-    cols = [tn.ones((n_samples,), dtype=x.dtype, device=x.device), x]
-    for n in range(1, degree - 1):
-        cols.append(x * cols[-1] - float(n) * cols[-2])
-    return tn.stack(cols, dim=1)
+def _basis_matrix(x, degree, basis, orthonormal, measure="probability"):
+    """Evaluate one polynomial family, delegating to :mod:`tinytt._functional`.
 
+    ``degree`` here is the **mode size** (number of columns), matching the
+    ``dimensions`` entry of the corresponding TT core.
 
-def _legendre_matrix(x, degree):
-    n_samples = x.shape[0]
-    if degree == 0:
-        return tn.zeros((n_samples, 0), dtype=x.dtype, device=x.device)
-    if degree == 1:
-        return tn.ones((n_samples, 1), dtype=x.dtype, device=x.device)
-    cols = [tn.ones((n_samples,), dtype=x.dtype, device=x.device), x]
-    for n in range(1, degree - 1):
-        cols.append(((2.0 * n + 1.0) * x * cols[-1] - n * cols[-2]) / (n + 1.0))
-    return tn.stack(cols, dim=1)
-
-
-def _basis_matrix(x, degree, basis, orthonormal):
-    if basis == PolynomBasis.Hermite:
-        mat = _hermite_matrix(x, degree)
-        if orthonormal and degree > 0:
-            n = np.arange(degree, dtype=float)
-            scale = np.exp(-0.5 * np.array([math.lgamma(k + 1.0) for k in n], dtype=float))
-            mat = mat * tn.tensor(scale, dtype=x.dtype, device=x.device)
-        return mat
-    if basis == PolynomBasis.Legendre:
-        mat = _legendre_matrix(x, degree)
-        if orthonormal and degree > 0:
-            n = np.arange(degree, dtype=float)
-            scale = np.sqrt((2.0 * n + 1.0) / 2.0)
-            mat = mat * tn.tensor(scale, dtype=x.dtype, device=x.device)
-        return mat
-    raise ValueError("Unknown basis '{}'".format(basis))
+    Parameters
+    ----------
+    x : Tensor, shape ``(n_samples,)``
+    degree : int
+        Number of basis functions.
+    basis : PolynomBasis
+    orthonormal : bool
+    measure : {"probability", "lebesgue"}
+        Which measure the orthonormalisation refers to.  ``"probability"``
+        (default) is consistent across families — Hermite for ``N(0, 1)``,
+        Legendre for ``U(-1, 1)``.  Before 0.5 the two families silently used
+        different measures, mis-scaling a mixed model by ``sqrt(2)`` per
+        Legendre dimension.
+    """
+    family = "hermite" if basis == PolynomBasis.Hermite else "legendre"
+    if basis not in (PolynomBasis.Hermite, PolynomBasis.Legendre):
+        raise ValueError(f"Unknown basis '{basis}'")
+    return basis_matrix(x, degree, family=family, measure=measure,
+                        orthonormal=orthonormal,
+                        dtype=x.dtype if tn.is_tensor(x) else None,
+                        device=x.device if tn.is_tensor(x) else None)
 
 
 def _dirac_core(size, index, dtype, device):
@@ -168,19 +156,19 @@ def _calc_right_stack(cores, positions):
     if d <= 1:
         return right_stack
 
-    n_samples = positions[1].shape[0]
+    _n_samples = positions[1].shape[0]
 
     # Initialise from the rightmost core: meas_cmp has trailing dim 1.
     core = cores[d - 1]
     core_sh = core.permute(1, 0, 2)                                  # (mode, r_l, 1)
-    R = tn.realize(tn.einsum('jm,mlr->jlr', positions[d - 1], core_sh)[:, :, 0])
+    R = (tn.einsum('jm,mlr->jlr', positions[d - 1], core_sh)[:, :, 0])
     right_stack[d - 1] = R
 
     for k in range(d - 2, 0, -1):
         core = cores[k]
         core_sh = core.permute(1, 0, 2)                              # (mode, r_l, r_r)
-        tmp = tn.realize(tn.einsum('jm,mlr->jlr', positions[k], core_sh))
-        right_stack[k] = tn.realize(tn.einsum('jlr,jr->jl', tmp, right_stack[k + 1]))
+        tmp = (tn.einsum('jm,mlr->jlr', positions[k], core_sh))
+        right_stack[k] = (tn.einsum('jlr,jr->jl', tmp, right_stack[k + 1]))
 
     return right_stack
 
@@ -208,7 +196,7 @@ def _calc_left_stack(core_pos, cores, positions, solutions_batched, left_is_stac
 
     core = cores[core_pos]
     core_sh = core.permute(1, 0, 2)                                   # (mode, r_l, r_r)
-    meas_cmp = tn.realize(tn.einsum('jm,mlr->jlr', positions[core_pos], core_sh))
+    meas_cmp = (tn.einsum('jm,mlr->jlr', positions[core_pos], core_sh))
     # Make a second copy so the scheduler doesn't reuse the same buffer twice
     # in the upcoming Gram product.
     meas_cmp_t = meas_cmp.clone()
@@ -249,26 +237,26 @@ def _calc_delta(core_pos, cores, positions, solutions_batched,
 
     if core_pos == 0:
         core0_2d = core.reshape(mode, r_right)
-        pred = tn.realize(tn.einsum('mr,jr->jm', core0_2d, right_stack[1]))
-        res = tn.realize(pred - solutions_batched)
-        dyad = tn.realize(tn.einsum('jm,jr->jmr', res, right_stack[1]))
+        pred = (tn.einsum('mr,jr->jm', core0_2d, right_stack[1]))
+        res = (pred - solutions_batched)
+        dyad = (tn.einsum('jm,jr->jmr', res, right_stack[1]))
         return dyad.sum(0).reshape(1, mode, r_right)
 
     core_sh = core.permute(1, 0, 2)                                   # (mode, r_l, r_r)
-    meas_cmp = tn.realize(tn.einsum('jm,mlr->jlr', positions[core_pos], core_sh))
+    meas_cmp = (tn.einsum('jm,mlr->jlr', positions[core_pos], core_sh))
 
     if core_pos < d - 1:
-        is_part = tn.realize(tn.einsum('jlr,jr->jl', meas_cmp, right_stack[core_pos + 1]))
-        dyadic_part = tn.realize(tn.einsum('jm,jr->jmr', positions[core_pos], right_stack[core_pos + 1]))
+        is_part = (tn.einsum('jlr,jr->jl', meas_cmp, right_stack[core_pos + 1]))
+        dyadic_part = (tn.einsum('jm,jr->jmr', positions[core_pos], right_stack[core_pos + 1]))
     else:
-        is_part = tn.realize(meas_cmp[:, :, 0])                         # (n, r_l)
-        dyadic_part = tn.realize(positions[core_pos].unsqueeze(2))      # (n, mode, 1)
+        is_part = (meas_cmp[:, :, 0])                         # (n, r_l)
+        dyadic_part = (positions[core_pos].unsqueeze(2))      # (n, mode, 1)
 
     if core_pos > 1:
-        is_part = tn.realize(tn.einsum('jlm,jm->jl', left_is_stack[core_pos - 1], is_part))
+        is_part = (tn.einsum('jlm,jm->jl', left_is_stack[core_pos - 1], is_part))
 
-    diff = tn.realize(is_part - left_ought_stack[core_pos - 1])
-    return tn.realize(tn.einsum('jl,jmr->lmr', diff, dyadic_part))
+    diff = (is_part - left_ought_stack[core_pos - 1])
+    return (tn.einsum('jl,jmr->lmr', diff, dyadic_part))
 
 
 def _calc_norm_a_projgrad(delta, core_pos, positions, right_stack, left_is_stack):
@@ -281,16 +269,16 @@ def _calc_norm_a_projgrad(delta, core_pos, positions, right_stack, left_is_stack
         mode = delta.shape[1]
         r1 = delta.shape[2]
         delta_2d = delta.reshape(mode, r1)
-        tmp = tn.realize(tn.einsum('mr,jr->jm', delta_2d, right_stack[1]))
+        tmp = (tn.einsum('mr,jr->jm', delta_2d, right_stack[1]))
         tmp_b = tmp.clone()
         return tn.sqrt((tmp * tmp_b).sum())
 
     delta_sh = delta.permute(1, 0, 2)                                 # (mode, r_l, r_r)
     delta_meas = tn.einsum('jm,mlr->jlr', positions[core_pos], delta_sh)  # (n, r_l, r_r)
     if core_pos < d - 1:
-        right_part = tn.realize(tn.einsum('jlr,jr->jl', delta_meas, right_stack[core_pos + 1]))
+        right_part = (tn.einsum('jlr,jr->jl', delta_meas, right_stack[core_pos + 1]))
     else:
-        right_part = tn.realize(delta_meas[:, :, 0])                    # (n, r_l)
+        right_part = (delta_meas[:, :, 0])                    # (n, r_l)
 
     right_part_b = right_part.clone()
     if core_pos > 1:
@@ -500,7 +488,7 @@ def uq_adf(measurements, dimensions, basis, targeteps=1e-8, maxitr=1000, device=
     basis = _normalize_basis(basis)
     update_rule = str(update_rule).lower()
     if update_rule not in ("gradient", "als"):
-        raise ValueError("Unknown update_rule '{}'".format(update_rule))
+        raise ValueError(f"Unknown update_rule '{update_rule}'")
     random_vectors, solutions = _prepare_measurements(measurements, device, dtype)
     positions = _build_positions(random_vectors, dimensions, basis, orthonormal)
     solutions_batched = _stack_solutions(solutions)                    # (n, mode_0)
@@ -585,8 +573,8 @@ def uq_adf(measurements, dimensions, basis, targeteps=1e-8, maxitr=1000, device=
                     left_mats_batch = _update_left_mats(left_mats_batch, cores[core_pos], positions, core_pos)
                 continue
 
-            delta = tn.realize(_calc_delta(core_pos, cores, positions, solutions_batched, right_stack, left_is_stack, left_ought_stack))
-            norm_a_proj = tn.realize(_calc_norm_a_projgrad(delta, core_pos, positions, right_stack, left_is_stack))
+            delta = (_calc_delta(core_pos, cores, positions, solutions_batched, right_stack, left_is_stack, left_ought_stack))
+            norm_a_proj = (_calc_norm_a_projgrad(delta, core_pos, positions, right_stack, left_is_stack))
             delta_b = delta.clone()
             py_r = (delta * delta_b).sum()
 

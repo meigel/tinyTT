@@ -10,22 +10,22 @@ from __future__ import annotations
 
 import os
 import sys
+
 import numpy as np
 import pytest
 
-import tinytt as tt
 import tinytt._backend as tn
 from tinytt.compositional import (
-    CTTLayer,
     CompositionalTT,
-    random_ctt,
+    CTTLayer,
+    first_coord_retraction,
     pad_lift,
     prepend_lift,
     projection_retraction,
-    first_coord_retraction,
+    random_ctt,
 )
-from tinytt.functional_tt import FunctionalTT, random_ftt
 from tinytt.errors import InvalidArguments, ShapeMismatch
+from tinytt.functional_tt import FunctionalTT, random_ftt
 
 # Backend-agnostic Adam optimizer helper
 if os.environ.get("TINYTT_BACKEND", "pytorch").lower() == "pytorch":
