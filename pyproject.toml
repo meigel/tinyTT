@@ -32,7 +32,7 @@ classifiers = [
 
 [project.optional-dependencies]
 fem = ["scikit-fem"]
-dev = ["pytest", "ruff"]
+dev = ["pytest", "ruff", "scipy"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
