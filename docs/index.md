@@ -64,6 +64,11 @@ and nothing imports `torch` directly — see [Backend](tutorials/backend.md).
 than quietly selecting something else: `tinygrad` raises in 0.6, and so does
 any value other than `pytorch`.  Unset it.
 
+## Author
+
+tinyTT is written and maintained by Martin Eigel.  Its API was inspired by
+[torchTT](https://github.com/ion-g-ion/torchTT).
+
 ## Project Links
 
 - [GitHub Repository](https://github.com/meigel/tinyTT)

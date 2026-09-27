@@ -570,9 +570,9 @@ Several of these were later rewritten by the consolidation — noted where so.
 ## 0.4 — 2026-06-16 (`c802d88`)
 
 Reconstructed from the history between the 0.3 bump and the 0.4 bump.  The
-five months turned a tinygrad port of torchTT into a research library: TT-cross
-and UQ, time evolution, a Riemannian layer, functional and compositional TT,
-and a second backend.
+five months turned a compact TT library into a research library: TT-cross and
+UQ, time evolution, a Riemannian layer, functional and compositional TT, and a
+second backend.
 
 ### Added
 
@@ -632,9 +632,10 @@ and a second backend.
 
 ### Removed
 
-* The torchTT reference scaffolding — the `torchtt_ref` submodule, the parity
-  tests, `tests_ref/` and `examples_ref/` (`27c92ba`, `f54ab52`);
-  `TORCHTT_TINYJIT` became `TINYTT_TINYJIT` (`f93a1ee`).
+* The development-time reference comparison against torchTT — the
+  `torchtt_ref` submodule, the parity tests, `tests_ref/` and `examples_ref/`
+  (`27c92ba`, `f54ab52`); `TORCHTT_TINYJIT` became `TINYTT_TINYJIT`
+  (`f93a1ee`).
 * `use_cpp` and `cpp_enabled()`: the flag was accepted everywhere and no
   compiled backend existed (`1b22117`, `6fe7444`).
 * An adaptive natural-gradient solver, added and removed within the cycle
@@ -668,25 +669,23 @@ and a second backend.
 
 ---
 
-## 0.3 — 2026-01-19 (`2986af5`) — the tinygrad port of torchTT
+## 0.3 — 2026-01-19 (`2986af5`) — first release, on tinygrad
 
-The first commit of this repository: a port of Ion Gabriel Ion's torchTT to
-tinygrad.  It kept torchTT's API and author metadata, shipped torchTT itself
-as the `torchtt_ref` submodule, and checked itself against it with parity
-tests.
+The first commit of this repository: a Tensor-Train library on tinygrad, with
+an API inspired by torchTT.  During development its results were compared
+against torchTT through parity tests.
 
 * The `TT` class with TT-matrix support, TT-SVD construction and rounding,
   `ones` / `zeros` / `eye` / `random` / `randn`, `kron`, `cat`, `pad`,
   `permute`, `reshape`, `diag`, `meshgrid`, `rank1TT`, `dot`.
 * AMEn and ALS linear solvers (`amen_solve`, `als_solve`), `gmres`,
   `gmres_restart` and `BiCGSTAB_reset`, DMRG matvec and Hadamard products, the
-  swap-based fast products (exported as `fast_hadammard`, with `fast_hadamard`
-  as an alias "for typo parity" with torchTT), and autograd helpers
-  (`watch`, `unwatch`, `grad`).
+  swap-based fast products, and autograd helpers (`watch`, `unwatch`,
+  `grad`).
 * Real dtypes only, CPU first.  `TINYTT_DEVICE` chose a tinygrad device;
   `TORCHTT_TINYJIT=1` enabled TinyJit; `TINYTT_SVD_BACKEND` chose numpy or
   tinygrad SVD (numpy by default).
 * The same day added the GPU handling that 0.4 and 0.5 kept revisiting: a CPU
   default when no device is set, and a float32 fallback on devices without
   float64, detected by running a kernel (`3accfd9` … `84d7552`).
-* 32 test functions, most of them parity checks against torchTT.
+* 32 test functions, most of them parity checks.

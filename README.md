@@ -305,3 +305,8 @@ tinygrad; that path is gone.
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the release history, including the
 breaking changes in 0.5 and 0.6.
+
+## Author and acknowledgements
+
+tinyTT is written and maintained by Martin Eigel.  Its API was inspired by
+[torchTT](https://github.com/ion-g-ion/torchTT).

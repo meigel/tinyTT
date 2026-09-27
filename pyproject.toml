@@ -17,7 +17,10 @@ dependencies = [
 ]
 license = {file = "LICENSE"}
 authors = [
-    { name = "Ion Gabriel Ion", email = "ion.ion.gabriel@gmail.com" }
+    { name = "Martin Eigel" }
+]
+maintainers = [
+    { name = "Martin Eigel" }
 ]
 keywords = ["pytorch", "tensor-train", "tt-decomposition", "riemannian-optimisation"]
 classifiers = [
@@ -29,6 +32,11 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Mathematics",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
+
+[project.urls]
+Homepage = "https://github.com/meigel/tinyTT"
+Documentation = "https://meigel.github.io/tinyTT/"
+Changelog = "https://github.com/meigel/tinyTT/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 fem = ["scikit-fem"]

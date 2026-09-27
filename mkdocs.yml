@@ -1,5 +1,7 @@
 site_name: tinyTT
 site_description: Tensor-Train (TT) tensors, operators, and solvers on PyTorch
+site_author: Martin Eigel
+copyright: Copyright &copy; 2026 Martin Eigel
 site_url: https://meigel.github.io/tinyTT/
 repo_url: https://github.com/meigel/tinyTT
 edit_uri: edit/main/docs/
