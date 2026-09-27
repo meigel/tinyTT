@@ -1,138 +1,187 @@
-1|# Compositional TT (CTT)
-2|
-3|The Compositional Tensor Train (arXiv:2512.18059) represents a function as a
-4|composition of **residual functional-TT layers**:
-5|
-6|$$
-7|v(x) = R \circ (\operatorname{Id} + \psi_L) \circ \cdots
-8|         \circ (\operatorname{Id} + \psi_1) \circ L(x)
-9|$$
-10|
-11|where:
-12|
-13|- **Lift** $L: \mathbb{R}^d \to \mathbb{R}^p$ embeds the input in a lifted space
-14|- Each layer applies a **residual** connection $y \leftarrow y + \psi_\ell(y)$
-15|- $\psi_\ell$ is a *functional tensor* in TT format evaluated via a
-16|  **univariate basis** $\Phi = \{\phi_1,\dots,\phi_n\}$
-17|- **Retraction** $R: \mathbb{R}^p \to \mathbb{R}^{d_o}$ projects to output
-18|
-19|## Construction
-20|
-21|```python
-22|from tinytt.compositional import (
-23|    CTTLayer, CompositionalTT, random_ctt,
-24|    pad_lift, prepend_lift,
-25|    projection_retraction, first_coord_retraction,
-26|)
-27|from tinytt._functional import LegendreFeatures
-28|```
-29|
-30|### Using the Factory
-31|
-32|```python
-33|# 4 input dims, 3 output dims, lifted width p=6
-34|d, do, p = 4, 3, 6
-35|basis = LegendreFeatures(degree=1)                      # {1, x}
-36|
-37|f = random_ctt(
-38|    width=p,
-39|    n_layers=2,
-40|    basis_fn=basis,
-41|    lift=pad_lift(d, p),
-42|    retraction=projection_retraction(do),
-43|    ranks=[4] * p,
-44|    basis_size=2,
-45|)
-46|```
-47|
-48|### Manual Construction
-49|
-50|```python
-51|# Build each ψ coefficient tensor as a FunctionalTT
-52|from tinytt.functional_tt import FunctionalTT, random_ftt
-53|
-54|psi_1 = random_ftt(n0=p, feature_dims=[2] * p, ranks=[3] * p)
-55|psi_2 = random_ftt(n0=p, feature_dims=[2] * p, ranks=[3] * p)
-56|
-57|layer1 = CTTLayer(psi_1)
-58|layer2 = CTTLayer(psi_2)
-59|
-60|f = CompositionalTT(
-61|    layers=[layer1, layer2],
-62|    basis_fn=basis,
-63|    lift=pad_lift(d, p),
-64|    retraction=projection_retraction(do),
-65|)
-66|```
-67|
-68|## Forward Pass
-69|
-70|```python
-71|import numpy as np
-72|x = np.random.randn(4).astype(np.float64)
-73|
-74|y = f(x)                          # shape (3,) — single point
-75|y_batch = f(x_batch)              # shape (100, 3) — batched
-76|
-77|# Get all layer outputs for inspection
-78|outs = f.layer_outputs(x)
-79|# [x, L(x), h1, h2, R(h2)]
-80|```
-81|
-82|## Training
-83|
-84|```python
-85|f.watch()                         # enable gradient tracking on all parameters
-86|optimizer = Adam(f.params, lr=0.01)
-87|
-88|for step in range(500):
-89|    y_pred = f(x_data)
-90|    loss = ((y_pred - y_target) ** 2).mean()
-91|    optimizer.zero_grad()
-92|    loss.backward()
-93|    optimizer.step()
-94|```
-95|
-96|## Compression
-97|
-98|```python
-99|f_compressed = f.round(eps=0.1)   # reduces ranks with bounded error
-100|```
-101|
-102|## Lift and Retraction Helpers
-103|
-104|```python
-105|# Lift: ℝᵈ → ℝᵖ, pads input with zeros
-106|L = pad_lift(d=4, p=6)           # L(x) = [x₁, x₂, x₃, x₄, 0, 0]
-107|L2 = prepend_lift(d=4)           # L(x) = [0, x₁, x₂, x₃, x₄]
-108|
-109|# Retraction: ℝᵖ → ℝᵈᵒ, projects to first d_o coordinates
-110|R = projection_retraction(do=3)  # R(y) = y[:3]
-111|R2 = first_coord_retraction()    # R(y) = y[0]
-112|```
-113|
-114|## Model Management
-115|
-116|```python
-117|g = f.clone()                     # deep copy
-118|f.to("CPU")                       # device transfer
-119|f.detach()                        # detach all parameters (no gradients)
-120|print(f)                          # string representation
-121|```
-122|
-123|## Key Differences from Stack-of-TT-Matrices
-124|
-125|| Aspect | Old (pure TTM stack) | CTT (residual) |
-126||---|---|---|
-127|| Layer operation | $h = T_\ell @ h$ | $h \leftarrow h + \psi_\ell(h)$ |
-128|| Basis expansion | None | Univariate basis $\Phi$ |
-129|| Input/output | Manual dimension matching | Lift/retraction decouple width |
-130|| Width | Could vary per layer | Fixed $p$ across all layers |
-131|| Structure | Linear map | ODE-flow / Euler discretisation |
-132|
-133|## Further Reading
-134|
-135|- Paper: [arXiv:2512.18059](https://arxiv.org/abs/2512.18059)
-136|- Example: [`examples/tt_compositional.py`](https://github.com/meigel/tinyTT/blob/main/examples/tt_compositional.py)
-137|- Tests: `PYTHONPATH=. pytest tests/test_compositional.py -v`
-138|
+# Compositional TT (CTT)
+
+A residual architecture built from FunctionalTT layers
+(arXiv:2512.18059): the input is lifted into a wider space, each layer adds a
+residual correction `x -> x + psi(x)`, and a read-out maps back down.
+
+```python
+import numpy as np
+import tinytt as tt
+import tinytt._backend as tn
+```
+
+## The pieces
+
+```python
+from tinytt.compositional import (
+    CompositionalTT,
+    CTTLayer,
+    first_coord_readout,
+    pad_lift,
+    prepend_lift,
+    projection_readout,
+    random_ctt,
+)
+```
+
+| Piece | What it is |
+|---|---|
+| `lift` | `R^d -> R^p`, widening the input; `pad_lift`, `prepend_lift` |
+| `CTTLayer` | one residual block, wrapping a `FunctionalTT` as `psi` |
+| `retraction` | `R^p -> R^{d_out}`, the read-out |
+| `basis_fn` | the feature map each layer's `psi` is expressed in |
+
+`projection_readout` and `first_coord_readout` are linear read-outs, **not**
+manifold retractions — they were called `*_retraction` before 0.5 and the old
+names remain as aliases.
+
+## Building one
+
+`basis_fn` takes an `(m,)` or `(m, 1)` column and returns `(m, basis_size)`.
+
+```python
+def constant_basis(x):
+    """The simplest basis: Phi(x) = [1]."""
+    return tn.ones((x.shape[0], 1), dtype=tn.float64)
+
+
+def affine_basis(x):
+    """Phi(x) = [1, x]."""
+    m = x.shape[0]
+    return tn.cat([tn.ones((m, 1), dtype=tn.float64), x.reshape(m, 1)], dim=1)
+
+
+model = random_ctt(
+    width=3,                      # the lifted width p
+    n_layers=2,
+    basis_fn=constant_basis,
+    lift=pad_lift(d=2, p=3),      # R^2 -> R^3 by zero padding
+    basis_size=1,
+    ranks=[1, 1, 1],
+    seed=0,
+)
+print("width:", model.width, " layers:", model.n_layers)
+```
+
+## Evaluating
+
+The model is callable, on one point at a time.
+
+```python
+output = model(tn.tensor(np.array([1.0, 2.0])))
+print("output shape:", tuple(output.shape))
+print("values:", np.asarray(tn.to_numpy(output)))
+```
+
+`layer_outputs` returns the intermediate states, which is what you want when
+you are debugging depth.
+
+```python
+states = model.layer_outputs(tn.tensor(np.array([1.0, 2.0])))
+print("intermediate states:", [tuple(s.shape) for s in states])
+```
+
+## Lifts and read-outs
+
+Both operate on a **batch**: `(m, d)` in, `(m, p)` out. `pad_lift` appends
+zeros to reach width `p`; `prepend_lift` prepends a single zero, so `p = d + 1`
+and it takes only `d`.
+
+```python
+point = tn.tensor(np.array([[1.0, 2.0]]))          # one row
+
+print("pad_lift(d=2, p=4):", np.asarray(tn.to_numpy(pad_lift(d=2, p=4)(point))))
+print("prepend_lift(2):   ", np.asarray(tn.to_numpy(prepend_lift(2)(point))))
+```
+
+```python
+lifted = tn.tensor(np.array([[1.0, 2.0, 3.0, 4.0]]))
+print("first coordinate:", np.asarray(tn.to_numpy(first_coord_readout()(lifted))))
+print("projection to 2: ", np.asarray(tn.to_numpy(projection_readout(2)(lifted))))
+```
+
+Asking for more output dimensions than the lifted width is refused. Python
+slicing would clamp and hand back a narrower answer with no warning, and the
+read-out width *is* the model's output dimension.
+
+```python
+try:
+    projection_readout(9)(lifted)
+except Exception as error:
+    print(type(error).__name__, error)
+```
+
+## Training
+
+The cores are ordinary tensors, so any PyTorch optimiser works on
+`model.params`.
+
+```python
+import torch.optim as optim
+
+trainable = random_ctt(
+    width=2, n_layers=1, basis_fn=constant_basis,
+    lift=pad_lift(d=2, p=2), retraction=first_coord_readout(),
+    basis_size=1, seed=0,
+)
+trainable.watch()
+
+optimizer = optim.Adam(trainable.params, lr=0.3)
+target = tn.tensor(np.array([2.5]))
+point = tn.tensor(np.array([1.0, 0.0]))
+
+for _ in range(60):
+    optimizer.zero_grad()
+    loss = ((trainable(point) - target) ** 2).sum()
+    loss.backward()
+    optimizer.step()
+
+trainable.unwatch()
+print(f"final loss {float(loss):.3e}, prediction "
+      f"{float(np.asarray(tn.to_numpy(trainable(point))).reshape(-1)[0]):.4f}")
+```
+
+## Rounding, copying, moving
+
+```python
+compressed = model.round(eps=0.1)
+print("rounded layer ranks:", [layer.ranks for layer in compressed.layers])
+
+duplicate = model.clone()
+print("independent:", duplicate.layers[0] is not model.layers[0])
+
+on_cpu = model.to("cpu")
+print("moved:", on_cpu.width)
+
+detached = model.detach()
+print("detached:", detached.n_layers)
+```
+
+## Layers on their own
+
+```python
+from tinytt.functional_tt import random_ftt
+
+psi = random_ftt(n0=2, feature_dims=[2, 2], ranks=[2, 2], seed=1)
+layer = CTTLayer(psi)
+print("layer width:", layer.width, " basis dim:", layer.basis_dim,
+      " ranks:", layer.ranks)
+```
+
+A `CompositionalTT` can also be assembled from layers directly, which is the
+route when the layers are not random:
+
+```python
+assembled = CompositionalTT(
+    [CTTLayer(random_ftt(n0=3, feature_dims=[1, 1, 1], ranks=[1, 1, 1], seed=2))],
+    basis_fn=constant_basis,
+    lift=pad_lift(d=2, p=3),
+)
+print("assembled:", assembled.width, assembled.n_layers)
+```
+
+## Further reading
+
+- [`examples/tt_compositional.py`](https://github.com/meigel/tinyTT/blob/main/examples/tt_compositional.py)
+- [Functional TT](functional-tt.md) — the `psi` inside each layer
+- `PYTHONPATH=. pytest tests/test_compositional.py -q`

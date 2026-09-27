@@ -1,5 +1,5 @@
 r"""
-Tensor-Train (TT) decomposition — dual backend (tinygrad / PyTorch).
+Tensor-Train (TT) decomposition on PyTorch.
 
 Modules
 -------

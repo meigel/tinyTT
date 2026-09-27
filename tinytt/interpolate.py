@@ -280,7 +280,7 @@ class _CrossState:
     def supercore(self, k, evaluate_batch):
         eval_index = _eval_index_block(k, self.rank, self.N, self.Idx, self.d)
         if self.verbose:
-            logger.info('\t\tnumber evaluations', eval_index.shape[0])
+            logger.info('\t\tnumber evaluations %d', eval_index.shape[0])
         values = evaluate_batch(eval_index)
         self.n_eval += eval_index.shape[0]
         supercore = tn.reshape(values, (self.rank[k], self.N[k],
@@ -455,7 +455,7 @@ def _cross_sweep(evaluate_batch, cores, rank, N, eps=1e-9, nswp=20, kick=2,
             logger.info(f'Max error {max_err:g}')
 
     if verbose:
-        logger.info('number of function calls ', st.n_eval)
+        logger.info('number of function calls %d', st.n_eval)
         logger.info("")
 
     return CrossResult(st.cores, n_evaluations=st.n_eval,

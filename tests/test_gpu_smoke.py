@@ -1,3 +1,9 @@
+"""Device-parametrised smoke test for the end-to-end paths.
+
+Runs on the CPU by default and on ``TINYTT_DEVICE`` when it is set; see
+``test_gpu_ops.py`` for why these no longer skip.
+"""
+
 import os
 
 import numpy as np
@@ -6,22 +12,25 @@ import pytest
 import tinytt as tt
 import tinytt._backend as tn
 
-DEVICE = os.getenv("TINYTT_DEVICE", "").strip()
-if not DEVICE or DEVICE.lower() in ("cpu", "clang", "llvm"):
-    pytest.skip("GPU smoke test requires TINYTT_DEVICE", allow_module_level=True)
+DEVICE = os.getenv("TINYTT_DEVICE", "").strip() or "cpu"
 
 try:
     probe = tn.tensor([1.0], device=DEVICE)
-    DEVICE_RESOLVED = probe.device
-except Exception:
-    pytest.skip("Requested TINYTT_DEVICE is unavailable", allow_module_level=True)
+    DEVICE_RESOLVED = str(probe.device)
+except Exception:  # pragma: no cover - only when a bad device is requested
+    pytest.skip(
+        f"Requested TINYTT_DEVICE={DEVICE!r} is unavailable",
+        allow_module_level=True,
+    )
+
 
 def _supports_fp64():
-    """Check if the resolved device supports float64, using the backend's probe."""
+    """Whether the resolved device supports float64, via the backend probe."""
     try:
         return tn.supports_fp64(DEVICE_RESOLVED)
     except Exception:
         return False
+
 
 
 DTYPE = tn.float64 if _supports_fp64() else tn.float32

@@ -76,8 +76,10 @@ def _cached_inverse(matrix):
     identity = tn.eye(size, dtype=matrix.dtype, device=matrix.device)
     try:
         factor = tn.linalg.cholesky(matrix)
-    except RuntimeError:
+    except RuntimeError:  # pragma: no cover - needs a non-PD local block
         # Not numerically positive definite: fall back to a general solve.
+        # Every caller adds a positive damping term first, so reaching this
+        # takes a matrix that is indefinite despite the damping.
         return tn.linalg.solve(matrix, identity)
     inverse_factor = tn.linalg.solve(factor, identity)
     return tn.conj_transpose(inverse_factor, 0, 1) @ inverse_factor

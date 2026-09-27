@@ -22,15 +22,36 @@ __all__ = [
     "phi_fwd_A",
     "phi_bck_rhs",
     "phi_fwd_rhs",
+    "phi_bck_vec",
+    "phi_fwd_vec",
 ]
 
 
 def phi_bck_x(Phi_now, core_left, core_right):
+    """Overlap environment for two **TT-matrix** cores (4 indices each).
+
+    Despite the ``x``, this is the TTM-TTM path used by ``amen_mm``; for two
+    TT *vectors* use :func:`phi_bck_vec`.
+    """
     return tn.einsum("LR,lmnL,rmnR->lr", Phi_now, core_left, core_right)
 
 
 def phi_fwd_x(Phi_now, core_left, core_right):
+    """Forward counterpart of :func:`phi_bck_x` (TT-matrix cores)."""
     return tn.einsum("lr,lMNL,rMNR->LR", Phi_now, core_left, core_right)
+
+
+def phi_bck_vec(Phi_now, core_left, core_right):
+    """Overlap environment ``<left_{>k} | right_{>k}>`` for TT **vector** cores.
+
+    The caller conjugates whichever side is the bra; these contract as given.
+    """
+    return tn.einsum("LR,lnL,rnR->lr", Phi_now, core_left, core_right)
+
+
+def phi_fwd_vec(Phi_now, core_left, core_right):
+    """Forward counterpart of :func:`phi_bck_vec`."""
+    return tn.einsum("lr,lNL,rNR->LR", Phi_now, core_left, core_right)
 
 
 def phi_bck_AB(Phi_now, coreA, coreB, core):

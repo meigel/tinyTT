@@ -1,21 +1,23 @@
-"""
-Autograd helpers for tinygrad-backed TT tensors.
+"""Autograd helpers for TT tensors.
+
+Cores are ordinary ``torch.Tensor`` objects, so autograd reaches them
+directly; these are conveniences for watching and collecting the gradients of
+a whole TT at once.
 """
 
 from __future__ import annotations
 
 
 def _backward(x):
-    """Backward, retrying with ``retain_graph=True`` on PyTorch if needed.
+    """Backward, keeping the graph so a second call on it still works.
 
-    PyTorch frees the graph after ``.backward()`` by default; calling it
-    twice on the same graph requires ``retain_graph=True``.  tinygrad does
-    not accept that keyword, so we fall back on a ``TypeError``.
+    PyTorch frees the graph after ``.backward()`` by default, which makes a
+    second gradient from the same expression fail; ``retain_graph=True``
+    keeps it.  This used to be wrapped in ``try/except TypeError`` because the
+    tinygrad backend did not accept the keyword -- that backend went in 0.5,
+    and the fallback was dead code from then on.
     """
-    try:
-        x.backward(retain_graph=True)
-    except TypeError:
-        x.backward()
+    x.backward(retain_graph=True)
 
 
 def watch(tens, core_indices=None):

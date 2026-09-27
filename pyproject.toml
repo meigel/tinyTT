@@ -7,7 +7,7 @@ include = ["tinytt*"]
 
 [project]
 name = "tinyTT"
-version = "0.5"
+version = "0.6"
 description = "Tensor-Train decomposition on PyTorch — Riemannian manifold geometry, structure-exploiting solvers, functional TT surrogates."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -32,7 +32,7 @@ classifiers = [
 
 [project.optional-dependencies]
 fem = ["scikit-fem"]
-dev = ["pytest", "ruff", "scipy"]
+dev = ["pytest", "ruff", "scipy", "coverage", "scikit-fem"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
@@ -43,4 +43,20 @@ markers = [
 ]
 testpaths = [
     "tests",
+]
+
+[tool.coverage.run]
+source = ["tinytt"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+# 98% is where 0.6 landed with tests that assert behaviour rather than chase
+# lines.  What is left is listed in AGENTS.md; anything genuinely unreachable
+# carries a `# pragma: no cover` with the reason on the same line.
+fail_under = 100
+show_missing = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
 ]

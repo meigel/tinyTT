@@ -6,8 +6,8 @@ TDVP, the Riemannian geometry) needs a specific gauge: left-orthogonal to
 the left of the active core, right-orthogonal to its right.  These are the
 primitives that put a core list into that form.
 
-This module used to be ``tinytt._riemannian``; that name is kept as a thin
-deprecation shim.
+This module used to be ``tinytt._riemannian``.  That name was a deprecation
+shim in 0.5 and was removed in 0.6; import from here.
 """
 
 from __future__ import annotations

@@ -1,3 +1,13 @@
+"""Device-parametrised tests for the core operations.
+
+These used to skip outright unless ``TINYTT_DEVICE`` named a GPU, which meant
+they were the *only* coverage for ``fast_matvec``, ``dmrg_matvec`` and the
+TTM-multiply autograd path and yet never ran in CI (no CI job has a GPU).
+They now run on the CPU by default and on the requested device when
+``TINYTT_DEVICE`` is set, so the GPU adds a device rather than being the only
+place this code is exercised.
+"""
+
 import os
 
 import numpy as np
@@ -6,18 +16,20 @@ import pytest
 import tinytt as tt
 import tinytt._backend as tn
 
-DEVICE = os.getenv("TINYTT_DEVICE", "").strip()
-if not DEVICE or DEVICE.lower() in ("cpu", "clang", "llvm"):
-    pytest.skip("GPU tests require TINYTT_DEVICE", allow_module_level=True)
+DEVICE = os.getenv("TINYTT_DEVICE", "").strip() or "cpu"
 
 try:
     probe = tn.tensor([1.0], device=DEVICE)
-    DEVICE_RESOLVED = probe.device
-except Exception:
-    pytest.skip("Requested TINYTT_DEVICE is unavailable", allow_module_level=True)
+    DEVICE_RESOLVED = str(probe.device)
+except Exception:  # pragma: no cover - only when a bad device is requested
+    pytest.skip(
+        f"Requested TINYTT_DEVICE={DEVICE!r} is unavailable",
+        allow_module_level=True,
+    )
+
 
 def _supports_fp64():
-    """Check if the resolved device supports float64, using the backend's probe."""
+    """Whether the resolved device supports float64, via the backend probe."""
     try:
         return tn.supports_fp64(DEVICE_RESOLVED)
     except Exception:
@@ -29,9 +41,14 @@ NP_DTYPE = np.float64 if DTYPE == tn.float64 else np.float32
 ATOL = 1e-10 if DTYPE == tn.float64 else 1e-5
 
 
+def _device_matches(actual) -> bool:
+    """``cuda`` must match ``cuda:0``, and ``cpu`` must match ``cpu``."""
+    return str(actual).lower().startswith(DEVICE_RESOLVED.split(":")[0].lower())
+
+
 def _assert_tt_device(tensor):
     for core in tensor.cores:
-        assert DEVICE_RESOLVED.lower() in str(core.device).lower()
+        assert _device_matches(core.device)
 
 
 def test_gpu_helpers_and_linalg():
@@ -147,4 +164,4 @@ def test_gpu_ttm_multiply_and_autograd():
     assert len(grads) == len(x.cores)
     for g in grads:
         assert g is not None
-        assert DEVICE.lower() in str(g.device).lower()
+        assert _device_matches(g.device)

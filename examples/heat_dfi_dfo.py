@@ -8,7 +8,7 @@ momentum.
 Demonstrates:
   1. Building a Laplacian TT-MPO (analytical bond-dimension 2)
   2. Constructing a rank-2 initial condition
-  3. Time-stepping with :func:`tinytt.bug.bug` (baseline)
+  3. Time-stepping with :func:`tinytt.bug.step_truncate` (baseline)
   4. Time-stepping with :func:`tinytt.bug.bug_with_momentum` + DFI
   5. Time-stepping with :func:`tinytt.bug.bug_with_momentum` + DFO
 """
@@ -19,7 +19,7 @@ import numpy as np
 
 import tinytt as tt
 import tinytt._backend as tn
-from tinytt.bug import bug, bug_with_momentum
+from tinytt.bug import bug_with_momentum, step_truncate
 from tinytt.manifold import DFIMomentum, DFOMomentum
 
 # ---------------------------------------------------------------------------
@@ -47,28 +47,28 @@ def laplacian_mpo(n, d, alpha=0.1):
         if i < n - 1:
             L[i, i + 1] = 1.0 / h ** 2
     scaled_L = (-alpha) * L
-    I = np.eye(n, dtype=np.float64)
+    identity = np.eye(n, dtype=np.float64)
 
     cores = []
 
     # Core 0: shape (1, n, n, 2)
     c0 = np.zeros((1, n, n, 2), dtype=np.float64)
-    c0[0, :, :, 0] = I
+    c0[0, :, :, 0] = identity
     c0[0, :, :, 1] = scaled_L
     cores.append(tn.tensor(c0, dtype=tn.float64))
 
     # Middle cores: shape (2, n, n, 2)
     for _ in range(1, d - 1):
         c = np.zeros((2, n, n, 2), dtype=np.float64)
-        c[0, :, :, 0] = I
+        c[0, :, :, 0] = identity
         c[0, :, :, 1] = scaled_L
-        c[1, :, :, 1] = I
+        c[1, :, :, 1] = identity
         cores.append(tn.tensor(c, dtype=tn.float64))
 
     # Last core: shape (2, n, n, 1)
     cd = np.zeros((2, n, n, 1), dtype=np.float64)
     cd[0, :, :, 0] = scaled_L
-    cd[1, :, :, 0] = I
+    cd[1, :, :, 0] = identity
     cores.append(tn.tensor(cd, dtype=tn.float64))
 
     return tt.TT(cores)
@@ -107,7 +107,7 @@ def main():
     psi = rank2_ic(n, d, r)
     t0 = time.time()
     for _ in range(steps):
-        bug(psi, H, dt, threshold=1e-10, max_bond_dim=r)
+        step_truncate(psi, H, dt, threshold=1e-10, max_bond_dim=r)
     print(f"  Final rank: {list(psi.R)}  wall: {time.time() - t0:.2f}s")
 
     # ---- 2. DFI momentum ----

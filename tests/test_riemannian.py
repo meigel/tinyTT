@@ -23,10 +23,27 @@ from tinytt.manifold.canonical import (
 
 
 def tangent_project(cores, Z):
-    """Legacy signature, on the current projector (see tinytt._riemannian)."""
-    from tinytt._riemannian import tangent_project as _legacy
+    """The legacy ``tangent_project`` signature, on the current projector.
 
-    return _legacy(cores, Z)
+    ``tinytt._riemannian`` provided this until 0.6 removed it.  The projector
+    it wrapped is ``TTManifoldFrame.project``; the only thing the shim added
+    was accepting a dense ambient tensor, which these tests want and which is
+    a test convenience rather than a library feature -- so it lives here now.
+    Returns the rank-2r ambient core list the old API returned.
+    """
+    from tinytt._decomposition import to_tt
+    from tinytt.manifold import TTManifoldFrame
+
+    if not isinstance(Z, list):
+        modes = [int(c.shape[1]) for c in cores]
+        if isinstance(Z, np.ndarray):
+            Z = tn.tensor(Z, dtype=cores[0].dtype, device=cores[0].device)
+        Z, _ = to_tt(
+            tn.reshape(Z, modes), modes, eps=1e-14, rmax=10**9, is_sparse=False
+        )
+
+    frame = TTManifoldFrame.from_tt(cores)
+    return frame.project(Z).to_tt().cores
 
 
 def _make_tt_cores(d, n, r, seed=0):

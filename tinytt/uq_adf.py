@@ -374,6 +374,20 @@ def _update_left_mats(left_mats_batch, core, positions, core_pos):
 
 
 def _prepare_measurements(measurements, device, dtype):
+    # Checked here rather than left to fail downstream: with no samples the
+    # first thing to break is the mean-based initial guess, and it did so as
+    # "stack expects a non-empty list", which names neither the function nor
+    # the cause.
+    if len(measurements.solutions) == 0:
+        raise ValueError(
+            "uq_adf needs at least one measurement; the UQMeasurementSet is "
+            "empty.  Add samples with measurements.add(y, solution)."
+        )
+    if len(measurements.randomVectors) != len(measurements.solutions):
+        raise ValueError(
+            f"measurements hold {len(measurements.randomVectors)} parameter "
+            f"vectors but {len(measurements.solutions)} solutions"
+        )
     random_vectors = np.asarray(measurements.randomVectors, dtype=float)
     if random_vectors.ndim != 2:
         raise ValueError('randomVectors must be a 2D array-like')
@@ -471,7 +485,12 @@ def _initial_guess_with_linear_terms(measurements, dimensions, dtype, device):
         tmp = (sol - mean).reshape(1, dimensions[0], 1)
         cores = [tmp]
         for k, size in enumerate(dimensions[1:]):
-            idx = 0 if k == m else 1
+            # Basis index 0 is the constant P_0 = 1 and index 1 the linear
+            # P_1 = y, so term m must carry the *linear* factor on dimension m
+            # and the constant everywhere else.  The two were the wrong way
+            # round, which swapped the terms at d = 2 and, at d >= 3, built a
+            # degree-(d-1) monomial that did not involve y_m at all.
+            idx = 1 if k == m else 0
             cores.append(_dirac_core(size, idx, dtype, device))
         x = x + tinytt.TT(cores)
 
@@ -499,16 +518,12 @@ def uq_adf(measurements, dimensions, basis, targeteps=1e-8, maxitr=1000, device=
         cores = _initial_guess_from_mean(solutions, dimensions, dtype, device)
     cores = _add_rank_noise(cores, dimensions, init_rank, init_noise, dtype, device)
 
-    if solutions_batched is not None:
-        solutions_norm = tn.sqrt((solutions_batched * solutions_batched).sum())
-    else:
-        solutions_norm = tn.tensor(0.0, dtype=dtype, device=device)
+    # never None here: _prepare_measurements refuses an empty set
+    solutions_norm = tn.sqrt((solutions_batched * solutions_batched).sum())
     rank_window = max(1, int(rank_window))
     residuals = [1000.0] * rank_window
     last_rank_update = 0
     n_samples = len(solutions)
-    if n_samples == 0:
-        raise ValueError("The measurements list must contain at least one sample.")
 
     iteration = 0
     while maxitr == 0 or iteration < maxitr:

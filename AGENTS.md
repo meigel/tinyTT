@@ -4,8 +4,12 @@
 
 Core functionality lives in `tinytt/` (TT classes, solvers, helpers,
 backends, autograd, and manifold geometry). Key supporting areas:
-- `tests/` — 49 test files, 588 tests.
-- `examples/` — 23 runnable scripts covering core features.
+- `tests/` — 53 test files, 693 tests.
+- `examples/` — 24 runnable scripts covering core features.
+- `docs/` — the mkdocs site.  `mkdocs build --strict` must stay clean, and
+  every Python snippet in `README.md` and `docs/` must run: `test_docs_snippets.py`
+  executes them cumulatively per file.  A block that genuinely cannot run here
+  opts out with `# docs-check: skip <reason>` — the reason is required.
 
 ### Module overview
 
@@ -15,6 +19,7 @@ backends, autograd, and manifold geometry). Key supporting areas:
 | Core ops | `_decomposition.py`, `_extras.py`, `_aux_ops.py` | SVD, QR, rounding, eye/zeros/kron, reshape, cat, pad, permute, meshgrid |
 | Fast products | `_fast_mult.py` | Fast Hadamard, matvec, matmat |
 | Solvers | `solvers/` (package), `_iterative_solvers.py`, `_dmrg.py` | AMEn and ALS (one sweep, `kickrank=0` gives ALS), DMRG; GMRES/BiCGSTAB/CG for the local systems |
+| **Eigensolver** | **`solvers/_eig.py`** | **`eig_solve` — one-/two-site variational sweeps for the extreme eigenpairs of a Hermitian TT-matrix, `k>1` by deflation.  `lanczos_eigh` for the large local problems.** |
 | **Time evolution** | **`dynamics/`** | **Real TDVP (with the back-propagation substep), Lubich-Oseledets KSL, rank-adaptive BUG.  `tdvp.py`, `bug.py`, `projector_splitting.py` are compatibility shims.** |
 | Canonicalisation | `manifold/canonical.py` | QR gauge moves, left/right/mixed canonical sweeps, gauge alignment.  `_riemannian.py` is a deprecation shim over it. |
 | **Manifold (matrix-free)** | `manifold/` | `TTManifoldFrame`, `TTTangent`, `TTTangentBatch`, `project_tt`, `projection_transport`, tangent-CG, Ritz extraction, block-Jacobi/adjacent-pair preconditioners |
@@ -55,6 +60,8 @@ backends, autograd, and manifold geometry). Key supporting areas:
 | GMRES | `test_gmres.py` |
 | BiCGSTAB | `test_bicgstab.py` |
 | AMEn | `test_amen.py` |
+| **Eigensolver** | **`test_eig.py`** |
+| **Darcy sampler** | **`test_darcy.py`** |
 | Line search | `test_linesearch.py` |
 | Functional (basis) | `test_functional.py` |
 | Functional TT | `test_functional_tt.py` |
@@ -73,7 +80,7 @@ backends, autograd, and manifold geometry). Key supporting areas:
 | **Solvers** | `test_solver_consolidation.py` |
 | **Manifold fixes** | `test_manifold_fixes.py` |
 | **Review regressions** | `test_review_regressions.py` |
-| Example regression | `test_examples_regression.py` |
+| Example regression | `test_examples_regression.py` (parses every example), `test_examples_run.py` (runs every example) |
 
 ### Example scripts
 
@@ -95,6 +102,7 @@ backends, autograd, and manifold geometry). Key supporting areas:
 | QTT solve | `tt_qtt_solve.py` |
 | QTT functional | `tt_qtt_functional.py` |
 | TDVP Ising | `mpo_ising_tdvp.py` |
+| Eigensolver | `tt_eigensolver.py` |
 | Heat equation | `heat_equation.py` |
 | UQ-ADF Darcy | `tt_uq_adf_darcy.py` |
 
@@ -103,7 +111,8 @@ backends, autograd, and manifold geometry). Key supporting areas:
 - `python3 -m venv venv && source venv/bin/activate` creates/activates the venv.
 - `pip install -r requirements.txt` installs numpy and PyTorch.
 - `pip install -r requirements-dev.txt` installs pytest and ruff.
-- `PYTHONPATH=. pytest -q tests` runs the suite (588 tests, ~55 s on CPU).
+- `PYTHONPATH=. pytest -q tests` runs the suite (693 tests, ~105 s on CPU;
+  ~37 s of that is `test_examples_run.py`, which executes all 24 examples).
 - `ruff check tinytt tests` must be clean before a commit.
 
 To run a focused subset:

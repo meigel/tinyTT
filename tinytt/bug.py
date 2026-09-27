@@ -2,7 +2,7 @@
 
 Two different things live here, and 0.4 conflated them:
 
-:func:`step_truncate` (exported as :func:`bug` for backwards compatibility)
+:func:`step_truncate` (called ``bug`` before 0.6)
     ``round(Y + dt F(Y))``.  Cheap, first order, and *not* the
     Basis-Update & Galerkin method -- it has neither a basis augmentation
     nor a Galerkin stage.
@@ -18,8 +18,6 @@ several times more accurate than ``step_truncate`` on the same problem (see
 """
 
 from __future__ import annotations
-
-import warnings
 
 from tinytt._tt_base import TT
 
@@ -100,7 +98,7 @@ def bug_with_momentum(
 ):
     """Step-truncate evolution with DFI or DFO momentum.
 
-    Wraps the standard :func:`bug` step-truncate integrator with
+    Wraps the :func:`step_truncate` integrator with
     tangent-space momentum from :class:`tinytt.manifold.DFIMomentum`
     or :class:`tinytt.manifold.DFOMomentum`.
 
@@ -155,34 +153,20 @@ def bug_with_momentum(
     return evolved
 
 
-def bug(state, mpo, dt, threshold=1e-10, max_bond_dim=1024, real_time=False):
-    """Deprecated alias for :func:`step_truncate`.
-
-    The name is misleading: this is step-and-truncate, not Basis-Update &
-    Galerkin.  Use :func:`step_truncate` for the same behaviour, or
-    :func:`tinytt.dynamics.bug_step` for the real BUG integrator.
-    """
-    return step_truncate(state, mpo, dt, threshold=threshold,
-                         max_bond_dim=max_bond_dim, real_time=real_time)
-
-
 def bug_like_sweep(state, mpo, dt, threshold=1e-10, max_bond_dim=1024,
-                   numiter_lanczos=None, real_time=False):
-    """Deprecated alias for :func:`step_truncate`."""
-    if numiter_lanczos is not None:
-        warnings.warn(
-            "numiter_lanczos has never had an effect here (there is no "
-            "Lanczos step in step-and-truncate) and is ignored.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+                   real_time=False):
+    """Alias for :func:`step_truncate`, kept because 0.4 scripts call it.
+
+    The ``numiter_lanczos`` argument went in 0.6: there is no Lanczos step in
+    step-and-truncate, so it never had an effect, and 0.5 warned that it was
+    ignored.  Passing it now raises ``TypeError``.
+    """
     return step_truncate(state, mpo, dt, threshold=threshold,
                          max_bond_dim=max_bond_dim, real_time=real_time)
 
 
 __all__ = [
     "step_truncate",
-    "bug",
     "bug_like_sweep",
     "bug_with_momentum",
 ]

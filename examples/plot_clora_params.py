@@ -4,16 +4,22 @@ import json
 import os
 import sys
 
+import matplotlib
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Inline the needed functions from tt_clora_benchmark
+# Agg has to be selected before pyplot is imported, and this script only ever
+# writes a file, so it is selected here rather than left to the environment.
+matplotlib.use("Agg")
 
+import matplotlib.pyplot as plt  # noqa: E402  -- must follow use("Agg")
+
+# the functions this figure needs are inlined from tt_clora_benchmark below
 import tinytt as tt
 import tinytt._backend as tn
 from tinytt._extras import inner
-from tinytt.bug import bug
+from tinytt.bug import step_truncate
 from tinytt.clora import _factorize_core
 
 
@@ -22,25 +28,35 @@ def build_dD_hamiltonian(d, n, alpha=0.1):
     L = np.zeros((n, n))
     for i in range(n):
         L[i, i] = -2.0 / h ** 2
-        if i > 0: L[i, i - 1] = 1.0 / h ** 2
-        if i < n - 1: L[i, i + 1] = 1.0 / h ** 2
+        if i > 0:
+            L[i, i - 1] = 1.0 / h ** 2
+        if i < n - 1:
+            L[i, i + 1] = 1.0 / h ** 2
     L *= (-alpha)
-    I = np.eye(n)
+    identity = np.eye(n)
     H_cores = []
     for k in range(d):
         if k == 0:
-            c = np.zeros((1, n, n, 2)); c[0, :, :, 0] = I; c[0, :, :, 1] = L
+            c = np.zeros((1, n, n, 2))
+            c[0, :, :, 0] = identity
+            c[0, :, :, 1] = L
         elif k == d - 1:
-            c = np.zeros((2, n, n, 1)); c[0, :, :, 0] = L; c[1, :, :, 0] = I
+            c = np.zeros((2, n, n, 1))
+            c[0, :, :, 0] = L
+            c[1, :, :, 0] = identity
         else:
-            c = np.zeros((2, n, n, 2)); c[0, :, :, 0] = I; c[0, :, :, 1] = L; c[1, :, :, 1] = I
+            c = np.zeros((2, n, n, 2))
+            c[0, :, :, 0] = identity
+            c[0, :, :, 1] = L
+            c[1, :, :, 1] = identity
         H_cores.append(tn.tensor(c, dtype=tn.float64))
     return tt.TT(H_cores)
 
 
 def make_dd_ic(d, n, rmax):
     x = np.linspace(0.0, 1.0, n)
-    s1 = np.sin(np.pi * x); s2 = np.sin(2.0 * np.pi * x)
+    s1 = np.sin(np.pi * x)
+    s2 = np.sin(2.0 * np.pi * x)
     c1 = tn.tensor(s1.reshape(1, n, 1), dtype=tn.float64)
     c2 = tn.tensor(s2.reshape(1, n, 1), dtype=tn.float64)
     u1 = tt.TT([c1.clone() for _ in range(d)])
@@ -52,7 +68,8 @@ def reference_dd(d, n, t_final, alpha=0.1):
     decay1 = float(np.exp(-alpha * d * np.pi**2 * t_final))
     decay2 = 0.5 * float(np.exp(-alpha * 4 * d * np.pi**2 * t_final))
     x = np.linspace(0.0, 1.0, n)
-    s1 = np.sin(np.pi * x); s2 = np.sin(2.0 * np.pi * x)
+    s1 = np.sin(np.pi * x)
+    s2 = np.sin(2.0 * np.pi * x)
     c1 = tn.tensor(s1.reshape(1, n, 1), dtype=tn.float64)
     c2 = tn.tensor(s2.reshape(1, n, 1), dtype=tn.float64)
     ref1 = tt.TT([c1.clone() for _ in range(d)])
@@ -72,8 +89,8 @@ for r in tt_ranks:
     steps = int(t_final / dt)
 
     psi_evo = make_dd_ic(d, n, r)
-    for step in range(steps):
-        bug(psi_evo, H, dt, threshold=1e-10, max_bond_dim=r)
+    for _ in range(steps):
+        step_truncate(psi_evo, H, dt, threshold=1e-10, max_bond_dim=r)
     diff = (psi_evo - psi_ref).round(rmax=r*2, eps=1e-10)
     err = np.sqrt(float(tn.to_numpy(inner(diff, diff))) / ref_norm2) if ref_norm2 > 0 else 0.0
     full_params = sum(int(tn.to_numpy(c.numel()).item()) for c in psi_evo.cores)
@@ -98,8 +115,8 @@ for r in tt_ranks:
     psi_ref = reference_dd(d, n, t_final, alpha)
     ref_norm2 = float(tn.to_numpy(inner(psi_ref, psi_ref)))
     steps = int(t_final / dt)
-    for step in range(steps):
-        bug(psi_evo, H, dt, threshold=1e-10, max_bond_dim=r)
+    for _ in range(steps):
+        step_truncate(psi_evo, H, dt, threshold=1e-10, max_bond_dim=r)
     diff = (psi_evo - psi_ref).round(rmax=r*2, eps=1e-10)
     err = np.sqrt(float(tn.to_numpy(inner(diff, diff))) / ref_norm2) if ref_norm2 > 0 else 0.0
     fp = sum(int(tn.to_numpy(c.numel()).item()) for c in psi_evo.cores)
@@ -111,11 +128,6 @@ with open("/tmp/clora_results.json", "w") as f:
     json.dump(results, f, indent=2)
 
 # Plot
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
 
 for r in tt_ranks:
@@ -150,7 +162,7 @@ for r in tt_ranks:
         if p["reduction"] != 1.0:
             red_vals[p["lo_rank"]] = p["reduction"]
     lrs = sorted(red_vals.keys())
-    reds = [red_vals[l] for l in lrs]
+    reds = [red_vals[rank] for rank in lrs]
     ax2.plot(lrs, reds, "o-", label=f"TT rank={r}", markersize=8)
 
 ax2.set_xlabel("LoRA rank $r_\\ell$")

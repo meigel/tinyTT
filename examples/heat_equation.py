@@ -8,9 +8,9 @@ The heat equation Δu = b is solved using finite differences on a 2D grid.
 from __future__ import annotations
 
 import numpy as np
-import tinytt._backend as tn
+
 import tinytt as tt
-import tinytt._aux_ops as aux
+import tinytt._backend as tn
 
 
 def solve_heat_equation_2d(
@@ -20,24 +20,24 @@ def solve_heat_equation_2d(
 ) -> tt.TT:
     """
     Solve the 2D heat equation Δu = b on a n×n grid.
-    
+
     Uses QTT representation and direct solve in dense, then converts to TT.
-    
+
     Args:
         n: Grid size (n x n)
         max_rank: Maximum TT rank for the solution
         verbose: Print progress
-        
+
     Returns:
         Solution tensor train
     """
     # Create grid spacing
     h = 1.0 / (n - 1)
-    
+
     if verbose:
         print(f"Solving 2D heat equation on {n}x{n} grid")
         print(f"max_rank={max_rank}")
-    
+
     # Build dense Laplacian: L = L_x ⊗ I + I ⊗ L_y
     # where L_x and L_y are 1D Laplacians
     L_1d = np.zeros((n, n))
@@ -48,36 +48,36 @@ def solve_heat_equation_2d(
         if i < n-1:
             L_1d[i, i+1] = 1.0
     L_1d = L_1d / (h * h)
-    
+
     # Kronecker product: L = L_x ⊗ I + I ⊗ L_y
-    I = np.eye(n)
-    L = np.kron(L_1d, I) + np.kron(I, L_1d)
-    
+    identity = np.eye(n)
+    L = np.kron(L_1d, identity) + np.kron(identity, L_1d)
+
     # Create forcing term (Gaussian in center)
     x = np.linspace(0, 1, n)
     xx, yy = np.meshgrid(x, x, indexing='ij')
     b = np.exp(-10 * ((xx - 0.5)**2 + (yy - 0.5)**2))
     b_vec = b.flatten()
-    
+
     # Solve linear system
     u_dense = np.linalg.solve(L + 1e-10*np.eye(n*n), b_vec)
     u_dense = u_dense.reshape([n, n])
-    
+
     if verbose:
         print(f"Dense solution max value: {u_dense.max():.4f}")
-    
+
     # Convert to TT with rank truncation
     u_tt = tt.TT(tn.tensor(u_dense, dtype=tn.float64), eps=1e-10, rmax=max_rank)
-    
+
     # Compute residual
     u_full = tn.to_numpy(u_tt.full())
     res_vec = b - u_full
     residual = np.linalg.norm(res_vec) / np.linalg.norm(b)
-    
+
     if verbose:
         print(f"TT ranks: {u_tt.R}")
         print(f"Residual: {residual:.2e}")
-    
+
     return u_tt
 
 
@@ -91,7 +91,7 @@ def solve_heat_equation_qtt(
 ) -> tt.TT:
     """
     Solve the 2D heat equation using pure QTT format.
-    
+
     Args:
         n: Grid size (n x n), should be power of 2
         mode_size: QTT mode size (typically 2)
@@ -102,7 +102,7 @@ def solve_heat_equation_qtt(
     """
     if verbose:
         print(f"Solving 2D heat equation in QTT format ({n}x{n} grid)")
-    
+
     # Ensure n is power of 2
     if n & (n - 1) != 0:
         n_qtt = 1
@@ -111,9 +111,9 @@ def solve_heat_equation_qtt(
         if verbose:
             print(f"Using next power of 2: {n_qtt}")
         n = n_qtt
-    
+
     h = 1.0 / (n - 1)
-    
+
     # Build 1D Laplacian as TT-matrix
     L_1d_dense = np.zeros((n, n))
     for i in range(n):
@@ -123,35 +123,35 @@ def solve_heat_equation_qtt(
         if i < n-1:
             L_1d_dense[i, i+1] = 1.0
     L_1d_dense = L_1d_dense / (h * h)
-    
+
     # Convert to TT-matrix
     L_1d = tt.TT(tn.tensor(L_1d_dense), shape=[(n, n)])
-    
+
     # Convert to QTT
     L_1d_qtt = L_1d.to_qtt(mode_size=mode_size)
-    
+
     if verbose:
         print(f"L_1d QTT ranks: {L_1d_qtt.R}")
-    
+
     # Identity in QTT
-    I = tt.eye([2] * int(np.log2(n)))
-    
+    identity = tt.eye([2] * int(np.log2(n)))
+
     # 2D Laplacian in QTT: L = L_x ⊗ I + I ⊗ L_y
-    L_x = tt.kron(L_1d_qtt, I)
-    L_y = tt.kron(I, L_1d_qtt)
+    L_x = tt.kron(L_1d_qtt, identity)
+    L_y = tt.kron(identity, L_1d_qtt)
     L_qtt = L_x + L_y
-    
+
     if verbose:
         print(f"L_qtt ranks: {L_qtt.R}")
-    
+
     # Create forcing in QTT
     x = np.linspace(0, 1, n)
     xx, yy = np.meshgrid(x, x, indexing='ij')
     b = np.exp(-10 * ((xx - 0.5)**2 + (yy - 0.5)**2))
-    
+
     b_tt = tt.TT(tn.tensor(b, dtype=tn.float64))
     b_qtt = b_tt.to_qtt(mode_size=mode_size)
-    
+
     if verbose:
         print("Solving L_qtt u = b_qtt with AMEn")
 
@@ -165,16 +165,15 @@ def solve_heat_equation_qtt(
         max_full=500,
         local_iterations=20,
         resets=1,
-        use_cpp=False,
         verbose=False,
     ).round(eps=eps, rmax=max_rank)
 
-    rel_residual = (tn.to_numpy((L_qtt @ u_tt - b_qtt).norm() / b_qtt.norm()).item()
-    
+    rel_residual = tn.to_numpy((L_qtt @ u_tt - b_qtt).norm() / b_qtt.norm()).item()
+
     if verbose:
         print(f"Solution ranks: {u_tt.R}")
         print(f"Relative residual: {rel_residual:.2e}")
-    
+
     return u_tt
 
 
@@ -182,21 +181,21 @@ if __name__ == "__main__":
     print("=" * 60)
     print("QTT Heat Equation Solver")
     print("=" * 60)
-    
+
     # Test with small grid
     print("\n--- Method 1: Dense → TT (16x16) ---")
     u1 = solve_heat_equation_2d(n=16, max_rank=8)
     u1_full = tn.to_numpy(u1.full())
     print(f"Solution range: [{u1_full.min():.4f}, {u1_full.max():.4f}]")
-    
+
     print("\n--- Method 2: Pure QTT (4x4) ---")
     u2 = solve_heat_equation_qtt(n=4, mode_size=2, max_rank=8, nswp=4)
     u2_full = tn.to_numpy(u2.full())
     print(f"Solution range: [{u2_full.min():.4f}, {u2_full.max():.4f}]")
-    
+
     print("\n--- Method 3: QTT with 4x4 stricter rank cap ---")
     u3 = solve_heat_equation_qtt(n=4, mode_size=2, max_rank=4, nswp=4)
     u3_full = tn.to_numpy(u3.full())
     print(f"Solution range: [{u3_full.min():.4f}, {u3_full.max():.4f}]")
-    
+
     print("\nAll tests passed!")

@@ -364,7 +364,10 @@ class StreamingCurvature:
         rows : Tensor (or ndarray)
             Batch of input row activations of shape :math:`(B, d)`.
         gamma : float
-            Exponential moving average coefficient :math:`\gamma \in (0, 1]`.
+            Exponential moving average coefficient
+            :math:`\gamma \in (0, 1)`.  The open endpoint matters: at
+            :math:`\gamma = 1` the diagonal decays to zero and the precision
+            matrix is no longer invertible.
         max_rank : int, optional
             Maximum allowed rank constraint. If exceeded, triggers `compress`.
 
@@ -380,8 +383,16 @@ class StreamingCurvature:
         batch = int(rows.shape[0])
         if batch == 0:
             raise ValueError("rows must contain at least one sample")
-        if not 0.0 < gamma <= 1.0:
-            raise ValueError("gamma must lie in (0, 1]")
+        if not 0.0 < gamma < 1.0:
+            # gamma == 1 sets D_new = (1 - gamma) D_old = 0, which destroys the
+            # strictly positive damping floor the constructor requires and
+            # leaves `solve` dividing by zero (it returned NaN).  The EMA
+            # formula is right; it is the endpoint that is not a usable state
+            # for this object, so it is refused here rather than producing one.
+            raise ValueError(
+                "gamma must lie in (0, 1): gamma = 1 would zero the damping "
+                "floor and make the curvature singular"
+            )
 
         # Diagonal decays
         self.diagonal = (1.0 - gamma) * self.diagonal

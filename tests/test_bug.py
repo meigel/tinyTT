@@ -10,7 +10,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import tinytt as tt
 import tinytt._backend as tn
-from tinytt.bug import bug, bug_like_sweep
+from tinytt.bug import bug_like_sweep, step_truncate
 from tinytt.tdvp import build_ising_mpo
 
 
@@ -24,7 +24,7 @@ class TestBUG:
         psi = tt.ones([2, 2])
         old_full = tn.to_numpy(psi.full()).copy()
 
-        evolved = bug(psi, H, dt=0.01, threshold=1e-10, max_bond_dim=8)
+        evolved = step_truncate(psi, H, dt=0.01, threshold=1e-10, max_bond_dim=8)
 
         assert evolved.N == [2, 2]
         assert psi.N == [2, 2]
@@ -40,7 +40,7 @@ class TestBUG:
         H = build_ising_mpo(3, J=1.0, h=1.0)
         psi = tt.ones([2, 2, 2])
 
-        evolved = bug(psi, H, dt=0.05, threshold=1e-12, max_bond_dim=8)
+        evolved = step_truncate(psi, H, dt=0.05, threshold=1e-12, max_bond_dim=8)
 
         assert max(evolved.R) > 1
         assert max(evolved.R) <= 8
@@ -51,7 +51,7 @@ class TestBUG:
         psi = tt.ones([2, 2])
 
         with pytest.raises(ValueError):
-            bug(psi, H, dt=0.01)
+            step_truncate(psi, H, dt=0.01)
 
     def test_bug_sweep_alias(self):
         """bug_like_sweep still works as an alias."""

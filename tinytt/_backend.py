@@ -18,7 +18,6 @@ Device and precision are controlled by environment variables:
 from __future__ import annotations
 
 import os
-import warnings
 
 import numpy as np
 import torch
@@ -87,14 +86,15 @@ __all__ = [
 
 _REQUESTED = os.getenv("TINYTT_BACKEND", "pytorch").lower().strip()
 if _REQUESTED in ("tinygrad", "tiny"):
-    warnings.warn(
-        "TINYTT_BACKEND=tinygrad is no longer supported: the tinygrad backend "
-        "was removed in tinyTT 0.5 and PyTorch is now the only backend. "
-        "Unset TINYTT_BACKEND (or set it to 'pytorch') to silence this.",
-        DeprecationWarning,
-        stacklevel=2,
+    # 0.5 warned and carried on with PyTorch; 0.6 refuses.  Carrying on was
+    # the wrong default for a variable whose whole purpose was to select a
+    # backend: the caller asked for tinygrad and silently got something else.
+    raise ValueError(
+        "TINYTT_BACKEND=tinygrad is not supported: the tinygrad backend was "
+        "removed in tinyTT 0.5, warned for one release, and PyTorch is the "
+        "only backend. Unset TINYTT_BACKEND or set it to 'pytorch'."
     )
-elif _REQUESTED not in ("pytorch", "torch", ""):
+if _REQUESTED not in ("pytorch", "torch", ""):
     raise ValueError(
         f"Unknown TINYTT_BACKEND={_REQUESTED!r}. PyTorch is the only backend; "
         "unset the variable or set it to 'pytorch'."
@@ -277,6 +277,20 @@ def tensor(data, dtype=None, device=None):
     if isinstance(data, torch.Tensor):
         out = data
         if target is not None and out.dtype != target:
+            if out.is_complex() and not is_complex_dtype(target):
+                # torch demotes complex -> real with a UserWarning and keeps
+                # only the real part.  Losing the imaginary half of a value is
+                # a wrong answer, not a formatting detail, so refuse unless it
+                # really is zero.  `real()` is the way to ask for the real part.
+                largest = float(out.imag.abs().max()) if out.numel() else 0.0
+                if largest > 0.0:
+                    raise ValueError(
+                        f"refusing to cast a complex tensor to {target}: the "
+                        f"imaginary part would be discarded (largest |Im| is "
+                        f"{largest:.3g}).  Use tn.real(x) to take the real "
+                        f"part deliberately."
+                    )
+                out = out.real
             out = out.to(dtype=target)
         if resolved is not None and str(out.device) != resolved:
             out = out.to(resolved)

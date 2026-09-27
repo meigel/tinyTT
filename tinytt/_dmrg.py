@@ -41,7 +41,7 @@ def dmrg_matvec_python(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4
 
     for i in range(nswp):
         if verb:
-            logger.info('sweep ', i)
+            logger.info('sweep %d', i)
 
         for k in range(d - 1, 0, -1):
             core = y_cores[k]
@@ -65,7 +65,7 @@ def dmrg_matvec_python(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4
 
         for k in range(d - 1):
             if verb:
-                logger.info('\tcore ', k)
+                logger.info('\tcore %d', k)
             W_prev = tn.einsum('ijk,klm->ijlm', y_cores[k], y_cores[k + 1])
 
             if not last:
@@ -125,7 +125,8 @@ def dmrg_matvec_python(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4
                 W2 = tn.transpose(W2, 0, 1)
 
             if verb:
-                logger.info('\tcore ', k, ': delta ', delta_cores[k], ' rank ', Ry[k + 1], ' ->', r_new)
+                logger.info('\tcore %d: delta %g rank %d -> %d',
+                            k, delta_cores[k], Ry[k + 1], r_new)
             Ry[k + 1] = r_new
             y_cores[k] = tn.conj(tn.reshape(W1, [Ry[k], M[k], r_new]))
             y_cores[k + 1] = tn.conj(tn.reshape(W2, [r_new, M[k + 1], Ry[k + 2]]))
@@ -171,7 +172,7 @@ def dmrg_hadamard_python(z, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank
 
     for i in range(nswp):
         if verb:
-            logger.info('sweep ', i)
+            logger.info('sweep %d', i)
 
         for k in range(d - 1, 0, -1):
             core = y_cores[k]
@@ -193,7 +194,7 @@ def dmrg_hadamard_python(z, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank
 
         for k in range(d - 1):
             if verb:
-                logger.info('\tcore ', k)
+                logger.info('\tcore %d', k)
             W_prev = tn.einsum('ijk,klm->ijlm', y_cores[k], y_cores[k + 1])
 
             if not last:
@@ -253,7 +254,8 @@ def dmrg_hadamard_python(z, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank
                 W2 = tn.transpose(W2, 0, 1)
 
             if verb:
-                logger.info('\tcore ', k, ': delta ', delta_cores[k], ' rank ', Ry[k + 1], ' ->', r_new)
+                logger.info('\tcore %d: delta %g rank %d -> %d',
+                            k, delta_cores[k], Ry[k + 1], r_new)
             Ry[k + 1] = r_new
             y_cores[k] = tn.conj(tn.reshape(W1, [Ry[k], M[k], r_new]))
             y_cores[k + 1] = tn.conj(tn.reshape(W2, [r_new, M[k + 1], Ry[k + 2]]))

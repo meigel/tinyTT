@@ -5,419 +5,176 @@
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Tensor-Train (TT) tensors, operators, and solvers — with dual backend support
-(**PyTorch**), a full matrix-free Riemannian manifold layer,
-and certified Krylov methods on the fixed-rank TT tangent bundle.
+Tensor-Train (TT) tensors, operators and solvers on **PyTorch**, with a
+matrix-free Riemannian layer on the fixed-rank TT manifold, real TDVP / KSL /
+BUG integrators, a variational eigensolver, and Krylov methods on the tangent
+bundle.
 
-Supports CPU (default), CUDA and MPS, plus
-native CUDA/MPS via PyTorch.
+Runs wherever PyTorch runs — CPU (the default), CUDA, MPS. Complex dtypes are
+supported end to end: decomposition, rounding, sesquilinear inner products,
+the tangent layer and the Krylov solvers.
 
-📖 **Documentation: [meigel.github.io/tinyTT](https://meigel.github.io/tinyTT/)** — tutorials, API reference, and examples.
+📖 **[meigel.github.io/tinyTT](https://meigel.github.io/tinyTT/)** — tutorials
+with runnable code for every feature below. This README is the map; the
+tutorials are the depth.
 
 ## Quickstart
 
 ```python
+import numpy as np
 import tinytt as tt
+import tinytt._backend as tn
 
-x = tt.ones([4, 4])                # 4×4 TT tensor, rank 1
-print(x.R)                         # [1, 1]
-print(x.full().numpy())            # materialise as numpy array
+x = tt.ones([4, 4])                # a 4x4 TT tensor, rank 1
+print(x.R)                         # [1, 1, 1]
+print(x.numpy())                   # materialise as a numpy array
 
 A = tt.eye([4, 4])                 # identity TT-matrix
 b = A @ x                          # matvec
-print((b - x).norm().numpy())      # ≈ 0
+print(float((b - x).norm()))       # 0.0
 ```
 
-**Device selection** — set `TINYTT_DEVICE` (default: CPU):
+A linear solve and an eigenpair, both on tensors far too large to materialise:
+
+```python
+from tinytt.dynamics import build_ising_mpo
+
+identity = tt.eye([2] * 8)
+rhs = tt.random([2] * 8, 3)
+solution = tt.solvers.amen_solve(identity, rhs, nswp=10, eps=1e-10)
+print(f"solve error {float((solution - rhs).norm()):.1e}")
+
+hamiltonian = build_ising_mpo(40, J=1.0, h=0.5)          # 2**40 amplitudes
+(energy,), (state,) = tt.solvers.eig_solve(hamiltonian)  # two-site DMRG
+psi = state * (1.0 / float(state.norm()))
+print(f"E = {energy:.10f}, residual {float((hamiltonian @ psi - energy * psi).norm()):.1e}")
+```
+
+**Device selection** — pass `device=` to any constructor, or set
+`TINYTT_DEVICE` (default: `cpu`):
 
 ```bash
 TINYTT_DEVICE=cuda python my_script.py
-TINYTT_FORCE_FP32=1 python my_script.py   # force single precision
+TINYTT_FORCE_FP32=1 python my_script.py   # for accelerators without float64
 ```
 
 ## Representations
 
-tinyTT implements several tensor-network representations, each in a cleanly
-separated module:
+| Representation | Entry point | What it is | Tutorial |
+|---|---|---|---|
+| **TT / TT-matrix** | `tinytt.TT` | The core data structure: 3-index cores for a tensor, 4-index for an operator | [TT Basics](docs/tutorials/tt-basics.md) |
+| **QTT** | `TT.to_qtt()` | Quantised TT — a mode of size `2^L` becomes `L` binary modes | [QTT](docs/tutorials/qtt.md) |
+| **FTT** | `tinytt.functional_tt` | Functional TT: coefficients of a basis expansion, for regression | [Functional TT](docs/tutorials/functional-tt.md) |
+| **CTT** | `tinytt.compositional` | Residual composition of functional-TT layers ([arXiv:2512.18059](https://arxiv.org/abs/2512.18059)) | [Compositional TT](docs/tutorials/compositional-tt.md) |
+| **Streaming TT** | `tinytt.streaming` | One-pass randomised TT (STTA) for data too large to hold | [Streaming TT](docs/tutorials/streaming.md) |
+| **Problems** | `tinytt.problems` | `DarcySampler` — parametric 2-D Darcy flow (sparse FEM + KL) | [UQ-ADF](docs/tutorials/uq-adf.md) |
 
-| Representation | Module | Description |
-|---|---|---|
-| **TT** | `tinytt/` (core) | Standard TT-tensor / TT-matrix with full solver suite |
-| **QTT** | `TT.to_qtt()` | Quantized TT for high-dimensional problems |
-| **CTT (Compositional TT)** | `tinytt/compositional.py` | Residual functional-TT composition with lift & retraction (arXiv:2512.18059) |
-| **FTT** | `tinytt/functional_tt.py` | Functional TT: basis-driven regression model |
-| **Streaming TT** | `tinytt/streaming.py` | One-pass randomised TT (STTA) for streaming data |
-| **Problems** | `tinytt/problems/` | DarcySampler — parametric 2D Darcy flow (FEM+KL) |
+## What is in the box
 
-## Features
-
-### 1. Core TT Operations
-
-The `TT` class is the central data structure.
+### Core operations
 
 ```
 Construction:     TT(full, eps), tt.ones, tt.zeros, tt.eye, tt.random, tt.randn
 Arithmetic:       +, -, *, /, @ (matvec), dot, kron, cat, pad, permute, reshape
 Conversion:       .full(), .numpy(), .to_qtt(), .qtt_to_tens()
-Round/truncate:   .round(eps), round_tt (with optional truncation rule)
+Round/truncate:   .round(eps, rmax), round_tt (with an optional truncation rule)
+Helpers:          rank1TT, diag, meshgrid, add, elementwise_divide, numel
 ```
 
-TT-matrix support (`is_ttm=True`): cores have 4 index dimensions
-(r<sub>k</sub>, m<sub>k</sub>, n<sub>k</sub>, r<sub>k+1</sub>)
-instead of 3.
+### Solvers
 
-Additional helpers: `rank1TT`, `diag`, `meshgrid`, `shape_mn_to_tuple`,
-`shape_tuple_to_mn`, `add`, `elementwise_divide`, `numel`.
-
-### 2. Solvers
-
-All solvers work on TT representations.  AMEn and ALS solve linear systems;
-DMRG and fast products handle contractions; TDVP and BUG handle time evolution.
-
-| Solver | Module | Problem |
+| Solver | Entry point | Problem |
 |---|---|---|
-| **ALS** | `tt.solvers.als_solve` | ``A·x = b`` — Alternating Least Squares |
-| **AMEn** | `tt.solvers.amen_solve` | ``A·x = b`` — AMEn (ALS + kick enrichment) |
-| **AMEn MM** | `tt.solvers.amen_mm` | ``C = A·B`` — TTM × TTM product via AMEn |
-| **DMRG matvec** | `tt.dmrg_hadamard` | Hadamard product via DMRG sweeps |
-| **DMRG mv** | `TT.fast_matvec` | TT-matrix × TT-vector via DMRG |
-| **Fast products** | `tt.fast_hadamard`, `tt.fast_mv`, `tt.fast_mm` | Accelerated dense contractions |
-| **TDVP** | `tt.tdvp.tdvp_imag_time` | Imaginary-time evolution (ground-state search) |
-| **BUG** | `tt.bug` | Basis-Update Galerkin time evolution with QR expansion |
-| **CG** | `tt.cg` | SPD-optimised conjugate gradient (matrix-free) |
-| **GMRES** | `tt.solvers.gmres_restart` | Restarted GMRES for non-SPD systems |
-| **BiCGSTAB** | `tt.solvers.BiCGSTAB_reset` | Stabilised biconjugate gradient |
-| **ALS regression** | `tt.als_regression` | Functional TT regression from data |
+| **ALS** | `tt.solvers.als_solve` | `A x = b`, alternating least squares |
+| **AMEn** | `tt.solvers.amen_solve` | `A x = b`, ALS with kick enrichment |
+| **AMEn MM** | `tt.solvers.amen_mm` | `C = A B` for TT-matrices |
+| **Eigensolver** | `tt.solvers.eig_solve` | `A x = λ x`, extreme eigenpairs of a Hermitian TT-matrix by DMRG sweeps |
+| **DMRG products** | `tt.dmrg_hadamard`, `TT.fast_matvec` | Contractions with rank control |
+| **Fast products** | `tt.fast_hadamard`, `tt.fast_mv`, `tt.fast_mm` | Swap-based dense contractions |
+| **CG / GMRES / BiCGSTAB** | `tt.cg`, `tt.solvers.gmres_restart`, `tt.solvers.BiCGSTAB_reset` | Matrix-free Krylov |
+| **ALS regression** | `tt.als_regression` | Functional TT fitted from scattered data |
 
-See `examples/tt_solvers.py`, `examples/tt_dmrg.py`, `examples/mpo_ising_tdvp.py`,
-and `examples/heat_equation.py` for usage.
+Time integrators live in `tinytt.dynamics`: `tdvp_step`, `tdvp_imag_time`,
+`tdvp_real_time` (one complex TT), `projector_splitting_step` (KSL) and
+`bug_step` (rank-adaptive Basis-Update & Galerkin). `tinytt.bug.step_truncate`
+is the cheap `round(Y + dt F(Y))` alternative — it is *not* BUG.
 
-### 3. Riemannian (TT-Manifold) Optimisation
+For a ground state prefer `eig_solve` to imaginary-time TDVP. On an 8-site
+chain with a gap of 0.006, `tdvp_imag_time` reaches `E - E0 = 1.5e-3` after
+800 steps and 66 s and stalls; `eig_solve` reaches `2.2e-14` in 0.41 s.
 
-Optimise directly on the fixed-rank TT quotient manifold without leaving the
-TT format.
+→ [Solvers tutorial](docs/tutorials/solvers.md)
 
-#### Basic operations (`tinytt._riemannian`)
+### Riemannian layer
 
-| Operation | Function | Description |
-|---|---|---|
-| **Left/right orthogonalise** | `left_orthogonalize`, `right_orthogonalize` | Full sweep QR canonicalisation |
-| **Mixed canonical** | `mixed_canonical(cores, k)` | Orthogonality centre at site k (with `preserve_rank` option) |
-| **Tangent projection** | `tangent_project(x, Z)` | Compatibility wrapper for the verified one-pass projector |
-| **Gauge checks** | `check_left_orthogonal`, `check_right_orthogonal` | Verify canonical form |
+Optimise on the fixed-rank TT manifold without leaving the TT format.
+`TTManifoldFrame` holds one point's canonical frame; `TTTangent` and
+`TTTangentBatch` are gauge-constrained tangent blocks.
 
-#### Matrix-free manifold frame (`tinytt.manifold`)
-
-The recommended API uses a reusable manifold frame and gauge-constrained
-tangent blocks:
-
-```python
-frame = tt.TTManifoldFrame.from_tt(x)
-
-# Tangent projection
-xi = frame.project(z)              # orthogonal projection onto TxM
-
-# Retraction
-y = frame.retract(xi, step=0.1)    # fixed-rank rounding retraction
-
-# Transport
-new_frame = tt.TTManifoldFrame.from_tt(y)
-xi_new = tt.projection_transport(xi, new_frame)
-
-# Tangent batch operations
-batch = tt.TTTangentBatch.from_columns([xi, ...])
-gram = batch.gram()                         # Gram matrix
-ortho = batch.orthonormalize()              # whitened basis
-comb = batch.linear_combination(coeffs)     # column recombination
-```
-
-| Object / Function | Description |
+| Object | Purpose |
 |---|---|
-| `TTManifoldFrame` | Canonical left/right frame, regularity diagnostics, tangent dimension |
-| `TTTangent` | Single gauge-constrained tangent vector: inner, norm, affine_to_tt, to_tt |
-| `TTTangentBatch` | Column stack of tangent vectors: Gram, adjoint-apply, linear combination, orthonormalise |
-| `project_tt(frame, z)` | Orthogonal projection of ambient TT into the frame |
-| `projection_transport(xi, new_frame)` | Ambient transport at a new point |
-| `transport_batch(batch, new_frame)` | Batch transport |
+| `TTManifoldFrame` | Canonical frame, regularity diagnostics, `project`, `retract`, `retract_with_frame`, `random_tangent` |
+| `TTTangent` / `TTTangentBatch` | Tangent vector / column stack: `inner`, `norm`, `to_tt`, `gram`, `linear_combination` |
+| `project_tt`, `projection_transport`, `transport_batch` | Projection and vector transport |
+| `tangent_conjugate_gradient`, `tangent_ritz_vectors` | Krylov on the tangent bundle, with deflation recycling |
+| `TangentBlockJacobi`, `TangentAdjacentPair` | Structured preconditioners from a sample factor |
+| `FunctionalTTLinearization` | `jvp`, `vjp`, `ggn_apply`, `metric_apply`, `sample_factor` for Gauss–Newton |
+| `tinytt.manifold.canonical` | The QR gauge moves: `left_orthogonalize`, `mixed_canonical`, the orthogonality checks |
 
-#### Tangent-space Krylov methods
+→ [Riemannian tutorial](docs/tutorials/riemannian.md)
 
-```python
-# Conjugate gradients on the tangent bundle
-result = tt.tangent_conjugate_gradient(
-    operator, rhs,
-    initial=solution_guess,
-    recycle=previous_search_directions,      # deflation
-    preconditioner=tangent_preconditioner,
-    relative_tolerance=1e-8,
-)
+### Fitting and regression
 
-# Ritz extraction
-ritz = tt.tangent_ritz_vectors(
-    operator, trial_batch,
-    count=5, which="smallest",
-)
-```
+`FunctionalTT` evaluates a basis expansion (`forward`, `integrate`,
+`linearize`, `watch`/`unwatch` for autograd); `tinytt._functional` supplies the
+bases (`LegendreFeatures`, `HermiteFeatures`, `MonomialFeatures`,
+`DifferentiableHermiteBasis`) and analytic derivatives (`gradient`, `jacobian`,
+`divergence`, `laplace`). `tinytt.regression` has `als_regression` and
+`als_continuity_fit`. `degree` means the maximum polynomial degree everywhere,
+so a degree-`p` basis has `p + 1` columns; pass `n_features=` to ask for a
+column count instead.
 
-| Method | Purpose |
+→ [Functional TT](docs/tutorials/functional-tt.md) ·
+[Compositional TT](docs/tutorials/compositional-tt.md)
+
+### Uncertainty quantification
+
+`tinytt.uq_adf.uq_adf` fits a TT surrogate of a parameter-to-QoI map from
+scattered measurements, with Legendre or Hermite bases, gradient or ALS core
+updates, and optional rank adaptivity (`uq_ra_adf`, or `adapt_rank=True`).
+
+→ [UQ-ADF](docs/tutorials/uq-adf.md)
+
+### Truncation rules, line search, autograd
+
+`tinytt.truncation` supplies the rank-selection strategies accepted by
+`round_tt(rule=…)`, `amen_solve(truncation_rule=…)` and `amen_mm`:
+
+| Rule | Criterion |
 |---|---|
-| `tangent_conjugate_gradient` | Solve SPD tangent equations with optional deflation recycling |
-| `tangent_ritz_vectors` | Extract extremal Ritz pairs from a trial subspace |
-
-#### Structured preconditioners (`tinytt.manifold`)
-
-| Preconditioner | Description |
-|---|---|
-| `TangentBlockJacobi(sample_factor, damping)` | Site-block diagonal of damped sample GGN (`rho * I + S_k S_k*`) |
-| `TangentAdjacentPair(sample_factor, damping)` | Block-tridiagonal preconditioner retaining nearest-neighbour couplings |
-
-Both provide `.apply(tangent)` and `.solve(tangent)` interfaces.
-
-#### FunctionalTT linearization
-
-```python
-linearization = model.linearize(phi_list, frame)
-
-# Jacobian-vector product
-jvp = linearization.jvp(tangent)
-
-# Vector-Jacobian product
-vjp = linearization.vjp(output_weights)
-
-# Gauss-Newton-vector product
-ggn = linearization.ggn_apply(tangent, output_metric=W)
-
-# Metric action (damping + GGN)
-metric = linearization.metric_apply(tangent, damping=0.1)
-
-# Sample factor S (S S* = J*WJ / batch)
-factor = linearization.sample_factor(output_weight_sqrt=sqrtW)
-```
-
-Usage: `examples/tt_riemannian_gd.py`
-
-### 4. QTT (Quantized Tensor Train)
-
-QTT converts a standard TT into a binary-tree representation where each physical
-dimension is replaced by log<sub>2</sub>n virtual dimensions of size 2.
-
-- `tt.tensor.to_qtt()` — convert TT to QTT format
-- `tt.tensor.qtt_to_tens()` — convert QTT back to standard TT
-- QTT-compatible solvers (AMEn, ALS) work on QTT cores directly
-- Vector-valued QTT via `test_qtt_vector.py`
-
-Examples:
-- `examples/heat_equation.py` — QTT heat equation with AMEn solve
-- `examples/tt_qtt_functional.py` — QTT function regression on tensor grid
-- `examples/tt_qtt_solve.py` — QTT linear system solve
-
-QTT remains useful for power-of-two tensorized grids and high-dimensional
-operator compression.  Sparse FEM scaling for parametric Darcy does not require
-QTT as the first step: use sparse FEM matrices for the physical solves, then
-fit the parametric map with UQ-ADF or TT surrogates.
-
-### 5. CTT (Compositional TT — residual functional-TT architecture)
-
-Defined in [arXiv:2512.18059](https://arxiv.org/abs/2512.18059), a CTT
-represents a function as a composition of **residual functional-TT layers**:
-
-$$v(x) = R \circ (\operatorname{Id} + \psi_L) \circ \cdots
-         \circ (\operatorname{Id} + \psi_1) \circ L(x)$$
-
-where:
-
-- **Lift** $L: \mathbb{R}^d \to \mathbb{R}^p$ embeds the input in a
-  lifted space of width $p \ge d$.
-- Each layer applies $y \leftarrow y + \psi_\ell(y)$, where
-  $\psi_\ell$ is a *functional tensor* in TT format evaluated via a
-  **univariate basis** $\Phi = \{\phi_1,\dots,\phi_n\}$:
-
-  $$\psi_\ell(y)_j =
-    \sum_{i_1,\dots,i_p} \psi_\ell(j,i_1,\dots,i_p)
-    \phi_{i_1}(y_1)\cdots\phi_{i_p}(y_p).$$
-
-- **Retraction** $R: \mathbb{R}^p \to \mathbb{R}^{d_o}$ projects the
-  final state to the output.
-
-The $\psi$ coefficient tensors are stored in TT format with
-$p+1$ cores (output mode + $p$ feature modes).  Shared basis
-$\Phi$ across all layers enables efficient polynomial representations.
-
-```python
-from tinytt.compositional import (
-    CTTLayer, CompositionalTT, random_ctt,
-    pad_lift, prepend_lift,
-    projection_retraction, first_coord_retraction,
-)
-from tinytt._functional import LegendreFeatures
-
-# Basis: Φ(x) = [1, x] (affine)
-basis = LegendreFeatures(degree=1)
-
-# Build a 2-layer CTT: R⁴ → R³ (lift width p=6)
-d, do, p = 4, 3, 6
-lift = pad_lift(d, p)
-retraction = projection_retraction(do)
-
-f = random_ctt(width=p, n_layers=2, basis_fn=basis,
-               lift=lift, retraction=retraction,
-               ranks=[4]*p, basis_size=2)
-
-y = f(x)                     # forward pass, shape (..., do)
-outs = f.layer_outputs(x)    # [x, L(x), h1, h2, R(h2)]
-
-# Gradient tracking and training
-f.watch()
-optimizer = Adam(f.params, lr=0.01)
-# ... training loop: forward → loss.backward() → optimizer.step()
-
-# TT‑SVD compression (Section 3.5)
-f_compressed = f.round(eps=0.1)   # reduces ranks with bounded error
-
-# Clone, transfer, detach
-g = f.clone()
-f.to("CPU")
-f.detach()
-```
-
-Key differences from the older "stack-of-TT-matrices" approach:
-- **Residual** connection ``y + ψ(y)`` (not ``T @ y``) — ODE-flow inspired
-- **Functional basis** Φ enables polynomial/trigonometric feature maps
-- **Explicit lift/retraction** decouple input/output dimensions from width
-- **Fixed width p** across all layers simplifies the architecture
-
-Example: `examples/tt_compositional.py`
-
-### 6. FTT (Functional TT / Regression)
-
-Basis-driven functional regression without materialising a dense grid.
-
-**Object-oriented API** (`tinytt.functional_tt.FunctionalTT`):
-
-```python
-from tinytt.functional_tt import FunctionalTT, random_ftt
-
-model = random_ftt(n0=2, feature_dims=[5, 5], ranks=[3, 3])
-y = model.forward(phi_list)           # evaluate at feature points
-y_norm = model.forward(phi_list, normalize=True)  # normalised eval
-
-model.watch()                         # enable gradient tracking
-loss = ((y - target) ** 2).sum()
-loss.backward()
-model.unwatch()
-
-integral = model.integrate()          # compute integral over domain
-```
-
-| Method | Description |
-|---|---|
-| `.forward(phi_list, normalize=False)` | Evaluate at batched features |
-| `.watch()` / `.unwatch()` | Enable/disable gradient tracking on all cores |
-| `.linearize(phi_list, frame)` | Return cached JVP/VJP/GGN linearization |
-| `.integrate()` | Compute the integral of the functional TT |
-| `.clone()` / `.detach()` / `.to(device)` | Model management |
-| `.n0`, `.d`, `.ranks` | Shape properties |
-
-**Basis functions** (`tinytt._functional`):
-
-| Class / Function | Description |
-|---|---|
-| `LegendreFeatures(degree)` | Legendre polynomials on [-1,1], with `grad()`, `laplace()` |
-| `HermiteFeatures(degree)` | Probabilist Hermite polynomials |
-| `MonomialFeatures(degree)` | Monomials 1, x, x², … |
-| `DifferentiableHermiteBasis` | Pure-tensor Hermite — works on all backends |
-| `legendre_features(X, deg)` | Free-function Legendre evaluation |
-| `hermite_features(X, deg)` | Free-function Hermite evaluation |
-| `monomial_features(X, deg)` | Free-function monomial evaluation |
-| `gradient()`, `jacobian()`, `divergence()`, `laplace()` | Analytic derivatives of functional TT |
-
-**ALS regression** (`tinytt.regression`):
-
-```python
-from tinytt.regression import als_regression
-model = als_regression(X, Y, bases, ranks)    # train from data
-```
-
-Also: `als_continuity_fit(X, Y, F_grad, bases)` — fit V s.t.
-⟨F_grad,V⟩ + div(V) ≈ Y.
-
-Examples:
-- `examples/tt_functional.py` — scalar/vector-valued FunctionalTT regression
-- `examples/tt_ftt_als.py` — ALS-based functional TT training
-- `examples/tt_vector_valued.py` — TT-matrix as trainable linear map
-
-### 7. Streaming TT (STTA)
-
-One-pass randomised TT approximation for data too large to materialise.
-
-- `StreamingTT(shape, ranks, data_stream)` — incremental STTA object
-- `streaming_tt(shape, ranks, data)` — convenience function returning a `TT`
-- `StreamingCurvature` — curvature-aware streaming variant
-
-The data stream can be a tensor (sliced along dim 0), a callable returning an
-iterator, or any iterable.
-
-### 8. UQ-ADF (Uncertainty Quantification)
-
-Adaptive density fitting for parametric PDEs with uncertain inputs.
-`tinytt.uq_adf.uq_adf()` builds a TT surrogate from weighted measurements.
-
-- Scalar and vector-valued outputs
-- Adaptive rank enrichment based on stagnation detection
-- Polynomial bases (Legendre / Hermite) with optional orthonormalisation
-- Gradient or ALS per-core update rules
-- Darcy FEM samples use SciPy sparse matrices and sparse direct solves
-
-Example: `examples/tt_uq_adf_darcy.py` — parametric Darcy flow with KL expansion
-
-### 9. Truncation Rules
-
-Configurable rank-selection strategies for SVD truncation, usable in
-`round_tt(rule=…)`, `amen_solve(truncation_rule=…)`, and
-`amen_mm(truncation_rule=…)`.
-
-| Rule | Description |
-|---|---|
-| `Threshold(eps)` | Keep r where ‖S[r:]‖ ≤ eps·‖S‖ |
-| `Doerfler(theta)` | Minimal r with retained energy ≥ (1-θ)·total |
-| `DoerflerAdaptivity(delta, …)` | Dörfler that grows rank when condition unmet |
-| `AdaptiveThreshold(base_eps)` | Threshold that scales with rank |
-| Custom | Any callable `(S, **context) → int` via `TruncationRule` protocol |
-
-### 10. Line Search
-
-`armijo_ls(loss_fn, x, direction)` — two-way Armijo-Goldstein backtracking line
-search. Works with flat tensors or structured parameter lists (e.g., TT cores).
-Accepts optional custom retraction for manifold optimisation.
-
-### 11. Autograd Helpers
-
-`tinytt.grad` module wraps PyTorch autograd for TT objects:
-
-```python
-tt.grad.watch(x)        # mark all TT cores as leaf variables
-loss = tt.dot(x, x)
-grads = tt.grad.grad(loss, x)   # one gradient tensor per core
-tt.grad.unwatch(x)      # detach (optional)
-```
-
-### 12. Dual Backend
-
-tinyTT runs on **PyTorch**.  Every module goes through the facade in
-`tinytt/_backend.py` (`import tinytt._backend as tn`) rather than importing
-`torch` directly, so device and dtype policy live in one place.
-
-The tinygrad backend was removed in 0.5.  Setting `TINYTT_BACKEND=tinygrad`
-now raises a `DeprecationWarning` and uses PyTorch; any other value is an
-error.  See `CHANGELOG.md`.
-
-Complex tensors (`complex64`/`complex128`) are supported throughout:
-decomposition, rounding, norms, inner products (sesquilinear), the tangent
-layer and the Krylov solvers.
+| `Threshold(eps)` | smallest `r` with `‖S[r:]‖ ≤ eps·‖S‖` |
+| `Doerfler(theta)` | smallest `r` with retained **energy** `Σσ²` ≥ `(1-θ)`·total |
+| `DoerflerAdaptivity(delta, …)` | bulk marking on `Σσ`, growing the rank when the criterion cannot be met |
+| `AdaptiveThreshold(base_eps)` | threshold scaled with the rank |
+| any callable | `(S, **context) → int`, via the `TruncationRule` protocol |
+
+The two Dörfler rules mark on different quantities and are **not**
+interchangeable. `tinytt._linesearch.armijo_ls` is a two-way Armijo
+backtracking search that accepts a custom retraction, and `tinytt.grad`
+wraps autograd for TT objects (`watch`, `grad`, `unwatch`).
+
+### Backend
+
+One backend: PyTorch. Every module goes through the facade in
+`tinytt/_backend.py` (`import tinytt._backend as tn`) and nothing imports
+`torch` directly, so device, dtype and complex-promotion policy live in one
+place.
+
+→ [Backend tutorial](docs/tutorials/backend.md)
 
 ## Setup
 
-**Requirements:** Python 3.11+, PyTorch 2.0+, numpy
+**Requirements:** Python 3.11+, PyTorch 2.0+, numpy.
 
 ```bash
 git clone https://github.com/meigel/tinyTT.git
@@ -425,194 +182,126 @@ cd tinyTT
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt        # torch + numpy
 pip install -e .
+pip install -e ".[fem]"                # optional: scikit-fem, for problems/
+pip install -r requirements-dev.txt    # optional: pytest, ruff, scipy, coverage, scikit-fem
 ```
 
-Optional development dependencies:
-
-```bash
-pip install -r requirements-dev.txt    # pytest
-```
-
-**GPU acceleration:** install a CUDA or MPS build of PyTorch and set
-`TINYTT_DEVICE`:
-
-```bash
-TINYTT_DEVICE=cuda python my_script.py
-```
-
-
-
-## Repository Layout
+## Repository layout
 
 ```
-tinytt/                    # main library
-├── _tt_base.py            # TT class (core)
+tinytt/                    # the library
+├── _tt_base.py            # the TT class
 ├── _decomposition.py      # SVD, QR, TT rounding
-├── _extras.py             # helpers: eye, zeros, kron, cat, pad, …
-├── _aux_ops.py            # auxiliary operations
+├── _extras.py             # eye, zeros, random, randn, kron, cat, pad, …
+├── _aux_ops.py            # auxiliary core operations
 ├── _dmrg.py               # DMRG matvec / Hadamard
-├── _fast_mult.py          # fast Hadamard product, matvec, matmat
-├── solvers.py             # ALS, AMEn solvers
+├── _fast_mult.py          # swap-based Hadamard, matvec, matmat
 ├── _iterative_solvers.py  # CG, GMRES, BiCGSTAB
-├── tdvp.py                # TDVP time evolution
-├── bug.py                 # BUG time evolution
-├── _riemannian.py         # Riemannian manifold operations (legacy)
+├── _functional.py         # Legendre / Hermite / monomial bases and derivatives
 ├── _linesearch.py         # Armijo line search
-├── _functional.py         # Legendre/Hermite/Monomial basis functions
-├── functional_tt.py       # FunctionalTT class
-├── compositional.py       # CompositionalTT + CTTLayer (residual CTT)
-├── regression.py          # ALS regression + continuity fit
-├── uq_adf.py              # UQ-ADF surrogate construction
+├── _backend.py            # the PyTorch facade — the only place torch is imported
+├── functional_tt.py       # FunctionalTT
+├── compositional.py       # CompositionalTT + CTTLayer
+├── regression.py          # ALS regression, continuity fit
+├── uq_adf.py              # UQ-ADF surrogates
 ├── interpolate.py         # TT-cross, maxvol
-├── streaming.py           # STTA (one-pass randomised TT)
-├── truncation.py          # Rank truncation rules
-├── grad.py                # Autograd helpers
-├── errors.py              # Exception classes
-├── _backend.py            # PyTorch backend facade (the only one)
-├── solvers/               # Sweeping solvers
+├── streaming.py           # STTA, StreamingCurvature
+├── truncation.py          # rank truncation rules
+├── grad.py                # autograd helpers
+├── errors.py              # exception classes
+├── tdvp.py, bug.py, projector_splitting.py    # thin re-exports of dynamics/
+├── solvers/               # sweeping solvers
 │   ├── _local_op.py       #   local effective operator + preconditioners
 │   ├── _environments.py   #   interface tensors
-│   ├── _amen.py           #   AMEn and ALS (one sweep, two settings)
+│   ├── _amen.py           #   AMEn and ALS
+│   ├── _eig.py            #   eig_solve, lanczos_eigh, deflation
 │   └── _neumann.py        #   parametric Neumann expansion
-├── dynamics/              # Time integrators
+├── dynamics/              # time integrators
 │   ├── _mpo.py            #   mixed-canonical state + MPO environments
 │   ├── _expm.py           #   exp(c A) v, dense or Krylov
-│   ├── _tdvp.py           #   TDVP (one-/two-site) and linear flows
-│   ├── _ksl.py            #   Lubich-Oseledets projector splitting
+│   ├── _tdvp.py           #   TDVP, one- and two-site, and linear flows
+│   ├── _ksl.py            #   Lubich–Oseledets projector splitting
 │   └── _bug.py            #   rank-adaptive Basis-Update & Galerkin
-├── manifold/              # Matrix-free manifold geometry
+├── manifold/              # matrix-free manifold geometry
 │   ├── frame.py           #   TTManifoldFrame
 │   ├── tangent.py         #   TTTangent, TTTangentBatch
 │   ├── projection.py      #   project_tt, projection_transport
-│   ├── krylov.py          #   tangent_conjugate_gradient, Ritz
+│   ├── krylov.py          #   tangent_conjugate_gradient, Ritz extraction
 │   ├── preconditioner.py  #   TangentBlockJacobi, TangentAdjacentPair
 │   ├── canonical.py       #   QR gauge moves, canonical sweeps
 │   └── functional.py      #   FunctionalTTLinearization
-tests/                     # Test suite (49 files, 588 tests)
-examples/                  # Runnable example scripts (23 examples)
-```
-
-## Usage Examples
-
-```python
-import numpy as np
-import tinytt as tt
-
-# ---- TT construction ----
-full = np.arange(8, dtype=np.float64).reshape(2, 2, 2)
-x = tt.TT(full, eps=1e-12)
-
-# ---- TT arithmetic (native — no dense materialisation) ----
-y = 0.5 * (x + tt.ones([2, 2, 2]))
-err = np.linalg.norm(y.full().numpy() - 0.5 * (full + 1))
-
-# ---- TT-matrix matvec ----
-A = tt.eye([2, 2, 2])
-z = A @ x
-
-# ---- Solve A·x = b with AMEn ----
-b = A @ x
-sol = tt.solvers.amen_solve(A, b, nswp=10, eps=1e-10)
-print("Solve error:", float((sol - x).norm().numpy()))
-
-# ---- Compositional TT (deep TT) ----
-from tinytt.compositional import CompositionalTT
-f = CompositionalTT([A, A])                # A ∘ A
-y = f(x)                                   # A·(A·x)
-
-# ---- Riemannian optimisation (matrix-free) ----
-frame = tt.TTManifoldFrame.from_tt(x)
-tan = frame.project(grad)              # ambient TT or dense tensor
-theta = frame.retract(tan, step=-0.1)  # fixed-rank rounding retraction
-
-# ---- Tangent CG with recycling ----
-result = tt.tangent_conjugate_gradient(
-    linearization.metric_apply, rhs_tangent,
-    relative_tolerance=1e-8,
-    recycle=previous_search_directions,
-)
+└── problems/              # parametric problem samplers (Darcy)
+tests/                     # 66 files, 1477 tests, 100% statement coverage
+examples/                  # 24 runnable scripts
+docs/                      # mkdocs sources; every snippet is executed by the suite
 ```
 
 ## Examples
 
-All 18 examples are in `examples/` and cover:
+24 runnable scripts in `examples/`; `docs/examples.md` lists them all with a
+line each.
 
-| Example | What it shows |
-|---|---|
-| `basic_usage.py` | Construction, arithmetic, solve |
-| `tt_basics.py` | TT core operations |
-| `tt_helpers.py` | TT helpers (eye, zeros, kron, etc.) |
-| `tt_linalg.py` | Linear algebra with TT |
-| `tt_solvers.py` | ALS, AMEn solvers |
-| `tt_dmrg.py` | DMRG matvec, Hadamard |
-| `tt_fast_products.py` | Fast Hadamard, matvec, matmat |
-| `tt_autograd.py` | Gradient tracking |
-| `tt_functional.py` | Functional TT (Legendre basis) |
-| `tt_ftt_als.py` | ALS-based functional TT regression |
-| `tt_vector_valued.py` | Vector-valued TT regression |
-| `tt_riemannian_gd.py` | Manifold gradient descent |
-| `tt_compositional.py` | Compositional TT (residual CTT) |
-| `tt_qtt_solve.py` | QTT linear system solve |
-| `tt_qtt_functional.py` | QTT function regression |
-| `mpo_ising_tdvp.py` | TDVP for Ising model MPO |
-| `heat_equation.py` | QTT heat equation with AMEn |
-| `tt_uq_adf_darcy.py` | UQ-ADF for parametric Darcy flow |
+```bash
+PYTHONPATH=. python examples/basic_usage.py
+```
 
 ## Tests
 
 ```bash
-pip install pytest
-pytest -q tests                    # all tests
-pytest -q tests/test_manifold.py tests/test_manifold_functional.py \
-          tests/test_manifold_krylov.py tests/test_manifold_preconditioner.py  # manifold tests
-pytest -q tests/test_backend.py    # backend API tests
-pytest -q tests/test_compositional.py  # 25 CTT tests
-pytest -q tests/test_functional.py tests/test_functional_tt.py  # functional TT tests
+pip install -r requirements-dev.txt
+pytest -q tests                                 # the whole suite
+pytest -q tests/test_docs_snippets.py           # every snippet in README.md and docs/
+python -m coverage run -m pytest -q tests && python -m coverage report
 ```
 
-GPU tests require `TINYTT_DEVICE`:
+Statement coverage is gated at 100% in CI (`fail_under` in `pyproject.toml`),
+so new code needs a test with it.  The nine `# pragma: no cover` lines each
+say why they are exempt — an optional dependency missing, or a fault that
+needs broken BLAS to trigger.
+
+The device-parametrised tests run on the CPU by default and on whatever
+`TINYTT_DEVICE` names when it is set:
 
 ```bash
-TINYTT_DEVICE=NV pytest -q tests/test_gpu_ops.py    # 7/7 pass
-TINYTT_DEVICE=NV pytest -q tests/test_gpu_smoke.py
+TINYTT_DEVICE=cuda pytest -q tests/test_gpu_ops.py tests/test_gpu_smoke.py
 ```
 
-- The GPU tests run when `TINYTT_DEVICE` names an available accelerator.
-- First-run GPU JIT compilation adds ~0.4 s per kernel pattern
-  (cache with `TINYTT_TINYJIT=1`).
-- `test_interpolate.py` (TT-cross) hangs on GPU — use CPU backend.
-- `test_uq_adf_skfem.py` skips itself if the optional `skfem` dependency
-  is missing or exceeds the time budget.  The fast smoke test is:
-  ```bash
-  pytest -q tests/test_uq_adf_fast.py
-  ```
+- `test_interpolate.py` (TT-cross) is CPU-only.
+- `test_uq_adf_skfem.py` skips itself when the optional `skfem` dependency is
+  missing; `tests/test_uq_adf_fast.py` is the quick smoke test.
 
-## Environment Flags
+## Environment flags
 
 | Flag | Effect |
 |---|---|
-| `TINYTT_DEVICE=cpu\|cuda\|cuda:1\|mps` | Compute device (default: cpu) |
-| `TINYTT_FORCE_FP32=1` | Force float32 on devices without usable float64 |
+| `TINYTT_DEVICE=cpu\|cuda\|cuda:1\|mps` | Compute device (default: `cpu`). The tinygrad spellings `GPU`/`GPU:0` still map to CUDA. |
+| `TINYTT_FORCE_FP32=1` | Force float32 where float64 is unavailable or slow |
+| `TINYTT_BACKEND` | Only `pytorch` (or unset). Anything else, `tinygrad` included, raises. |
 
 ## NumPy interop
 
 A few routines drop to NumPy on deliberately small problems: `maxvol` pivot
 selection in `interpolate.py`, the dense regression subproblems in `uq_adf.py`
-and the projected tridiagonal/Hessenberg matrices inside the Krylov solvers.
-These are all O(r) or O(k) work on matrices of Krylov or rank size, not on the
+and the projected tridiagonal / Hessenberg matrices inside the Krylov solvers.
+These are `O(r)` or `O(k)` work on matrices of Krylov or rank size, not on the
 tensor, so they do not gate GPU throughput.
 
-Everything on the tensor itself — SVD, QR, einsum, dense linear algebra on the
-local systems — goes through `torch.linalg` and stays on the configured
-device.  The 0.4 release additionally round-tripped GPU SVDs through NumPy to
-work around tinygrad; that path is gone.
+Everything on the tensor itself — SVD, QR, einsum, the dense local systems —
+goes through `torch.linalg` and stays on the configured device. The 0.4
+release additionally round-tripped GPU SVDs through NumPy to work around
+tinygrad; that path is gone.
 
 ## Troubleshooting
 
-- **Python 3.10 not supported** — 3.11+ is required.
-- **`TINYTT_BACKEND=tinygrad`** — the tinygrad backend was removed in 0.5.
-  The variable is still read so that 0.4 scripts get a clear
-  `DeprecationWarning` rather than a silent behaviour change; unset it.
-- **float64 on MPS** — Apple's Metal backend has no float64.  tinyTT detects
-  this and falls back to float32; set `TINYTT_FORCE_FP32=1` to make that
-  explicit.
+- **Python 3.10** — not supported; 3.11+ is required.
+- **`TINYTT_BACKEND=tinygrad`** — the tinygrad backend was removed in 0.5 and
+  the compatibility warning was removed in 0.6. Unset the variable.
+- **float64 on MPS** — Apple's Metal backend has none. tinyTT detects this and
+  falls back to float32; `TINYTT_FORCE_FP32=1` makes that explicit, and
+  `tn.supports_fp64(device)` answers the question directly.
+- **A `ValueError` refusing a complex → real cast** — deliberate. `torch`
+  would drop the imaginary part with only a warning; use `tn.real(x)` to take
+  the real part on purpose.
+
+See [`CHANGELOG.md`](CHANGELOG.md) for the release history, including the
+breaking changes in 0.5 and 0.6.

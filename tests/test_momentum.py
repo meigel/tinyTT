@@ -13,7 +13,7 @@ import pytest
 
 import tinytt as tt
 import tinytt._backend as tn
-from tinytt.bug import bug, bug_with_momentum
+from tinytt.bug import bug_with_momentum, step_truncate
 from tinytt.manifold import DFIMomentum, DFOMomentum
 
 # ---------------------------------------------------------------------------
@@ -194,18 +194,18 @@ class TestDFOMomentum:
 # ---------------------------------------------------------------------------
 
 class TestBugWithMomentum:
-    """bug_with_momentum should produce valid output matching bug()."""
+    """bug_with_momentum should produce valid output matching step_truncate()."""
 
     def test_baseline_runs_without_error(self):
-        """Both bug() and the momentum-free regularize path produce valid TTs."""
+        """Both step_truncate() and the momentum-free regularize path produce valid TTs."""
         n, d, r = 16, 3, 8
         H = _simple_heat_mpo(n, d)
         x = np.linspace(0, 1, n)
         s = np.sin(np.pi * x)
         psi = _rank1_product_tt(n, d, s).round(rmax=r)
 
-        # bug() baseline
-        bug(psi, H, 0.001, threshold=1e-10, max_bond_dim=r)
+        # step_truncate() baseline
+        step_truncate(psi, H, 0.001, threshold=1e-10, max_bond_dim=r)
         assert len(psi.cores) == d
 
         # Momentum-free regularize path (param=0.0)

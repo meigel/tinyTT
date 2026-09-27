@@ -8,8 +8,7 @@ with tinyTT.
 ### Prerequisites
 
 - Python 3.11+
-- [tinygrad](https://github.com/tinygrad/tinygrad) (default backend) or
-  [PyTorch](https://pytorch.org/) (optional)
+- [PyTorch](https://pytorch.org/) 2.0+ — the only backend since 0.5.
 
 ### Install from Source
 
@@ -21,27 +20,30 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-### Optional: GPU Support via Pinned tinygrad
+### GPU Support
 
-For GPU acceleration (CUDA, Metal, OpenCL), install the pinned tinygrad
-submodule rather than the PyPI wheel:
+PyTorch handles the device.  Pass `device=` to any constructor, or set
+`TINYTT_DEVICE` to run the device-parametrised tests there:
 
 ```bash
-git submodule update --init tinygrad
-pip install ./tinygrad
+TINYTT_DEVICE=cuda PYTHONPATH=. pytest tests/test_gpu_ops.py -q
 ```
 
-### Optional: PyTorch Backend
+Note that float64 is not available on every accelerator; the backend probes
+with `tn.supports_fp64(device)` and the tests fall back to float32.
+
+### Optional: FEM Problems
+
+The `problems/` and `uq_adf` paths need scikit-fem:
 
 ```bash
-pip install torch
-TINYTT_BACKEND=pytorch python my_script.py
+pip install -e ".[fem]"
 ```
 
 ### Development Dependencies
 
 ```bash
-pip install -r requirements-dev.txt    # pytest
+pip install -r requirements-dev.txt    # pytest, ruff, scipy, coverage, scikit-fem
 ```
 
 ## Your First TT Tensor
@@ -75,16 +77,19 @@ print((b - x).norm().numpy())    # ≈ 0
 
 ## Switching Backends
 
-Set the `TINYTT_BACKEND` environment variable:
+tinyTT has one backend.  `TINYTT_BACKEND` is still read, but only to give a
+clear error: any value other than `pytorch` raises `ValueError`, and the
+`tinygrad` case says so by name because 0.4 scripts set it.  0.5 warned and
+loaded PyTorch anyway; 0.6 refuses, because silently substituting a backend
+for the one that was asked for is the bug the warning announced.  Unset it.
 
-```bash
-TINYTT_BACKEND=pytorch python my_script.py
-TINYTT_BACKEND=tinygrad python my_script.py     # default
+Everything in the package goes through the facade:
+
+```python
+import tinytt._backend as tn     # never `import torch`
 ```
 
-All code is backend-agnostic — import the facade via
-`import tinytt._backend as tn` rather than calling tinygrad or
-PyTorch directly.
+The facade is where device, dtype and complex-promotion policy live.
 
 ## Next Steps
 

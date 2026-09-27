@@ -10,9 +10,9 @@ Demonstrates:
 """
 
 import numpy as np
+
 import tinytt as tt
 import tinytt._backend as tn
-
 
 # ---------------------------------------------------------------------------
 # 1.  TTM as a discrete vector-valued map
@@ -91,11 +91,11 @@ for step in range(500):
 
     if (step + 1) % 100 == 0:
         mse = float(tn.to_numpy(loss_val)) / (4 * 8)
-        rel_err = float((tn.to_numpy(loss_val / (target ** 2).sum())) ** 0.5
+        rel_err = float(tn.to_numpy(loss_val / (target ** 2).sum())) ** 0.5
         print(f"    step {step + 1:3d}  MSE = {mse:.3e}  rel_err = {rel_err:.3e}")
 
 # Verify learned map
-print(f"\n  Learned columns vs truth (tolerance 1e-2):")
+print("\n  Learned columns vs truth (tolerance 1e-2):")
 A_learned = tn.to_numpy(A_hat.full()).reshape(4, 8)
 ok = True
 for k_idx in range(n_in):

@@ -1,11 +1,13 @@
 # tinyTT
 
-Tensor-Train (TT) tensors, operators, and solvers — with dual backend support
-(**tinygrad** or **PyTorch**), a full matrix-free Riemannian manifold layer,
-and certified Krylov methods on the fixed-rank TT tangent bundle.
+Tensor-Train (TT) tensors, operators, and solvers on **PyTorch**, with a full
+matrix-free Riemannian manifold layer, real TDVP / KSL / BUG integrators, a
+variational eigensolver, and certified Krylov methods on the fixed-rank TT
+tangent bundle.
 
-Supports CPU (default), CUDA, Metal, and OpenCL backends (via tinygrad), plus
-native CUDA/MPS via PyTorch.
+Runs wherever PyTorch runs — CPU, CUDA, MPS.  Pass `device=` to any
+constructor; `tn.supports_fp64(device)` says whether float64 is available
+there.
 
 ---
 
@@ -17,8 +19,8 @@ native CUDA/MPS via PyTorch.
 
 -   :material-book-open-variant: **[Tutorials](tutorials/tt-basics.md)**
 
-    Step-by-step guides covering TT basics, solvers, functional TT,
-    Riemannian optimisation, CTT, QTT, streaming, UQ-ADF, and dual backends.
+    Runnable guides covering TT basics, solvers, functional TT,
+    Riemannian optimisation, CTT, QTT, streaming, UQ-ADF and the backend.
 
 -   :material-code-tags: **[Examples](examples.md)**
 
@@ -54,12 +56,13 @@ print((b - x).norm().numpy())      # ≈ 0
 | **FTT** | `tinytt/functional_tt.py` | Functional TT: basis-driven regression model |
 | **Streaming TT** | `tinytt/streaming.py` | One-pass randomised TT (STTA) for streaming data |
 
-## Backend Selection
+## Backend
 
-```bash
-TINYTT_BACKEND=pytorch python my_script.py
-TINYTT_BACKEND=tinygrad python my_script.py     # default
-```
+One backend: PyTorch.  Everything goes through `import tinytt._backend as tn`,
+and nothing imports `torch` directly — see [Backend](tutorials/backend.md).
+`TINYTT_BACKEND` is read only so that a stale setting fails loudly rather
+than quietly selecting something else: `tinygrad` raises in 0.6, and so does
+any value other than `pytorch`.  Unset it.
 
 ## Project Links
 

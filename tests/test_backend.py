@@ -1,8 +1,7 @@
 """
 Direct tests for the ``tinytt._backend`` API surface.
 
-Runs on the active backend (tinygrad by default, or
-``TINYTT_BACKEND=pytorch``).
+Runs on the PyTorch backend, the only backend since 0.5.
 """
 
 import numpy as np

@@ -218,3 +218,115 @@ class TestCLoRAModel:
         clo = CLoRAModel(model, lo_ranks=[1, 2])
         tt_obj = clo.to_tt()
         assert len(tt_obj.cores) == 3
+
+
+# ---------------------------------------------------------------------------
+# The remaining branches: the int broadcast, the length check, the
+# every-core-is-a-no-op warning, `lo_ranks`, and `build_linearization`.
+# ---------------------------------------------------------------------------
+
+class TestCLoRAConstruction:
+    def test_a_single_int_is_broadcast_to_every_feature_core(self):
+        model = _simple_model(r=4)
+        broadcast = CLoRAModel(model, lo_ranks=2)
+        explicit = CLoRAModel(_simple_model(r=4), lo_ranks=[2, 2])
+        assert broadcast.lo_ranks == explicit.lo_ranks == [2, 2]
+
+    def test_the_wrong_number_of_ranks_is_refused_with_both_counts(self):
+        model = _simple_model(r=4)
+        with pytest.raises(ValueError, match="Expected 2 LoRA ranks, got 3"):
+            CLoRAModel(model, lo_ranks=[1, 2, 3])
+
+    def test_lo_ranks_hands_back_a_copy(self):
+        clo = CLoRAModel(_simple_model(r=4), lo_ranks=[1, 2])
+        ranks = clo.lo_ranks
+        ranks[0] = 99
+        assert clo.lo_ranks == [1, 2]
+
+    def test_output_core_is_the_unfactorised_first_core(self):
+        model = _simple_model(r=4)
+        clo = CLoRAModel(model, lo_ranks=[1, 2])
+        assert clo.output_core is model.cores[0]
+
+    def test_a_model_restricted_at_every_core_does_not_warn_at_all(self):
+        """The quiet path: no core is a no-op, so the check returns early.
+
+        ``_simple_model`` gives its first feature core ``r_left = 1`` (the
+        output core is ``(1, n0, 1)`` when ``n0 = 1``), so that core is always
+        a no-op and the early return is never reached.  Widening the output
+        core to ``n0 = 2`` lets ``r_1 = 2``, and then both feature cores can
+        genuinely be restricted.
+        """
+        cores = [
+            tn.tensor(np.random.randn(1, 2, 2).astype(np.float64),
+                      dtype=tn.float64),
+            tn.tensor(np.random.randn(2, 6, 4).astype(np.float64),
+                      dtype=tn.float64),
+            tn.tensor(np.random.randn(4, 6, 1).astype(np.float64),
+                      dtype=tn.float64),
+        ]
+        model = FunctionalTT(cores)
+        assert [int(model.cores[k].shape[0]) for k in (1, 2)] == [2, 4]
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            clo = CLoRAModel(model, lo_ranks=[1, 2])
+        assert clo.lo_ranks == [1, 2]
+
+    def test_a_model_whose_every_core_has_r_left_one_warns_that_it_is_a_no_op(self):
+        """Rank-1 cores cannot be restricted at all.
+
+        This is the second of the two warning branches: the first fires when
+        some core *could* have been reduced and was not, this one when none
+        could -- and the message has to say so, because "use r_lo < r_left"
+        is not actionable advice when r_left is already 1.
+        """
+        cores = [
+            tn.tensor(np.random.randn(1, 1, 1).astype(np.float64),
+                      dtype=tn.float64),
+            tn.tensor(np.random.randn(1, 6, 1).astype(np.float64),
+                      dtype=tn.float64),
+            tn.tensor(np.random.randn(1, 6, 1).astype(np.float64),
+                      dtype=tn.float64),
+        ]
+        rank_one = FunctionalTT(cores)
+        with pytest.warns(RuntimeWarning, match="every feature core has"):
+            CLoRAModel(rank_one, lo_ranks=[1, 1])
+
+
+class TestBuildLinearization:
+    def test_it_linearises_the_merged_model_not_the_factors(self):
+        """The DF system is solved on the full tangent space and only then
+        projected, so the linearization has to see the merged cores."""
+        from tinytt.manifold import FunctionalTTLinearization
+
+        model = _simple_model(n1=6, n2=6, r=4)
+        clo = CLoRAModel(model, lo_ranks=[1, 2])
+
+        rng = np.random.default_rng(0)
+        phi = tn.tensor(rng.uniform(-1.0, 1.0, (5, 6)))
+        phi_list = [phi, phi]
+
+        linearization = clo.build_linearization(phi_list)
+        assert isinstance(linearization, FunctionalTTLinearization)
+        assert linearization.batch_size == 5
+
+        merged = FunctionalTT(clo.assemble_cores())
+        np.testing.assert_allclose(
+            tn.to_numpy(linearization.model.forward(phi_list)),
+            tn.to_numpy(merged.forward(phi_list)),
+            atol=1e-12,
+        )
+
+    def test_a_frame_can_be_supplied_and_is_the_one_used(self):
+        from tinytt.manifold import TTManifoldFrame
+
+        model = _simple_model(n1=6, n2=6, r=4)
+        clo = CLoRAModel(model, lo_ranks=[1, 2])
+
+        rng = np.random.default_rng(1)
+        phi = tn.tensor(rng.uniform(-1.0, 1.0, (5, 6)))
+        frame = TTManifoldFrame.from_tt(clo.assemble_cores())
+
+        linearization = clo.build_linearization([phi, phi], frame=frame)
+        assert linearization.frame is frame

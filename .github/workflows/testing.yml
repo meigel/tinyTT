@@ -19,13 +19,19 @@ jobs:
         # and pip does not pull the much larger default wheel.
         run: python -m pip install --upgrade pip torch --index-url https://download.pytorch.org/whl/cpu
       - name: Install dependencies
+        # requirements-dev.txt includes scikit-fem: without it tinytt.problems
+        # cannot import, its tests skip, and the 100% coverage gate fails.
         run: pip install -r requirements.txt -r requirements-dev.txt
       - name: Drop the stub backend directory if checkout left one
         # An empty `tinygrad/` directory (left by an uninitialised submodule in
         # older checkouts) shadows the installed package under PYTHONPATH=.
         run: rmdir tinygrad || true
-      - name: Run tests
-        run: PYTHONPATH=. python -m pytest tests/ -q
+      - name: Run tests with coverage
+        # fail_under = 100 in pyproject.toml: the report step fails the job if
+        # any statement is uncovered.
+        run: |
+          PYTHONPATH=. python -m coverage run -m pytest tests/ -q
+          python -m coverage report
 
   lint:
     runs-on: ubuntu-latest
@@ -35,4 +41,5 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install ruff
-      - run: ruff check tinytt tests
+      # the whole tree, examples/ included; it used to be `ruff check tinytt tests`
+      - run: ruff check .

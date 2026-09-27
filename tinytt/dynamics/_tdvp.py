@@ -51,11 +51,6 @@ __all__ = [
 _METHODS = ("one-site", "two-site")
 
 
-def _coefficient(dt: float, real_time: bool) -> complex:
-    """``-i dt`` for real time, ``-dt`` for imaginary time."""
-    return complex(0.0, -float(dt)) if real_time else complex(-float(dt), 0.0)
-
-
 def flow_coefficient(real_time: bool) -> complex:
     """The ``c`` in ``dY/dt = c H Y`` for the two standard TDVP flows."""
     return complex(0.0, -1.0) if real_time else complex(-1.0, 0.0)

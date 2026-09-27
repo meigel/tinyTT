@@ -1,3 +1,5 @@
 pytest
 ruff
 scipy
+coverage
+scikit-fem

@@ -148,7 +148,9 @@ def df_step(model, phi_list, residual, damping=1e-4, cg_tol=1e-8):
     """
     lin = FunctionalTTLinearization(model, phi_list)
     rhs = lin.vjp(residual)                      # (tangent space RHS)
-    metric_op = lambda v: lin.metric_apply(v, damping)
+    def metric_op(v):
+        return lin.metric_apply(v, damping)
+
     precond = TangentBlockJacobi(
         lin.sample_factor(), damping
     ).solve
@@ -157,84 +159,6 @@ def df_step(model, phi_list, residual, damping=1e-4, cg_tol=1e-8):
         relative_tolerance=cg_tol,
     )
     return result.solution, result
-
-
-# ---------------------------------------------------------------------------
-# Time-stepping loop
-# ---------------------------------------------------------------------------
-
-def run_parametric_heat(
-    basis, x_colloc, kappa, t_final, dt,
-    model, lo_model=None,
-    damping=1e-4, cg_tol=1e-8,
-    callback=None,
-):
-    """Evolve a model through time using DF principle.
-
-    Parameters
-    ----------
-    basis : FourierSineBasis
-    x_colloc : ndarray  shape (m,)
-    kappa : ndarray  shape (m,)
-    t_final : float
-    dt : float
-    model : FunctionalTT  — baseline model (used for dense NG or as template)
-    lo_model : CLoRAModel or None
-        If None, run dense NG (evolve all cores).
-        If provided, run tt-CLoRA (evolve C factors only, project updates).
-    damping : float
-    cg_tol : float
-    callback : callable or None
-        Called as callback(model_or_lo, t, step, cg_info).
-
-    Returns
-    -------
-    history : dict
-    """
-    steps = int(t_final / dt)
-    active_model = lo_model if lo_model is not None else model
-    phi_list = [basis(tn.tensor(x_colloc, dtype=tn.float64))]
-    kappa_t = tn.tensor(kappa.reshape(-1, 1), dtype=tn.float64)
-
-    cg_iters = []
-    times = []
-
-    for step in range(steps):
-        t = step * dt
-
-        # PDE residual at current state
-        if lo_model is not None:
-            u_val = lo_model.forward(phi_list)
-            lap_phi = basis.laplacian(tn.tensor(x_colloc, dtype=tn.float64))
-            lap_u = lo_model.forward([lap_phi])
-            residual = kappa_t * lap_u
-            delta, info = df_step(lo_model._base, phi_list, residual,
-                                  damping=damping, cg_tol=cg_tol)
-            # Project onto LoRA subspace
-            lin = FunctionalTTLinearization(lo_model._base, phi_list)
-            tangent = lin.frame.tangent(list(delta.blocks), project_gauge=True)
-            projected = lo_model.project_update(tangent)
-            # Update C factors via retraction
-            merged = lo_model.assemble_cores()
-            for k, dC in enumerate(projected.blocks[1:]):
-                lo_model.C[k] = lo_model.C[k] + dt * dC
-        else:
-            # Dense NG: evolve all cores
-            residual = kappa_t * model.forward(phi_list)
-            # Wait — this is wrong. For dense NG we need to use the
-            # actual residual computed from the current state.
-            # Let's fix: compute u_val first, then lap_u, then residual
-            raise NotImplementedError(
-                "Dense NG via model.forward not implemented yet"
-            )
-
-        cg_iters.append(info.iterations)
-        times.append(t)
-
-        if callback:
-            callback(active_model, t, step, info)
-
-    return {"cg_iterations": cg_iters, "times": times}
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +177,11 @@ def reference_solution(x_grid, kappa, t_final, n_spectral=256):
     x_grid : ndarray  shape (N,)
     kappa : ndarray  shape (N,)
     t_final : float
-    n_spectral : int — unused, kept for API compatibility
+    n_spectral : int
+        Unused.  Kept so existing call sites keep working; an earlier version
+        built a sine-basis spectral operator, which is wrong for a variable
+        coefficient -- the Crank-Nicolson finite differences below are the
+        reference.
 
     Returns
     -------
@@ -262,14 +190,6 @@ def reference_solution(x_grid, kappa, t_final, n_spectral=256):
     from scipy import sparse
     from scipy.sparse.linalg import spsolve
     N = len(x_grid)
-    h = x_grid[1] - x_grid[0]
-
-    # Build spectral differentiation: ∂_xx ≈ -k²π² in sine basis
-    k = np.arange(1, n_spectral + 1, dtype=np.float64)
-    eigenvalues = -(np.pi * k) ** 2
-
-    # Transform κ(x) to spectral space
-    # For the variable-coefficient problem ∂_t u = κ(x) ∂_xx u,
     h = x_grid[1] - x_grid[0]
 
     # IC: u0(x) = sin(πx)  (satisfies Dirichlet BC)
@@ -310,9 +230,9 @@ def reference_solution(x_grid, kappa, t_final, n_spectral=256):
     n_steps = int(np.ceil(t_final / dt))
     dt = t_final / n_steps
 
-    I = sparse.eye(N, format='csr')
-    lhs = I - 0.5 * dt * A
-    rhs_mat = I + 0.5 * dt * A
+    identity = sparse.eye(N, format='csr')
+    lhs = identity - 0.5 * dt * A
+    rhs_mat = identity + 0.5 * dt * A
     lhs = lhs.tocsc()
 
     for _ in range(n_steps):

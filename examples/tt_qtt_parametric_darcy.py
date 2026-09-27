@@ -20,6 +20,8 @@ import sys
 import time
 
 import numpy as np
+import scipy.sparse as sp
+from scipy.sparse.linalg import spsolve
 
 sys.path.insert(0, '.')
 import tinytt as tt
@@ -110,9 +112,6 @@ b = tt.TT(spatial_rhs + param_rhs)
 
 # Mean-field initial guess
 h = 1.0 / (n + 1)
-import scipy.sparse as sp
-from scipy.sparse.linalg import spsolve
-
 K1d_sp = sp.diags([-1/h, 2/h, -1/h], [-1, 0, 1], shape=(n, n), format='csr')
 M1d_sp = sp.diags([h/6, 4*h/6, h/6], [-1, 0, 1], shape=(n, n), format='csr')
 A0_sp = (sp.kron(K1d_sp, M1d_sp) + sp.kron(M1d_sp, K1d_sp)).tocsc()

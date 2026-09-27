@@ -1,86 +1,108 @@
-1|# Quantized TT (QTT)
-2|
-3|Quantized Tensor Train converts a standard TT into a binary-tree
-4|representation where each physical dimension of size $n$ is replaced by
-5|$\log_2 n$ virtual dimensions of size 2. This enables extremely fine-grained
-6|rank adaptation and is especially effective for power-of-two tensorised grids.
-7|
-8|## Conversion
-9|
-10|```python
-11|import tinytt as tt
-12|
-13|x = tt.randn([16, 16], rank=3)
-14|
-15|# Standard TT → QTT
-16|x_qtt = x.to_qtt()
-17|print(x_qtt.N)          # [2, 2, 2, 2, 2, 2, 2, 2]
-18|print(x_qtt.R)          # ranks increase: [1, 3, 5, 5, ...]
-19|
-20|# QTT → Standard TT
-21|x_back = x_qtt.qtt_to_tens()
-22|print(x_back.N)         # [16, 16]
-23|```
-24|
-25|## Why QTT?
-26|
-27|- **Higher expressivity** — the binary-tree structure allows ranks to vary
-28|  at each resolution level
-29|- **Dimension reduction** — a $2^L$ grid becomes $L$ binary dimensions,
-30|  enabling solvers to scale with $L$ rather than $2^L$
-31|- **Smooth functions** — functions with bounded mixed derivatives have
-32|  rapidly decaying QTT ranks
-33|
-34|## Solving Linear Systems in QTT
-35|
-36|```python
-37|from tinytt.solvers import amen_solve
-38|
-39|# Build a QTT system
-40|A = tt.eye([16, 16])                     # standard TT-matrix
-41|A_qtt = A.to_qtt()                       # convert to QTT
-42|b = tt.randn([16, 16], rank=3)
-43|b_qtt = b.to_qtt()
-44|
-45|x_qtt = amen_solve(A_qtt, b_qtt, rank=6, nswp=5)
-46|x = x_qtt.qtt_to_tens()                  # convert back for evaluation
-47|```
-48|
-49|## QTT Function Regression
-50|
-51|For function approximation on tensor grids:
-52|
-53|```python
-54|from tinytt.regression import als_regression
-55|from tinytt._functional import LegendreFeatures
-56|
-57|# Data on a 16×16 grid
-58|X, Y = ...   # 256 points, 2D
-59|
-60|# Use QTT basis
-61|bases = [LegendreFeatures(degree=4)] * 2
-62|model = als_regression(X, Y, bases, ranks=[4, 4, 4])
-63|```
-64|
-65|## QTT Heat Equation
-66|
-67|The heat equation example shows QTT + AMEn for parabolic PDEs:
-68|
-69|```bash
-70|PYTHONPATH=. python examples/heat_equation.py
-71|```
-72|
-73|## Notes
-74|
-75|- QTT requires physical dimensions that are powers of two
-76|- The conversion `to_qtt()` / `qtt_to_tens()` is exact (no approximation)
-77|- All solvers (ALS, AMEn, CG, GMRES) work on QTT cores directly
-78|- Vector-valued QTT is supported (see `test_qtt_vector.py`)
-79|
-80|## Further Reading
-81|
-82|- Examples: [`examples/tt_qtt_solve.py`](https://github.com/meigel/tinyTT/blob/main/examples/tt_qtt_solve.py),
-83|  [`examples/tt_qtt_functional.py`](https://github.com/meigel/tinyTT/blob/main/examples/tt_qtt_functional.py),
-84|  [`examples/heat_equation.py`](https://github.com/meigel/tinyTT/blob/main/examples/heat_equation.py)
-85|- Tests: `PYTHONPATH=. pytest tests/test_qtt.py tests/test_qtt_vector.py -v`
-86|
+# Quantized TT (QTT)
+
+Quantisation replaces a mode of size $2^L$ by $L$ binary modes, so a $2^L$ grid
+becomes $L$ dimensions instead of one large one. Ranks can then adapt per
+resolution level, which is what makes very fine grids tractable.
+
+```python
+import numpy as np
+import tinytt as tt
+import tinytt._backend as tn
+```
+
+## Conversion
+
+```python
+x = tt.randn([16, 16], 3)
+
+quantised = x.to_qtt()
+print("modes:", quantised.N)          # eight modes of size 2
+print("ranks:", quantised.R)
+
+restored = quantised.qtt_to_tens([16, 16])
+print("restored modes:", restored.N)
+
+error = float((restored - x).norm()) / float(x.norm())
+print(f"round trip: {error:.2e}")
+```
+
+`qtt_to_tens` needs the original shape — it cannot infer which binary modes
+belonged together. Mode sizes must be exact powers of `mode_size` (2 by
+default); anything else is refused by name.
+
+```python
+try:
+    tt.randn([6, 6], 2).to_qtt()
+except Exception as error:
+    print(type(error).__name__, error)
+```
+
+A different base works too:
+
+```python
+ternary = tt.randn([9, 9], 2).to_qtt(mode_size=3)
+print("base-3 modes:", ternary.N)
+print("back:", ternary.qtt_to_tens([9, 9]).N)
+```
+
+## Why QTT
+
+- **Rank adaptivity per level** — a binary tree lets the rank differ between
+  coarse and fine scales, which one large mode cannot express.
+- **Dimension count instead of dimension size** — solvers scale with $L$
+  rather than $2^L$.
+- **Smooth functions** — functions with bounded mixed derivatives have rapidly
+  decaying QTT ranks, so the representation stays small as the grid refines.
+
+The cost is more cores: a $d$-dimensional problem on a $2^L$ grid becomes a
+$dL$-core TT, so sweeps are longer even though each is cheaper.
+
+## Solving in QTT
+
+Convert both operator and right-hand side, solve, convert back.
+
+```python
+from tinytt.solvers import amen_solve
+
+A = tt.eye([16, 16])
+b = tt.randn([16, 16], 3)
+
+A_qtt = A.to_qtt()
+b_qtt = b.to_qtt()
+
+x_qtt = amen_solve(A_qtt, b_qtt, nswp=5, eps=1e-10)
+x = x_qtt.qtt_to_tens([16, 16])
+
+residual = float((A @ x - b).norm()) / float(b.norm())
+print(f"QTT solve residual {residual:.2e}, solution ranks {x.R}")
+```
+
+## A smooth function quantises well
+
+The claim above is checkable: sample a smooth function on a fine grid and
+watch the QTT ranks stay small.
+
+```python
+grid = np.linspace(0.0, 1.0, 64)
+values = np.exp(-((grid[:, None] - 0.5) ** 2 + (grid[None, :] - 0.5) ** 2) * 8)
+
+full = tt.TT(values, eps=1e-10)
+quantised_smooth = full.to_qtt(eps=1e-10)
+print(f"TT ranks {max(full.R)}, QTT ranks {max(quantised_smooth.R)}, "
+      f"{len(quantised_smooth.N)} cores")
+```
+
+## Notes
+
+- Mode sizes must be exact powers of `mode_size`.
+- `to_qtt()` / `qtt_to_tens()` are exact up to the `eps` you pass.
+- Every solver works on QTT cores directly — a QTT tensor is just a TT with
+  more, smaller modes.
+- Vector-valued QTT is supported; see `tests/test_qtt_vector.py`.
+
+## Further reading
+
+- [`examples/tt_qtt_solve.py`](https://github.com/meigel/tinyTT/blob/main/examples/tt_qtt_solve.py)
+- [`examples/tt_qtt_functional.py`](https://github.com/meigel/tinyTT/blob/main/examples/tt_qtt_functional.py)
+- [`examples/heat_equation.py`](https://github.com/meigel/tinyTT/blob/main/examples/heat_equation.py)
+- `PYTHONPATH=. pytest tests/test_qtt.py tests/test_qtt_vector.py -q`

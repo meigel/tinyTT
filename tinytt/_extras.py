@@ -76,6 +76,12 @@ def kron(first, second):
 
 
 def random(N, R, dtype=tn.float64, device=None):
+    """Random TT with standard-normal cores.
+
+    ``R`` is an int (the same rank on every interior bond) or the full
+    ``d + 1`` list including the unit boundary ranks.  ``N`` entries may be
+    ints (a TT vector) or ``(rows, cols)`` tuples (a TT-matrix).
+    """
     if isinstance(R, int):
         R = [1] + [R] * (len(N) - 1) + [1]
     elif len(N) + 1 != len(R) or R[0] != 1 or R[-1] != 1 or len(N) == 0:
@@ -93,6 +99,19 @@ def random(N, R, dtype=tn.float64, device=None):
 
 
 def randn(N, R, var=1.0, dtype=tn.float64, device=None):
+    """Random TT with total variance ``var`` spread evenly over the cores.
+
+    ``R`` is an int (the same rank on every interior bond) or the full
+    ``d + 1`` list including the unit boundary ranks -- the same spelling
+    :func:`random` accepts.  It used to require the list and raised
+    ``TypeError: 'int' object is not iterable`` on the int, so two sibling
+    factories disagreed about their own argument.
+    """
+    if isinstance(R, int):
+        R = [1] + [R] * (len(N) - 1) + [1]
+    elif len(N) + 1 != len(R) or R[0] != 1 or R[-1] != 1 or len(N) == 0:
+        raise InvalidArguments("Check if N and R are right.")
+
     d = len(N)
     prod_r = 1
     for r in R:
@@ -122,7 +141,9 @@ def meshgrid(vectors):
     first = vectors[0]
     if hasattr(first, 'dtype'):
         dtype = first.dtype if tn.is_tensor(first) else tn._infer_dtype(first.dtype)
-    else:
+    else:  # pragma: no cover - needs a duck type with no .dtype
+        # Anything that also satisfies the `v.shape[0]` and `tn.reshape`
+        # requirements below (torch tensor, ndarray) carries a dtype.
         dtype = tn.float64
     device = first.device if tn.is_tensor(first) else None
     Xs = []
@@ -158,7 +179,9 @@ def inner(a, b):
         if not a.is_ttm or not b.is_ttm or a.N != b.N or a.M != b.M:
             raise InvalidArguments(
                 "TTM inner product requires matching row/column shapes.")
-        if list(a.shape) != list(b.shape):
+        if list(a.shape) != list(b.shape):  # pragma: no cover - unreachable
+            # The guard above already established a.M == b.M and a.N == b.N,
+            # and TT.shape is derived from exactly those two lists.
             raise InvalidArguments("TTM inner product requires equal shapes.")
         a = tinytt.TT([c.reshape(c.shape[0], -1, c.shape[-1])
                        for c in a.cores])

@@ -9,6 +9,7 @@ accuracy gain BUG's augmentation buys over step-and-truncate.
 
 import numpy as np
 import pytest
+import torch
 
 import tinytt as tt
 import tinytt._backend as tn
@@ -179,12 +180,24 @@ def test_symmetric_ksl_is_time_reversible_and_the_one_way_sweep_is_not():
 
 
 def test_ksl_with_a_linear_generator_is_second_order():
+    """Observed order of the symmetric (Strang) KSL step.
+
+    This used to measure on 8/16/32 steps from an unseeded random state, and
+    failed intermittently: 8 steps is still pre-asymptotic for some states
+    (seed 0 gives an observed rate of 1.09 on the first pair).  It depended
+    on whatever the global RNG held when the test ran, so it passed alone and
+    could fail in the full suite.  16/32/64 against a 1024-step reference is
+    in the asymptotic regime -- the worst observed rate over 40 seeds is 1.94
+    -- and the state is now seeded, so the test is deterministic.
+    """
+    torch.manual_seed(0)
+    np.random.seed(0)
     order, horizon = 4, 0.4
     generator = -1.0 * build_ising_mpo(order, J=1.0, h=0.5)
     state = tt.random([2] * order, 2)
-    reference = _flat(ksl_integrate(state, generator, horizon / 512, steps=512))
+    reference = _flat(ksl_integrate(state, generator, horizon / 1024, steps=1024))
     errors = []
-    for steps in (8, 16, 32):
+    for steps in (16, 32, 64):
         got = ksl_integrate(state, generator, horizon / steps, steps=steps)
         errors.append(np.linalg.norm(_flat(got) - reference))
     rates = [np.log2(errors[i] / errors[i + 1]) for i in range(len(errors) - 1)]
@@ -280,13 +293,20 @@ def test_step_truncate_keeps_the_rank_metadata_consistent():
     ]
 
 
-def test_bug_alias_still_works_and_points_at_step_truncate():
-    from tinytt.bug import bug, step_truncate
+def test_step_truncate_is_deterministic_on_identical_states():
+    """Was ``test_bug_alias_still_works_...`` until 0.6 removed the alias.
+
+    With both sides now calling ``step_truncate`` the alias half is gone, but
+    the remaining property is worth keeping: the step is a pure function of
+    the state, so two clones evolve identically.  The removal itself is
+    asserted in ``tests/test_coverage_guards.py``.
+    """
+    from tinytt.bug import step_truncate
 
     generator = build_ising_mpo(4, J=1.0, h=0.5)
-    first, second = tt.random([2] * 4, 2), None
+    first = tt.random([2] * 4, 2)
     second = tt.TT([core.clone() for core in first.cores])
-    a = bug(first, generator, 0.01, threshold=1e-12, max_bond_dim=8)
+    a = step_truncate(first, generator, 0.01, threshold=1e-12, max_bond_dim=8)
     b = step_truncate(second, generator, 0.01, threshold=1e-12, max_bond_dim=8)
     np.testing.assert_allclose(_flat(a), _flat(b), atol=1e-12)
 
@@ -296,3 +316,98 @@ def test_projector_splitting_shim_reexports_the_real_integrator():
     from tinytt.projector_splitting import projector_splitting_step as shim
 
     assert shim is real
+
+
+# ---------------------------------------------------------------------------
+# smallest_eigenvalue
+#
+# A Lanczos routine with no tests until 0.6, which silently decides whether an
+# imaginary-time step overflows: tdvp_step(shift_spectrum=True) subtracts it
+# before exponentiating, so a wrong value is either an overflow or a silently
+# rescaled result.
+# ---------------------------------------------------------------------------
+
+def test_smallest_eigenvalue_matches_numpy_on_a_dense_operator():
+    from tinytt.dynamics import smallest_eigenvalue
+
+    rng = np.random.default_rng(0)
+    a = rng.standard_normal((32, 32))
+    a = a + a.T
+    matrix = tn.tensor(a)
+    exact = float(np.linalg.eigvalsh(a)[0])
+
+    def apply_op(vec):
+        return tn.reshape(matrix @ tn.reshape(vec, [-1, 1]), [-1])
+
+    value = smallest_eigenvalue(apply_op, tn.zeros((32,), dtype=tn.float64))
+    assert abs(value - exact) < 1e-8 * max(1.0, abs(exact))
+
+
+def test_smallest_eigenvalue_is_a_lower_bound_when_the_krylov_space_is_short():
+    """Lanczos from below: the Ritz value can only sit above the true minimum,
+    so a truncated run must never *under*estimate."""
+    from tinytt.dynamics import smallest_eigenvalue
+
+    rng = np.random.default_rng(1)
+    a = rng.standard_normal((40, 40))
+    a = a + a.T
+    matrix = tn.tensor(a)
+    exact = float(np.linalg.eigvalsh(a)[0])
+
+    def apply_op(vec):
+        return tn.reshape(matrix @ tn.reshape(vec, [-1, 1]), [-1])
+
+    short = smallest_eigenvalue(
+        apply_op, tn.zeros((40,), dtype=tn.float64), krylov_dim=4
+    )
+    full = smallest_eigenvalue(
+        apply_op, tn.zeros((40,), dtype=tn.float64), krylov_dim=40
+    )
+    assert short >= exact - 1e-8
+    assert full <= short + 1e-8
+    assert abs(full - exact) < 1e-8 * max(1.0, abs(exact))
+
+
+def test_smallest_eigenvalue_on_a_known_diagonal():
+    from tinytt.dynamics import smallest_eigenvalue
+
+    diagonal = np.array([-3.0, -1.0, 0.5, 2.0, 7.0])
+    weights = tn.tensor(diagonal)
+
+    def apply_op(vec):
+        return weights * vec
+
+    value = smallest_eigenvalue(apply_op, tn.zeros((5,), dtype=tn.float64))
+    assert abs(value - (-3.0)) < 1e-10
+
+
+def test_smallest_eigenvalue_is_deterministic_for_a_fixed_seed():
+    from tinytt.dynamics import smallest_eigenvalue
+
+    rng = np.random.default_rng(2)
+    a = rng.standard_normal((20, 20))
+    a = a + a.T
+    matrix = tn.tensor(a)
+
+    def apply_op(vec):
+        return tn.reshape(matrix @ tn.reshape(vec, [-1, 1]), [-1])
+
+    template = tn.zeros((20,), dtype=tn.float64)
+    first = smallest_eigenvalue(apply_op, template, seed=5)
+    second = smallest_eigenvalue(apply_op, template, seed=5)
+    assert first == second
+
+
+def test_shift_spectrum_keeps_an_imaginary_time_step_finite():
+    """What smallest_eigenvalue is for: without the shift, exp(-dt * A) on an
+    operator with a large negative eigenvalue overflows."""
+    order = 6
+    generator = 40.0 * build_ising_mpo(order, J=1.0, h=0.5)
+    state = tt.random([2] * order, 2)
+    stepped = tdvp_step(
+        state, generator, 0.5, real_time=False,
+        shift_spectrum=True, normalize=True,
+    )
+    values = _flat(stepped)
+    assert np.all(np.isfinite(values))
+    assert abs(float(stepped.norm()) - 1.0) < 1e-8

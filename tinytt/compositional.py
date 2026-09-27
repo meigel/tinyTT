@@ -607,6 +607,15 @@ def projection_readout(do: int):
        (``tinytt.manifold``) uses that word for.  The old name still works.
     """
     def readout(y):
+        width = int(y.shape[1])
+        if do > width:
+            # Python slicing clamps, so `y[:, :9]` on a width-4 input quietly
+            # returns 4 columns.  `do` is the model's output dimension, so
+            # silently returning fewer is a wrong answer, not a soft failure.
+            raise ShapeMismatch(
+                f"projection read-out asked for {do} output dimensions but "
+                f"the lifted width is {width}"
+            )
         return y[:, :do]
     return readout
 
@@ -619,6 +628,8 @@ def first_coord_readout():
        :func:`projection_readout`.
     """
     def readout(y):
+        if int(y.shape[1]) < 1:
+            raise ShapeMismatch("first-coordinate read-out needs a nonzero width")
         return y[:, 0:1]
     return readout
 
@@ -689,18 +700,20 @@ def random_ctt(
             f"ranks must have length width={width}, got {len(ranks)}."
         )
 
-    # Auto-detect basis_size from the basis function
+    # Auto-detect basis_size from the basis function: ask it if it says, and
+    # otherwise evaluate it once on a probe point and count the columns.
     if basis_size is None:
         if hasattr(basis_fn, 'n_features'):
             basis_size = basis_fn.n_features
         else:
-            import tinytt._backend as tn
-            probe = tn.tensor([0.0])
-            test = basis_fn(probe)
-            if hasattr(test, 'shape'):
-                basis_size = test.shape[-1]
-            else:
-                basis_size = test.shape[-1] if hasattr(test, 'shape') else 2
+            probe = basis_fn(tn.tensor(np.zeros((1, 1))))
+            if not hasattr(probe, 'shape'):
+                raise InvalidArguments(
+                    "basis_size could not be detected: basis_fn returned "
+                    f"{type(probe).__name__}, which has no shape. Pass "
+                    "basis_size= explicitly."
+                )
+            basis_size = int(probe.shape[-1])
 
     feature_dims = [basis_size] * width
 

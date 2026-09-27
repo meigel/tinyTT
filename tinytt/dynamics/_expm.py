@@ -135,23 +135,22 @@ def _krylov_expm(apply_op, vector, coefficient, krylov_dim, tolerance, hermitian
         block = 0.5 * (block + block.conj().T)
 
     # exp(coefficient * T) e_1, then lift back with the Krylov basis.
-    eigenvalues, eigenvectors = np.linalg.eigh(block) if hermitian else (None, None)
     if hermitian:
+        eigenvalues, eigenvectors = np.linalg.eigh(block)
         weights = eigenvectors @ (
             np.exp(coefficient * eigenvalues) * eigenvectors.conj().T[:, 0]
         )
-    else:  # pragma: no cover - kept for non-Hermitian right-hand sides
-        from numpy.linalg import matrix_power  # noqa: F401
-
-        scaled = coefficient * block
-        weights = np.zeros(used, dtype=np.complex128)
-        term = np.eye(used, dtype=np.complex128)[:, 0]
-        factorial = 1.0
-        for order in range(30):
-            if order:
-                term = scaled @ term / order
-            weights = weights + term
-            factorial *= max(order, 1)
+    else:
+        # The projected block is small (at most krylov_dim square), so its
+        # exponential is taken exactly.  This used to be a fixed 30-term
+        # Taylor series, which is accurate only while ||c T|| stays small: on
+        # a 60x60 non-normal operator with c = -5 it returned a vector with
+        # 98% relative error.  It was also marked `pragma: no cover` as if it
+        # were dormant, but `bug_step` calls it with max_dense=0 on every
+        # Galerkin stage.
+        weights = np.asarray(tn.to_numpy(tn.linalg.matrix_exp(
+            tn.tensor(coefficient * block, dtype=tn.complex128)
+        )))[:, 0]
 
     real_basis = not tn.is_complex_dtype(basis[0].dtype)
     result = None

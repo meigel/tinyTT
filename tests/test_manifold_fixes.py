@@ -559,33 +559,42 @@ class TestBatchedTransport:
 
 
 # ---------------------------------------------------------------------------
-# the tinytt._riemannian deprecation shim (0.5)
+# the tinytt._riemannian deprecation shim: warned in 0.5, removed in 0.6
 # ---------------------------------------------------------------------------
 
-def test_riemannian_shim_warns_and_still_works():
+def test_the_riemannian_shim_is_gone():
+    """0.5 deprecated ``tinytt._riemannian`` and said it would go in 0.6.
+
+    It did.  This asserts the removal rather than trusting the CHANGELOG,
+    because a shim that quietly survives its own removal notice is how a
+    deprecation schedule stops meaning anything.
+    """
     import importlib
-    import warnings
 
-    import numpy as np
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("tinytt._riemannian")
 
-    import tinytt as tt
-    import tinytt._backend as tn
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        module = importlib.reload(importlib.import_module("tinytt._riemannian"))
-    assert any(w.category is DeprecationWarning for w in caught)
-
-    from tinytt.manifold.canonical import left_orthogonalize
-
-    x = tt.random([4, 4, 4], 2)
-    cores = [c.clone() for c in x.cores]
-    np.testing.assert_allclose(
-        tn.to_numpy(tt.TT(module.left_orthogonalize(cores)).full()),
-        tn.to_numpy(tt.TT(left_orthogonalize([c.clone() for c in x.cores])).full()),
-        atol=1e-12,
+def test_canonicalisation_is_importable_from_the_documented_home():
+    """The replacement the removal notice named has to actually be there."""
+    from tinytt.manifold import canonical
+    from tinytt.manifold.canonical import (
+        check_left_orthogonal,
+        check_right_orthogonal,
+        gauge_align_cores,
+        left_orthogonalize,
+        mixed_canonical,
+        qr_move_lr,
+        qr_move_rl,
+        right_orthogonalize,
     )
-    assert module.left_orthogonalize is left_orthogonalize
+
+    for name in (
+        left_orthogonalize, right_orthogonalize, mixed_canonical,
+        check_left_orthogonal, check_right_orthogonal, gauge_align_cores,
+        qr_move_lr, qr_move_rl,
+    ):
+        assert getattr(canonical, name.__name__) is name
 
 
 # ---------------------------------------------------------------------------

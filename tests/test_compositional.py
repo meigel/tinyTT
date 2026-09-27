@@ -8,11 +8,15 @@ Tests the CTT architecture:
 
 from __future__ import annotations
 
-import os
 import sys
 
 import numpy as np
 import pytest
+
+# Adam optimizer helper.  PyTorch is the only backend since 0.5, so this is
+# no longer a dispatch -- the tinygrad branch that used to live here could
+# never be reached once ``_backend`` started rejecting TINYTT_BACKEND=tinygrad.
+import torch.optim as _optim
 
 import tinytt._backend as tn
 from tinytt.compositional import (
@@ -27,24 +31,13 @@ from tinytt.compositional import (
 from tinytt.errors import InvalidArguments, ShapeMismatch
 from tinytt.functional_tt import FunctionalTT, random_ftt
 
-# Backend-agnostic Adam optimizer helper
-if os.environ.get("TINYTT_BACKEND", "pytorch").lower() == "pytorch":
-    import torch.optim as _optim
 
-    def _make_adam(params, lr=0.1):
-        return _optim.Adam(params, lr=lr)
+def _make_adam(params, lr=0.1):
+    return _optim.Adam(params, lr=lr)
 
-    def _enable_training():
-        pass  # PyTorch enables grad tracking by default on requires_grad tensors
-else:
-    from tinygrad.nn.optim import Adam as _Adam
 
-    def _make_adam(params, lr=0.1):
-        return _Adam(params, lr=lr)
-
-    def _enable_training():
-        from tinygrad import Tensor
-        Tensor.training = True
+def _enable_training():
+    pass  # PyTorch tracks grad on requires_grad tensors by default
 
 
 # ---------------------------------------------------------------------------
@@ -587,6 +580,30 @@ class TestCompression:
         # check that it evaluates successfully and produces finite outputs
         out_after = ctt_rounded.forward(x)
         assert np.isfinite(tn.to_numpy(out_after)).all()
+
+    def test_round_with_data_accepts_a_per_bond_rank_list(self):
+        """``rmax`` may be a per-bond list, as it is everywhere else.
+
+        The data-driven branch builds its own ``[1] + p*[rmax] + [1]`` when
+        ``rmax`` is a scalar and passes a list through untouched; only the
+        scalar half of that had a test, so a list would have gone unchecked
+        into ``round_tt``.
+        """
+        rng = np.random.default_rng(3)
+        x = tn.tensor(rng.normal(size=(12, 2)).astype(np.float64))
+
+        ctt = random_ctt(width=3, n_layers=2, basis_fn=_lin_basis,
+                         lift=pad_lift(d=2, p=3),
+                         ranks=[4, 4, 4], basis_size=2, seed=7)
+
+        caps = [1, 2, 2, 2, 1]
+        rounded = ctt.round(eps=1e-12, rmax=caps, X_data=x)
+
+        for layer in rounded.layers:
+            ranks = list(layer.psi.ranks)
+            assert len(ranks) == len(caps), (ranks, caps)
+            assert all(r <= c for r, c in zip(ranks, caps)), (ranks, caps)
+        assert np.isfinite(tn.to_numpy(rounded.forward(x))).all()
 
 
 # =========================================================================

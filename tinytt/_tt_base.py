@@ -305,10 +305,13 @@ class TT:
             )
         core = core if tn.is_tensor(core) else tn.tensor(core)
         if self.__is_ttm:
+            # The length check has to come first: `or` evaluates left to
+            # right, so indexing shape[3] on a 2-D core raised IndexError
+            # instead of the documented InvalidArguments.
             if (
-                core.shape[0] != self.__R[k]
+                len(core.shape) != 4
+                or core.shape[0] != self.__R[k]
                 or core.shape[3] != self.__R[k + 1]
-                or len(core.shape) != 4
             ):
                 raise InvalidArguments(
                     "The given core must match the ranks and the dimensionality."
@@ -319,9 +322,9 @@ class TT:
             self.shape = self._shape_arg()
         else:
             if (
-                core.shape[0] != self.__R[k]
+                len(core.shape) != 3
+                or core.shape[0] != self.__R[k]
                 or core.shape[2] != self.__R[k + 1]
-                or len(core.shape) != 3
             ):
                 raise InvalidArguments(
                     "The given core must match the ranks and the dimensionality."
@@ -530,7 +533,10 @@ class TT:
             Optional hard rank cap.
         """
         product = self * other
-        if not isinstance(product, TT):
+        if not isinstance(product, TT):  # pragma: no cover - defensive
+            # `TT.__mul__` returns a TT on every non-raising path, so this
+            # cannot currently be reached; kept in case `__mul__` ever gains
+            # a scalar-returning branch.
             return product
         return product.round(eps=eps, **({} if rmax is None else {"rmax": rmax}))
 
@@ -761,7 +767,7 @@ class TT:
             margin = max(10.0 * float(eps), 1e-9)
             if abs(on - in_norm) <= max(in_norm * margin, 1e-4):
                 return out
-        raise RuntimeError(
+        raise RuntimeError(  # pragma: no cover - needs four BLAS-level faults
             f"round failed the contraction check 4x (||out||={_nrm(out):.6g} > "
             f"||in||={in_norm:.6g}); kernel-level fault, not a tolerance issue"
         )
@@ -820,7 +826,10 @@ class TT:
                     )
                     try:
                         core = tn.reshape(core, nnew)
-                    except Exception as exc:
+                    except Exception as exc:  # pragma: no cover - unreachable
+                        # `_exact_log` already established that the mode size
+                        # is an exact power, so prod(nnew) == numel(core) by
+                        # construction and the reshape cannot fail.
                         raise ShapeMismatch(
                             "Reshaping error: check if the dimensions are powers of the desired mode size:\r\n"
                             f"core size {list(core.shape)} cannot be reshaped to {nnew}"

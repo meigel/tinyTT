@@ -51,6 +51,7 @@ import warnings
 import numpy as np
 
 import tinytt._backend as tn
+from tinytt.errors import InvalidArguments
 
 FAMILIES = ("legendre", "hermite", "monomial")
 MEASURES = ("probability", "lebesgue")
@@ -299,6 +300,12 @@ def _features_by_dimension(X, nb, family, measure, orthonormal, device, dtype): 
         pts = tn.cast(X, dtype)
     else:
         pts = X
+    if len(pts.shape) != 2:
+        raise InvalidArguments(
+            f"feature inputs must have shape (batch, dimensions); received "
+            f"shape {tuple(pts.shape)}.  A single column is (batch, 1) -- "
+            f"reshape a flat vector with X.reshape(-1, 1)."
+        )
     d = pts.shape[1]
     return [
         basis_matrix(pts[:, nu], nb, family=family, measure=measure,
@@ -454,7 +461,32 @@ class PolynomialFeatures:
 
     # -- evaluation ------------------------------------------------------
 
+    @staticmethod
+    def _as_one_coordinate(x):
+        """Accept ``(m,)`` or ``(m, 1)`` and reject anything else.
+
+        This basis is univariate.  A ``(m, d)`` input used to broadcast
+        silently against the ``n_features`` axis and return an ``(m, d, n)``
+        array of nonsense, and ``(m, 1)`` -- the natural spelling for one
+        column of a data matrix -- did the same.  Both are now either
+        accepted as one coordinate or named.
+        """
+        if not tn.is_tensor(x):
+            return x
+        shape = tuple(int(s) for s in x.shape)
+        if len(shape) == 1:
+            return x
+        if len(shape) == 2 and shape[1] == 1:
+            return tn.reshape(x, [-1])
+        raise InvalidArguments(
+            f"a univariate basis takes one coordinate, shape (m,) or (m, 1); "
+            f"received shape {shape}.  For several coordinates use the free "
+            f"functions (legendre_features, ...), which return one matrix "
+            f"per dimension."
+        )
+
     def _eval(self, x, deriv):
+        x = self._as_one_coordinate(x)
         return basis_matrix(
             x, self.n_features, family=self.family, measure=self.measure,
             orthonormal=self.orthonormal, deriv=deriv,

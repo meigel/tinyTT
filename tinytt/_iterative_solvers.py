@@ -74,7 +74,9 @@ def BiCGSTAB_reset(Op, rhs, x0, eps=1e-6, nmax=40):
         return x_n, True, 0, _relres(r_nn_val)
 
     r0p = tn.randn(r.shape, dtype=x0.dtype, device=x0.device)
-    while abs(_scalar(_dot(r, r0p))) == 0.0:
+    while abs(_scalar(_dot(r, r0p))) == 0.0:  # pragma: no cover - measure zero
+        # A random shadow residual exactly orthogonal to r has probability 0
+        # in floating point; the retry exists so the algorithm is total.
         r0p = tn.randn(r.shape, dtype=x0.dtype, device=x0.device)
 
     p = r

@@ -15,7 +15,7 @@ x_true = tt.TT([rng.rand(rx[i], N[i], rx[i + 1]).astype(np.float64) for i in ran
 b = A @ x_true
 
 x_amen = tt.solvers.amen_solve(
-    A, b, nswp=6, eps=1e-10, max_full=500, local_iterations=10, resets=1, use_cpp=False, verbose=False
+    A, b, nswp=6, eps=1e-10, max_full=500, local_iterations=10, resets=1, verbose=False
 )
 x_als = tt.solvers.als_solve(
     A, b, nswp=6, eps=1e-10, max_full=500, trunc_norm="fro", local_iterations=10, resets=1, verbose=False

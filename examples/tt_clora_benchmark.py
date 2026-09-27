@@ -18,7 +18,7 @@ import numpy as np
 import tinytt as tt
 import tinytt._backend as tn
 from tinytt._extras import inner
-from tinytt.bug import bug
+from tinytt.bug import step_truncate
 from tinytt.clora import _factorize_core
 
 
@@ -31,24 +31,29 @@ def build_dD_hamiltonian(d, n, alpha=0.1):
     L = np.zeros((n, n))
     for i in range(n):
         L[i, i] = -2.0 / h ** 2
-        if i > 0: L[i, i - 1] = 1.0 / h ** 2
-        if i < n - 1: L[i, i + 1] = 1.0 / h ** 2
+        if i > 0:
+            L[i, i - 1] = 1.0 / h ** 2
+        if i < n - 1:
+            L[i, i + 1] = 1.0 / h ** 2
     L = (-alpha) * L
-    I = np.eye(n)
+    identity = np.eye(n)
 
     # Rank-2 analytical construction
     cores = []
     for k in range(d):
         if k == 0:
             c = np.zeros((1, n, n, 2))
-            c[0, :, :, 0] = I; c[0, :, :, 1] = L
+            c[0, :, :, 0] = identity
+            c[0, :, :, 1] = L
         elif k == d - 1:
             c = np.zeros((2, n, n, 1))
-            c[0, :, :, 0] = L; c[1, :, :, 0] = I
+            c[0, :, :, 0] = L
+            c[1, :, :, 0] = identity
         else:
             c = np.zeros((2, n, n, 2))
-            c[0, :, :, 0] = I; c[0, :, :, 1] = L
-            c[1, :, :, 1] = I
+            c[0, :, :, 0] = identity
+            c[0, :, :, 1] = L
+            c[1, :, :, 1] = identity
         cores.append(tn.tensor(c, dtype=tn.float64))
     return tt.TT(cores)
 
@@ -102,7 +107,7 @@ def run_benchmark(d, n, rank, dt, t_final, alpha, lo_ranks_sweep):
         # Evolve via step-truncate on a FULL TT (no re-factoring per step)
         psi_evo = make_dd_ic(d, n, rank)  # fresh IC
         for step in range(steps):
-            bug(psi_evo, H, dt, threshold=1e-10, max_bond_dim=rank)
+            step_truncate(psi_evo, H, dt, threshold=1e-10, max_bond_dim=rank)
             if step % max(1, steps // 5) == 0:
                 print(f"    step {step:5d}/{steps}  R={list(psi_evo.R)}")
 

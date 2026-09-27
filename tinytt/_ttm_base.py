@@ -13,7 +13,7 @@ A TTM represents a matrix with row index ``(i_1,...,i_d)`` and column index
 
 Each core has shape ``(r_{k-1},\,m_k,\,n_k,\,r_k)`` where ``m_k`` is the row
 mode size and ``n_k`` the column mode size at level ``k``.  All operations
-in this module are backend-agnostic (numpy / PyTorch / tinygrad) through
+in this module go through the PyTorch backend facade
 :mod:`tinytt._backend`.
 
 Functions
@@ -70,11 +70,21 @@ def ttm_multiply(
     out: list[tn.Tensor] = []
     for k in range(P):
         a, b = A_cores[k], B_cores[k]
-        ra, m, n, ra1 = a.shape
-        rb, _, _, rb1 = b.shape
-        # C_k[αA·rA+αB, i, j, βA·rA'+βB] = Σ_a A_k[αA,i,a,βA] · B_k[αB,a,j,βB]
+        # a is (rA, i, m, rA'):  i is A's row mode, m its column mode.
+        # b is (rB, m, j, rB'):  j is B's column mode.
+        # The product has A's rows and *B's* columns.  Taking the last mode
+        # from `a` instead is only right when A and B are square and equally
+        # shaped, which is why every square test passed.
+        ra, rows, contracted, ra1 = a.shape
+        rb, b_contracted, cols, rb1 = b.shape
+        if contracted != b_contracted:
+            raise ValueError(
+                f"core {k}: cannot multiply, A has {contracted} columns but "
+                f"B has {b_contracted} rows"
+            )
+        # C_k[αA·rB+αB, i, j, βA·rB'+βB] = Σ_m A_k[αA,i,m,βA] · B_k[αB,m,j,βB]
         C = tn.einsum('aimb,cmjd->acijbd', a, b)
-        C = C.reshape(ra * rb, m, n, ra1 * rb1)
+        C = C.reshape(ra * rb, rows, cols, ra1 * rb1)
         out.append(C)
     return out
 
