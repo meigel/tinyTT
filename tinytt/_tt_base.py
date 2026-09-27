@@ -456,9 +456,9 @@ class TT:
                 cores_new.append(
                     tn.ones([1, self.__N[i], 1], dtype=ref.dtype, device=ref.device)
                 )
-        if cores_new:
-            s = tn.tensor(scalar, dtype=cores_new[0].dtype, device=cores_new[0].device)
-            cores_new[0] = cores_new[0] * s
+        # never empty: self.cores[0] was read above, so d >= 1
+        s = tn.tensor(scalar, dtype=cores_new[0].dtype, device=cores_new[0].device)
+        cores_new[0] = cores_new[0] * s
         return TT(cores_new)
 
     def _tt_native_add(self, other):

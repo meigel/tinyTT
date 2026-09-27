@@ -39,7 +39,9 @@ def _gll_nodes(k: int) -> np.ndarray:
     dP = Legendre.basis(k).deriv()      # P'_k on [-1, 1]
     ddP = dP.deriv()
     t = np.cos(np.pi * np.arange(1, k) / k)   # Chebyshev seeds for the roots
-    for _ in range(25):
+    # 25 is a safeguard: Newton from Chebyshev seeds converges to 1e-15 within
+    # it for every degree tried up to 1024, so the loop always breaks.
+    for _ in range(25):  # pragma: no branch
         step = dP(t) / ddP(t)
         t = t - step
         if np.max(np.abs(step)) < 1e-15:

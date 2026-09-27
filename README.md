@@ -248,6 +248,7 @@ tinytt/                    # the library
 tests/                     # 66 files, 1477 tests, 100% statement coverage
 examples/                  # 24 runnable scripts
 docs/                      # mkdocs sources; every snippet is executed by the suite
+benchmarks/                # wall-clock benchmarks with baseline comparison
 ```
 
 ## Examples
@@ -268,10 +269,11 @@ pytest -q tests/test_docs_snippets.py           # every snippet in README.md and
 python -m coverage run -m pytest -q tests && python -m coverage report
 ```
 
-Statement coverage is gated at 100% in CI (`fail_under` in `pyproject.toml`),
-so new code needs a test with it.  The nine `# pragma: no cover` lines each
-say why they are exempt — an optional dependency missing, or a fault that
-needs broken BLAS to trigger.
+Coverage is gated at 100% of statements **and branches** in CI (`branch` and
+`fail_under` in `pyproject.toml`), so new code needs a test for both sides of
+every condition.  The few `# pragma: no cover` / `no branch` lines each say
+why they are exempt — an optional dependency missing, a fault that needs
+broken BLAS to trigger, or a safeguard loop cap that never binds.
 
 The device-parametrised tests run on the CPU by default and on whatever
 `TINYTT_DEVICE` names when it is set:
@@ -283,6 +285,20 @@ TINYTT_DEVICE=cuda pytest -q tests/test_gpu_ops.py tests/test_gpu_smoke.py
 - `test_interpolate.py` (TT-cross) is CPU-only.
 - `test_uq_adf_skfem.py` skips itself when the optional `skfem` dependency is
   missing; `tests/test_uq_adf_fast.py` is the quick smoke test.
+
+## Benchmarks
+
+`benchmarks/bench.py` times the kernels that dominate real runs — TT-SVD,
+rounding, matvec, DMRG Hadamard, AMEn, the eigensolver and a TDVP step — and
+compares them with a saved baseline:
+
+```bash
+python benchmarks/bench.py --save baseline.json          # on main
+python benchmarks/bench.py --compare baseline.json --fail-slower 1.25
+```
+
+Compare only against a baseline recorded on the same machine.  It is not run
+in CI; shared runners are too noisy for timings to mean anything.
 
 ## Environment flags
 

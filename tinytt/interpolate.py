@@ -458,8 +458,16 @@ def _cross_sweep(evaluate_batch, cores, rank, N, eps=1e-9, nswp=20, kick=2,
         logger.info('number of function calls %d', st.n_eval)
         logger.info("")
 
-    return CrossResult(st.cores, n_evaluations=st.n_eval,
-                       bond_ranks=list(st.rank),
+    cores, bond_ranks = st.cores, list(st.rank)
+    if max(bond_ranks) > rmax:
+        # The rank kick appends `kick` columns after the rmax truncation, and
+        # the last sweep kicks too, so bonds could come back up to rmax + kick.
+        # The extra columns carry zero weight, so rounding to rmax is exact.
+        rounded = TT(cores).round(eps=1e-14, rmax=rmax)
+        cores, bond_ranks = rounded.cores, list(rounded.R)
+
+    return CrossResult(cores, n_evaluations=st.n_eval,
+                       bond_ranks=bond_ranks,
                        maxvol_converged=st.maxvol_converged,
                        sweeps=swp + 1, max_error=max_err)
 

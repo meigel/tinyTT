@@ -181,9 +181,8 @@ def ttm_to_matrix(cores: list[tn.Tensor]) -> tn.Tensor:
     row_ax = [2 * k for k in range(P)]
     col_ax = [2 * k + 1 for k in range(P)]
     res = tn.permute(res, row_ax + col_ax)
-    # Make contiguous before reshape (permuted tensors may be non-contiguous).
-    if hasattr(res, 'contiguous'):
-        res = res.contiguous()
+    # torch's reshape copies a permuted tensor when it has to, so no explicit
+    # copy is needed; the hasattr guard that used to be here was for tinygrad.
     return res.reshape(M, N)
 
 
@@ -236,8 +235,6 @@ def ttm_from_matrix(
 
     # Merge each (m_k, n_k) pair into a single mode of size m_k·n_k.
     merged_sizes = [m * n for m, n in zip(mode_sizes_m, mode_sizes_n)]
-    if hasattr(T, 'contiguous'):
-        T = T.contiguous()
     T = T.reshape(merged_sizes)
 
     # TT-SVD.
@@ -295,8 +292,10 @@ def ttm_round(cores: list[tn.Tensor], tol: float = 0.0) -> list[tn.Tensor]:
     B = res.shape[0]
     if B > 1:
         res = res.sum(axis=0)
-    if res.shape[-1] == 1:
-        res = res[..., 0]
+    # A right boundary bond > 1 is summed, as ttm_to_matrix does; the right
+    # side used to be only squeezed, so such cores failed further down with an
+    # unexplained reshape error.
+    res = res.sum(axis=-1) if res.shape[-1] > 1 else res[..., 0]
 
     mode_sizes_m = [int(c.shape[1]) for c in cores]
     mode_sizes_n = [int(c.shape[2]) for c in cores]
@@ -306,8 +305,6 @@ def ttm_round(cores: list[tn.Tensor], tol: float = 0.0) -> list[tn.Tensor]:
         perm += [k, P + k]
     res = tn.permute(res, perm)
     _merged = [m * n for m, n in zip(mode_sizes_m, mode_sizes_n)]
-    if hasattr(res, 'contiguous'):
-        res = res.contiguous()
     A = res.reshape(M, N)
 
     return ttm_from_matrix(A, mode_sizes_m, mode_sizes_n, tol=tol)
@@ -351,7 +348,5 @@ def ttm_apply(
         rA, mn, ru, rAp, rup = W.shape
         # Merge A and x bonds: (rA·ru, m, rAp·rup)
         Wp = tn.permute(W, [0, 2, 1, 3, 4])
-        if hasattr(Wp, 'contiguous'):
-            Wp = Wp.contiguous()
         out.append(Wp.reshape(rA * ru, mn, rAp * rup))
     return out

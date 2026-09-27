@@ -84,12 +84,9 @@ def _ksl_sweep(cores, ambient_cores, dt):
     d = len(cores)
     env = _AmbientEnvironments(cores, ambient_cores)
 
-    for k in range(d):
+    for k in range(d - 1):
         # -- K step: move the local core along the projected right-hand side
         cores[k] = cores[k] + dt * env.local_core(k)
-
-        if k == d - 1:
-            break
 
         # -- split, so the new left basis is orthonormal
         r_left, mode, r_right = map(int, cores[k].shape)
@@ -104,6 +101,9 @@ def _ksl_sweep(cores, ambient_cores, dt):
 
         # -- absorb into the next core (the "L" half of the K/S/L triple)
         cores[k + 1] = tn.einsum("ab,bnc->anc", s, cores[k + 1])
+
+    # -- the last core gets its K step and no split
+    cores[d - 1] = cores[d - 1] + dt * env.local_core(d - 1)
     return cores
 
 

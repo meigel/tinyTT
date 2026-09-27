@@ -546,23 +546,24 @@ def uq_adf(measurements, dimensions, basis, targeteps=1e-8, maxitr=1000, device=
                 if targeteps and float(tn.to_numpy(rel_res)) <= targeteps:
                     return tinytt.TT(cores)
                 residuals.append(float(tn.to_numpy(rel_res)))
-                if len(residuals) >= rank_window:
-                    stagnation = residuals[-1] / residuals[-rank_window] > 0.99
-                    if stagnation and adapt_rank:
-                        ranks = _ranks_from_cores(cores)
-                        max_rank = max(ranks)
-                        if (iteration - last_rank_update) < max(1, int(rank_every)):
-                            pass
-                        elif rank_max is None or (max_rank + rank_increase) <= rank_max:
-                            cores = _rank_enrich(cores, rank_increase, rank_noise)
-                            last_rank_update = iteration
-                            residuals = [residuals[-1]] * rank_window
-                            rank_updated = True
-                            break
-                        else:
-                            return tinytt.TT(cores)
-                    elif stagnation and not adapt_rank:
+                # residuals starts as [1000.0] * rank_window and only grows,
+                # so the window is always full (the old length check was dead)
+                stagnation = residuals[-1] / residuals[-rank_window] > 0.99
+                if stagnation and adapt_rank:
+                    ranks = _ranks_from_cores(cores)
+                    max_rank = max(ranks)
+                    if (iteration - last_rank_update) < max(1, int(rank_every)):
+                        pass
+                    elif rank_max is None or (max_rank + rank_increase) <= rank_max:
+                        cores = _rank_enrich(cores, rank_increase, rank_noise)
+                        last_rank_update = iteration
+                        residuals = [residuals[-1]] * rank_window
+                        rank_updated = True
+                        break
+                    else:
                         return tinytt.TT(cores)
+                elif stagnation and not adapt_rank:
+                    return tinytt.TT(cores)
 
             if update_rule == "als":
                 if core_pos == 0:

@@ -108,7 +108,10 @@ def dmrg_matvec_python(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4
             W1 = U[:, :r_new]
             W2 = tn.scale_cols(tn.transpose(V[:r_new, :], 0, 1), S[:r_new])
 
-            if i < nswp - 1:
+            # No kick on the final sweep: the kick appends `kickrank` columns
+            # after the rmax cap, and on the last sweep nothing trims them
+            # again, so the result came back with ranks rmax + kickrank.
+            if i < nswp - 1 and not last:
                 W1, Rmat = QR(
                     tn.cat(
                         (W1, tn.randn((W1.shape[0], kickrank), dtype=W1.dtype, device=A.cores[0].device)),
@@ -237,7 +240,10 @@ def dmrg_hadamard_python(z, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank
             W1 = U[:, :r_new]
             W2 = tn.scale_cols(tn.transpose(V[:r_new, :], 0, 1), S[:r_new])
 
-            if i < nswp - 1:
+            # No kick on the final sweep: the kick appends `kickrank` columns
+            # after the rmax cap, and on the last sweep nothing trims them
+            # again, so the result came back with ranks rmax + kickrank.
+            if i < nswp - 1 and not last:
                 W1, Rmat = QR(
                     tn.cat(
                         (W1, tn.randn((W1.shape[0], kickrank), dtype=W1.dtype, device=z.cores[0].device)),

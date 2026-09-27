@@ -56,11 +56,14 @@ testpaths = [
 [tool.coverage.run]
 source = ["tinytt"]
 omit = ["tests/*"]
+# Branch coverage: both sides of every `if`, and loops that run to their
+# iteration cap.  Statement coverage alone cannot see an untaken `else`.
+branch = true
 
 [tool.coverage.report]
-# 98% is where 0.6 landed with tests that assert behaviour rather than chase
-# lines.  What is left is listed in AGENTS.md; anything genuinely unreachable
-# carries a `# pragma: no cover` with the reason on the same line.
+# 100% of statements and branches, with tests that assert behaviour rather
+# than chase lines.  Anything genuinely unreachable carries a
+# `# pragma: no cover` / `# pragma: no branch` with the reason beside it.
 fail_under = 100
 show_missing = true
 exclude_also = [

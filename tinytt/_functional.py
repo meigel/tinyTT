@@ -109,12 +109,12 @@ def _legendre_columns(x, nb, deriv):
         P'_{n+1}      = P'_{n-1} + (2n+1) P_n
         P''_{n+1}     = P''_{n-1} + (2n+1) P'_n
     """
+    # nb >= 1: basis_columns / basis_matrix return early for nb == 0, so the
+    # first column always exists (the old `if nb >= 1` guards were dead).
     zero = tn.zeros_like(x)
     one = tn.ones_like(x)
 
-    vals = []
-    if nb >= 1:
-        vals.append(one)
+    vals = [one]
     if nb >= 2:
         vals.append(x)
     for n in range(1, nb - 1):
@@ -122,9 +122,7 @@ def _legendre_columns(x, nb, deriv):
     if deriv == 0:
         return vals
 
-    d1 = []
-    if nb >= 1:
-        d1.append(zero)
+    d1 = [zero]
     if nb >= 2:
         d1.append(one)
     for n in range(1, nb - 1):
@@ -132,9 +130,7 @@ def _legendre_columns(x, nb, deriv):
     if deriv == 1:
         return d1
 
-    d2 = []
-    if nb >= 1:
-        d2.append(zero)
+    d2 = [zero]
     if nb >= 2:
         d2.append(zero)
     for n in range(1, nb - 1):
@@ -148,12 +144,12 @@ def _hermite_columns(x, nb, deriv):
     ``He_{n+1} = x He_n - n He_{n-1}``, ``He'_n = n He_{n-1}``,
     ``He''_n = n (n-1) He_{n-2}``.
     """
+    # nb >= 1: basis_columns / basis_matrix return early for nb == 0, so the
+    # first column always exists (the old `if nb >= 1` guards were dead).
     zero = tn.zeros_like(x)
     one = tn.ones_like(x)
 
-    vals = []
-    if nb >= 1:
-        vals.append(one)
+    vals = [one]
     if nb >= 2:
         vals.append(x)
     for n in range(1, nb - 1):
