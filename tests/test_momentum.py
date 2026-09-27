@@ -13,8 +13,8 @@ import pytest
 
 import tinytt as tt
 import tinytt._backend as tn
-from tinytt.bug import bug_with_momentum, step_truncate
-from tinytt.manifold import DFIMomentum, DFOMomentum
+from tinytt.bug import step_truncate
+from tinytt.experimental.momentum import DFIMomentum, DFOMomentum, bug_with_momentum
 
 # ---------------------------------------------------------------------------
 # Test helpers

@@ -12,7 +12,7 @@ Demonstrates:
 import numpy as np
 
 import tinytt as tt
-import tinytt._backend as tn
+import tinytt.backend as tn
 
 # ---------------------------------------------------------------------------
 # 1.  TTM as a discrete vector-valued map

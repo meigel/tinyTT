@@ -9,8 +9,8 @@ Demonstrates:
   1. Building a Laplacian TT-MPO (analytical bond-dimension 2)
   2. Constructing a rank-2 initial condition
   3. Time-stepping with :func:`tinytt.bug.step_truncate` (baseline)
-  4. Time-stepping with :func:`tinytt.bug.bug_with_momentum` + DFI
-  5. Time-stepping with :func:`tinytt.bug.bug_with_momentum` + DFO
+  4. Time-stepping with :func:`tinytt.experimental.momentum.bug_with_momentum` + DFI
+  5. Time-stepping with :func:`tinytt.experimental.momentum.bug_with_momentum` + DFO
 """
 
 import time
@@ -18,9 +18,9 @@ import time
 import numpy as np
 
 import tinytt as tt
-import tinytt._backend as tn
-from tinytt.bug import bug_with_momentum, step_truncate
-from tinytt.manifold import DFIMomentum, DFOMomentum
+import tinytt.backend as tn
+from tinytt.bug import step_truncate
+from tinytt.experimental.momentum import DFIMomentum, DFOMomentum, bug_with_momentum
 
 # ---------------------------------------------------------------------------
 # MPO construction (Laplacian, bond-dimension 2)

@@ -21,7 +21,7 @@ Usage:  PYTHONPATH=. python3 examples/tt_compositional.py
 
 import numpy as np
 
-import tinytt._backend as tn
+import tinytt.backend as tn
 from tinytt.compositional import (
     CompositionalTT,
     CTTLayer,

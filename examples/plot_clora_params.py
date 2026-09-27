@@ -17,10 +17,10 @@ import matplotlib.pyplot as plt  # noqa: E402  -- must follow use("Agg")
 
 # the functions this figure needs are inlined from tt_clora_benchmark below
 import tinytt as tt
-import tinytt._backend as tn
-from tinytt._extras import inner
+import tinytt.backend as tn
+from tinytt import inner
 from tinytt.bug import step_truncate
-from tinytt.clora import _factorize_core
+from tinytt.experimental.clora import _factorize_core
 
 
 def build_dD_hamiltonian(d, n, alpha=0.1):

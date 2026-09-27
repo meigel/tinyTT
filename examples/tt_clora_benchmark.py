@@ -16,10 +16,10 @@ import time
 import numpy as np
 
 import tinytt as tt
-import tinytt._backend as tn
-from tinytt._extras import inner
+import tinytt.backend as tn
+from tinytt import inner
 from tinytt.bug import step_truncate
-from tinytt.clora import _factorize_core
+from tinytt.experimental.clora import _factorize_core
 
 
 def build_dD_hamiltonian(d, n, alpha=0.1):

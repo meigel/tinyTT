@@ -8,13 +8,13 @@ page runs as written.
 ```python
 import numpy as np
 import tinytt as tt
-import tinytt._backend as tn
+import tinytt.backend as tn
 ```
 
 ## Bases
 
 ```python
-from tinytt._functional import (
+from tinytt.functional import (
     DifferentiableHermiteBasis,
     HermiteFeatures,
     LegendreFeatures,
@@ -36,7 +36,7 @@ The **class** returns one matrix; the **free function** takes a
 `(batch, dimensions)` array and returns one matrix *per dimension*, as a list.
 
 ```python
-from tinytt._functional import legendre_features
+from tinytt.functional import legendre_features
 
 per_dimension = legendre_features(points, degree=4)
 print(type(per_dimension).__name__, [m.shape[1] for m in per_dimension])   # [5]
@@ -187,7 +187,7 @@ carried by `r_0`), so evaluate them with `_functional.evaluate` rather than
 wrapping them in a `FunctionalTT`.
 
 ```python
-from tinytt._functional import evaluate
+from tinytt.functional import evaluate
 
 test_x = rng.uniform(-1.0, 1.0, size=(100, 2))
 test_y = target(test_x)

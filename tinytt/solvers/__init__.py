@@ -20,6 +20,7 @@ Krylov solvers for the *local* systems (GMRES, BiCGSTAB, CG) live in
 
 from __future__ import annotations
 
+from tinytt._iterative_solvers import BiCGSTAB_reset, cg, gmres, gmres_restart
 from tinytt.solvers._amen import als_solve, amen_mm, amen_solve
 from tinytt.solvers._eig import eig_solve, lanczos_eigh
 from tinytt.solvers._environments import (
@@ -43,6 +44,13 @@ from tinytt.solvers._local_op import (
 from tinytt.solvers._neumann import assemble_neumann_tt, parametric_neumann_solve
 
 __all__ = [
+    # the Krylov solvers live in tinytt._iterative_solvers; these are their
+    # documented public names (the README had listed tt.solvers.gmres_restart
+    # and tt.solvers.BiCGSTAB_reset, which did not exist until now)
+    "BiCGSTAB_reset",
+    "cg",
+    "gmres",
+    "gmres_restart",
     "amen_solve",
     "eig_solve",
     "lanczos_eigh",

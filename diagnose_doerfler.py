@@ -1,4 +1,5 @@
 import numpy as np
+
 import tinytt as tt
 import tinytt._backend as tn
 

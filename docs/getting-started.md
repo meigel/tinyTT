@@ -51,7 +51,7 @@ pip install -r requirements-dev.txt    # pytest, ruff, scipy, coverage, scikit-f
 ```python
 import numpy as np
 import tinytt as tt
-import tinytt._backend as tn
+import tinytt.backend as tn
 
 # Build a TT tensor from a full 2×2×2 array
 full = np.arange(8, dtype=np.float64).reshape(2, 2, 2)
@@ -86,7 +86,7 @@ for the one that was asked for is the bug the warning announced.  Unset it.
 Everything in the package goes through the facade:
 
 ```python
-import tinytt._backend as tn     # never `import torch`
+import tinytt.backend as tn     # never `import torch`
 ```
 
 The facade is where device, dtype and complex-promotion policy live.

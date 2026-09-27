@@ -89,70 +89,6 @@ def step_truncate(state, mpo, dt, threshold=1e-10, max_bond_dim=1024,
     return evolved
 
 
-def bug_with_momentum(
-    state, mpo, dt,
-    *,
-    momentum,
-    threshold=1e-10,
-    max_bond_dim=1024,
-):
-    """Step-truncate evolution with DFI or DFO momentum.
-
-    Wraps the :func:`step_truncate` integrator with
-    tangent-space momentum from :class:`tinytt.manifold.DFIMomentum`
-    or :class:`tinytt.manifold.DFOMomentum`.
-
-    Parameters
-    ----------
-    state : TT
-        Current TT-vector state.
-    mpo : TT
-        Operator as TT-matrix.
-    dt : float
-        Time step size.
-    momentum : DFIMomentum | DFOMomentum
-        Momentum handler.
-    threshold : float, optional
-        SVD truncation threshold for rounding (default 1e-10).
-    max_bond_dim : int or list, optional
-        Maximum bond dimension (default 1024).
-
-    Returns
-    -------
-    TT
-        Evolved TT state (also updated in-place).
-    """
-    num_sites = len(mpo.cores)
-    if num_sites != len(state.cores):
-        raise ValueError("State and Hamiltonian must have same number of sites")
-    if state.is_ttm or not mpo.is_ttm:
-        raise ValueError("state must be a TT vector and mpo must be a TT-matrix")
-
-    if isinstance(max_bond_dim, int):
-        rmax = [1] + [max_bond_dim] * (num_sites - 1) + [1]
-    else:
-        rmax = max_bond_dim
-
-    cores = [c.clone() for c in state.cores]
-    state_copy = TT(cores)
-
-    # 1. Compute PDE RHS: H @ psi
-    rhs = _linear_rhs(mpo, state_copy, eps=threshold * 0.1, rmax=max(rmax))
-
-    # 2. Apply momentum regularisation (DFI or DFO)
-    #    Returns a TTTangent velocity.
-    regularized = momentum.regularize(state_copy, rhs)
-
-    # 3. Evolve along regularised tangent direction
-    step_factor = -dt
-    evolved = regularized.affine_to_tt(step_factor)
-
-    # 4. Round to maintain rank budget
-    evolved = evolved.round(eps=threshold, rmax=rmax)
-    _copy_back(state, evolved)
-    return evolved
-
-
 def bug_like_sweep(state, mpo, dt, threshold=1e-10, max_bond_dim=1024,
                    real_time=False):
     """Alias for :func:`step_truncate`, kept because 0.4 scripts call it.
@@ -168,5 +104,23 @@ def bug_like_sweep(state, mpo, dt, threshold=1e-10, max_bond_dim=1024,
 __all__ = [
     "step_truncate",
     "bug_like_sweep",
-    "bug_with_momentum",
 ]
+
+
+def __getattr__(name):
+    # bug_with_momentum moved to tinytt.experimental.momentum in 0.6; the old
+    # name keeps working, with a warning, until 0.7.
+    if name == "bug_with_momentum":
+        import warnings
+
+        from tinytt.experimental.momentum import bug_with_momentum
+
+        warnings.warn(
+            "tinytt.bug.bug_with_momentum moved to "
+            "tinytt.experimental.momentum.bug_with_momentum; the old name "
+            "will be removed in 0.7.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return bug_with_momentum
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

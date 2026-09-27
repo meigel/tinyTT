@@ -1,6 +1,6 @@
 
 import tinytt as tt
-import tinytt._backend as tn
+import tinytt.backend as tn
 from tinytt.tdvp import build_ising_mpo, tdvp_imag_time
 
 

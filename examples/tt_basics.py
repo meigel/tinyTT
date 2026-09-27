@@ -8,7 +8,7 @@ across different tensor sizes.
 import numpy as np
 
 import tinytt as tt
-import tinytt._backend as tn
+import tinytt.backend as tn
 
 # Create TT from full tensor
 full = np.random.RandomState(0).rand(2, 3, 4).astype(np.float64)

@@ -8,7 +8,7 @@ Each page assumes these three imports:
 ```python
 import numpy as np
 import tinytt as tt
-import tinytt._backend as tn
+import tinytt.backend as tn
 ```
 
 ## Constructing a TT tensor
@@ -111,7 +111,7 @@ Rules are accepted by the sweeping solvers as `truncation_rule=`, and by the
 core-level `round_tt` — they are not an argument of `TT.round`.
 
 ```python
-from tinytt._decomposition import round_tt
+from tinytt import round_tt
 
 cores, ranks = round_tt(
     [c.clone() for c in big.cores], big.R.copy(), eps=1e-8,

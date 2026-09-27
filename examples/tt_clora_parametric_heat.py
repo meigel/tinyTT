@@ -18,7 +18,7 @@ import time
 
 import numpy as np
 
-import tinytt._backend as tn
+import tinytt.backend as tn
 from tinytt.functional_tt import FunctionalTT
 from tinytt.manifold import (
     FunctionalTTLinearization,
@@ -303,7 +303,7 @@ def main():
 
     if args.lo_rank > 0:
         # tt-CLoRA
-        from tinytt.clora import CLoRAModel
+        from tinytt.experimental.clora import CLoRAModel
         lo_model = CLoRAModel(model, lo_ranks=[1, args.lo_rank])  # core1 capped at 1, core2 at args.lo_rank
         print(f"  tt-CLoRA: {lo_model.parameter_count()} trainable / "
               f"{lo_model.total_parameter_count()} total params")

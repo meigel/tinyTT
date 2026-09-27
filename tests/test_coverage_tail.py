@@ -521,13 +521,13 @@ class TestMomentumIntegratorGuards:
 
     @staticmethod
     def _momentum():
-        from tinytt.manifold import DFIMomentum
+        from tinytt.experimental.momentum import DFIMomentum
 
         return DFIMomentum()
 
     def test_a_site_count_mismatch_is_refused(self):
-        from tinytt.bug import bug_with_momentum
         from tinytt.dynamics import build_ising_mpo
+        from tinytt.experimental.momentum import bug_with_momentum
 
         state, _ = self._problem(4)
         with pytest.raises(ValueError, match="same number of sites"):
@@ -535,14 +535,14 @@ class TestMomentumIntegratorGuards:
                               momentum=self._momentum())
 
     def test_a_tt_matrix_state_is_refused(self):
-        from tinytt.bug import bug_with_momentum
+        from tinytt.experimental.momentum import bug_with_momentum
 
         _, mpo = self._problem(4)
         with pytest.raises(ValueError, match="state must be a TT vector"):
             bug_with_momentum(mpo, mpo, 0.01, momentum=self._momentum())
 
     def test_a_per_bond_rank_list_is_accepted(self):
-        from tinytt.bug import bug_with_momentum
+        from tinytt.experimental.momentum import bug_with_momentum
 
         state, mpo = self._problem(4)
         caps = [1, 2, 2, 2, 1]

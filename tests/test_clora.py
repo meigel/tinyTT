@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 import tinytt._backend as tn
-from tinytt.clora import (
+from tinytt.experimental.clora import (
     CLoRAModel,
     _factorize_core,
     _merge_factors,
@@ -159,7 +159,7 @@ class TestCLoRAModel:
         in_norm = float(tn.to_numpy(tang.norm()).item())
         c_updates = clo.project_update(tang)
         # Compute the merged-core norm of the projected update
-        from tinytt.clora import _merge_factors
+        from tinytt.experimental.clora import _merge_factors
         projected_blocks = []
         for k in range(clo.d):
             projected_blocks.append(

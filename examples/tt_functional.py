@@ -15,8 +15,8 @@ Demonstrates:
 
 import numpy as np
 
-import tinytt._backend as tn
-from tinytt._functional import legendre_features
+import tinytt.backend as tn
+from tinytt.functional import legendre_features
 from tinytt.functional_tt import random_ftt
 
 # ---------------------------------------------------------------------------

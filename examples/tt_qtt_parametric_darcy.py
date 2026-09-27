@@ -25,7 +25,7 @@ from scipy.sparse.linalg import spsolve
 
 sys.path.insert(0, '.')
 import tinytt as tt
-import tinytt._backend as tn
+import tinytt.backend as tn
 from tinytt.fem import (
     mass_1d,
     stiffness_1d,

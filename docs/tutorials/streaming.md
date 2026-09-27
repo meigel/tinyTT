@@ -6,7 +6,7 @@ is too large to materialise. Every snippet on this page runs as written.
 ```python
 import numpy as np
 import tinytt as tt
-import tinytt._backend as tn
+import tinytt.backend as tn
 from tinytt.streaming import StreamingCurvature, StreamingTT, streaming_tt
 ```
 

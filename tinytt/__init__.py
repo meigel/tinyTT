@@ -37,6 +37,7 @@ tt.linesearch
 """
 
 from . import bug, dynamics, errors, fem, grad, interpolate, solvers, tdvp, uq_adf
+from ._decomposition import round_tt
 from ._dmrg import dmrg_hadamard
 from ._extras import (
     add,
@@ -145,6 +146,7 @@ from .streaming import StreamingCurvature, StreamingTT, streaming_tt
 
 __all__ = [
     'TT',
+    'round_tt',
     'eye',
     'zeros',
     'kron',

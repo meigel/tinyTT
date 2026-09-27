@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 
 import tinytt as tt
-import tinytt._backend as tn
+import tinytt.backend as tn
 
 
 def solve_heat_equation_2d(

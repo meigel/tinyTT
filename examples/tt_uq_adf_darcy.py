@@ -25,9 +25,9 @@ import time
 
 import numpy as np
 
-import tinytt._backend as tn
+import tinytt.backend as tn
 from tinytt import uq_adf as uq
-from tinytt._backend import float64
+from tinytt.backend import float64
 
 # ---------------------------------------------------------------------------
 # FEM solver for one parametric sample

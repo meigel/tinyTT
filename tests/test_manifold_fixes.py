@@ -20,10 +20,9 @@ import pytest
 
 import tinytt as tt
 import tinytt._backend as tn
+from tinytt.experimental.momentum import DFIMomentum, DFOMomentum
 from tinytt.functional_tt import random_ftt
 from tinytt.manifold import (
-    DFIMomentum,
-    DFOMomentum,
     TangentAdjacentPair,
     TangentBlockJacobi,
     TTManifoldFrame,

@@ -7,7 +7,7 @@ uncertain inputs. Every snippet on this page runs as written.
 ```python
 import numpy as np
 import tinytt as tt
-import tinytt._backend as tn
+import tinytt.backend as tn
 from tinytt import uq_adf as uq
 ```
 

@@ -58,7 +58,7 @@ print((b - x).norm().numpy())      # ≈ 0
 
 ## Backend
 
-One backend: PyTorch.  Everything goes through `import tinytt._backend as tn`,
+One backend: PyTorch.  Everything goes through `import tinytt.backend as tn`,
 and nothing imports `torch` directly — see [Backend](tutorials/backend.md).
 `TINYTT_BACKEND` is read only so that a stale setting fails loudly rather
 than quietly selecting something else: `tinygrad` raises in 0.6, and so does

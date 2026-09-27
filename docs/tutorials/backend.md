@@ -6,8 +6,15 @@ package reaches it through one module:
 ```python
 import numpy as np
 import tinytt as tt
-import tinytt._backend as tn      # never `import torch`
+import tinytt.backend as tn      # never `import torch`
 ```
+
+`tinytt.backend` is the public name of the package-internal `tinytt._backend`:
+the same module object, not a copy, so a default device or dtype set through
+one is seen through the other.  Code inside the package imports `_backend`;
+user code should import `backend`.  `tinytt.functional` and
+`tinytt.linesearch` are public names for `_functional` and `_linesearch` in
+the same way.
 
 ## Why a facade at all, with one backend behind it
 

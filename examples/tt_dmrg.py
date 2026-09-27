@@ -1,7 +1,7 @@
 import numpy as np
 
 import tinytt as tt
-import tinytt._backend as tn
+import tinytt.backend as tn
 
 rng = np.random.RandomState(2)
 

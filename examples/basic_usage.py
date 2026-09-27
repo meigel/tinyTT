@@ -7,7 +7,7 @@ All errors are reported as relative error: ‖pred − truth‖ / ‖truth‖.
 import numpy as np
 
 import tinytt as tt
-import tinytt._backend as tn
+import tinytt.backend as tn
 
 # Build a TT tensor from a full array
 full = np.arange(8, dtype=np.float64).reshape(2, 2, 2)

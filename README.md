@@ -23,7 +23,7 @@ tutorials are the depth.
 ```python
 import numpy as np
 import tinytt as tt
-import tinytt._backend as tn
+import tinytt.backend as tn
 
 x = tt.ones([4, 4])                # a 4x4 TT tensor, rank 1
 print(x.R)                         # [1, 1, 1]
@@ -126,7 +126,7 @@ Optimise on the fixed-rank TT manifold without leaving the TT format.
 ### Fitting and regression
 
 `FunctionalTT` evaluates a basis expansion (`forward`, `integrate`,
-`linearize`, `watch`/`unwatch` for autograd); `tinytt._functional` supplies the
+`linearize`, `watch`/`unwatch` for autograd); `tinytt.functional` supplies the
 bases (`LegendreFeatures`, `HermiteFeatures`, `MonomialFeatures`,
 `DifferentiableHermiteBasis`) and analytic derivatives (`gradient`, `jacobian`,
 `divergence`, `laplace`). `tinytt.regression` has `als_regression` and
@@ -159,18 +159,28 @@ updates, and optional rank adaptivity (`uq_ra_adf`, or `adapt_rank=True`).
 | any callable | `(S, **context) → int`, via the `TruncationRule` protocol |
 
 The two Dörfler rules mark on different quantities and are **not**
-interchangeable. `tinytt._linesearch.armijo_ls` is a two-way Armijo
+interchangeable. `tinytt.linesearch.armijo_ls` is a two-way Armijo
 backtracking search that accepts a custom retraction, and `tinytt.grad`
 wraps autograd for TT objects (`watch`, `grad`, `unwatch`).
 
 ### Backend
 
 One backend: PyTorch. Every module goes through the facade in
-`tinytt/_backend.py` (`import tinytt._backend as tn`) and nothing imports
+`tinytt/_backend.py` (`import tinytt.backend as tn`) and nothing imports
 `torch` directly, so device, dtype and complex-promotion policy live in one
 place.
 
 → [Backend tutorial](docs/tutorials/backend.md)
+
+### Experimental
+
+`tinytt.experimental` holds research methods whose API may still change:
+tt-CLoRA (`experimental.clora`) and DFI/DFO transported momentum with
+`bug_with_momentum` (`experimental.momentum`).  Import it explicitly; the core
+package never does.  A module is promoted to the core once it has a test
+against an independent reference, an executed tutorial or example, an API
+unchanged for a minor release, and a CHANGELOG entry.  Their pre-0.6 import
+paths (`tinytt.clora`, `tinytt.manifold.DFIMomentum`, …) warn until 0.7.
 
 ## Setup
 
@@ -200,6 +210,7 @@ tinytt/                    # the library
 ├── _functional.py         # Legendre / Hermite / monomial bases and derivatives
 ├── _linesearch.py         # Armijo line search
 ├── _backend.py            # the PyTorch facade — the only place torch is imported
+├── backend.py, functional.py, linesearch.py   # public names for the three above
 ├── functional_tt.py       # FunctionalTT
 ├── compositional.py       # CompositionalTT + CTTLayer
 ├── regression.py          # ALS regression, continuity fit
@@ -230,7 +241,10 @@ tinytt/                    # the library
 │   ├── preconditioner.py  #   TangentBlockJacobi, TangentAdjacentPair
 │   ├── canonical.py       #   QR gauge moves, canonical sweeps
 │   └── functional.py      #   FunctionalTTLinearization
-└── problems/              # parametric problem samplers (Darcy)
+├── problems/              # parametric problem samplers (Darcy)
+└── experimental/          # research code, API not yet stable
+    ├── clora.py           #   tt-CLoRA
+    └── momentum.py        #   DFI / DFO momentum, bug_with_momentum
 tests/                     # 66 files, 1477 tests, 100% statement coverage
 examples/                  # 24 runnable scripts
 docs/                      # mkdocs sources; every snippet is executed by the suite

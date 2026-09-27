@@ -6,7 +6,7 @@ without materialising a dense array. Every snippet runs as written.
 ```python
 import numpy as np
 import tinytt as tt
-import tinytt._backend as tn
+import tinytt.backend as tn
 ```
 
 ## Linear systems
@@ -81,7 +81,7 @@ solvers use for their *local* systems. Two calling conventions coexist --
 object with a `.matvec` method.
 
 ```python
-from tinytt._iterative_solvers import cg
+from tinytt.solvers import cg
 
 dense_A = np.asarray(tn.to_numpy(A.full())).reshape(64, 64)
 rhs = tn.tensor(np.asarray(tn.to_numpy(b.full())).reshape(-1, 1))
@@ -95,7 +95,7 @@ print("cg:", {k: info[k] for k in ("converged", "iterations")},
 ```
 
 ```python
-from tinytt._iterative_solvers import BiCGSTAB_reset, gmres_restart
+from tinytt.solvers import BiCGSTAB_reset, gmres_restart
 
 
 class DenseOperator:

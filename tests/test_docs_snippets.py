@@ -35,7 +35,7 @@ import sys
 import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PRELUDE = "import numpy as np\nimport tinytt as tt\nimport tinytt._backend as tn\n"
+PRELUDE = "import numpy as np\nimport tinytt as tt\nimport tinytt.backend as tn\n"
 SKIP = re.compile(r"^\s*#\s*docs-check:\s*skip\s+(?P<reason>\S.*)$", re.M)
 TIMEOUT = 300
 

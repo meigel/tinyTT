@@ -35,6 +35,7 @@ backends, autograd, and manifold geometry). Key supporting areas:
 | **Problems** | **`problems/`** | **DarcySampler — parametric 2D Darcy flow (FEM+KL)** |
 | Autograd | `grad.py` | `watch`/`unwatch`/`grad` helpers |
 | **Backend** | `_backend.py` | The PyTorch backend.  Everything goes through `import tinytt._backend as tn`; nothing imports `torch` directly. |
+| **Experimental** | `experimental/` | Research code with an unstable API: tt-CLoRA (`clora.py`), DFI/DFO momentum and `bug_with_momentum` (`momentum.py`).  The core never imports it; promotion rules are in its `__init__` docstring. |
 | Errors | `errors.py` | Exception classes |
 
 ### Test files
@@ -128,7 +129,8 @@ Use 4-space indentation and follow standard Python style (PEP 8). Prefer
 `UPPER_SNAKE_CASE` for constants. Match existing patterns in the file you are
 editing and keep public APIs documented with concise docstrings.
 
-**Always use `tinytt._backend` (`import as tn`)** rather than importing
+**Inside the package, always use `tinytt._backend` (`import as tn`)**; user-facing
+code, docs and examples use its public name `tinytt.backend`.  Never import
 `torch` directly.  The facade is where device, dtype and complex-promotion
 policy live; reaching around it is how the 0.4 tree ended up with a
 `_mode_ops` helper that forced float64 on CPU regardless of the input.

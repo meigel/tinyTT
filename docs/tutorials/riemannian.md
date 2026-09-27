@@ -6,7 +6,7 @@ snippet on this page runs as written.
 ```python
 import numpy as np
 import tinytt as tt
-import tinytt._backend as tn
+import tinytt.backend as tn
 ```
 
 ## The frame
@@ -181,7 +181,7 @@ a `FunctionalTTLinearization` produces — and a positive damping.
 ```python
 from tinytt.functional_tt import random_ftt
 from tinytt.manifold import TangentAdjacentPair, TangentBlockJacobi
-from tinytt._functional import LegendreFeatures
+from tinytt.functional import LegendreFeatures
 
 model = random_ftt(n0=2, feature_dims=[3, 3, 3], ranks=[2, 2, 2], seed=0)
 rng = np.random.default_rng(0)
@@ -259,4 +259,4 @@ print(f"final distance {float((current - target).norm()):.3e}")
 
 - [`examples/tt_riemannian_gd.py`](https://github.com/meigel/tinyTT/blob/main/examples/tt_riemannian_gd.py)
 - [Functional TT](functional-tt.md) — linearization for Gauss-Newton
-- `tinytt._linesearch.armijo_ls` — Armijo backtracking
+- `tinytt.linesearch.armijo_ls` — Armijo backtracking
