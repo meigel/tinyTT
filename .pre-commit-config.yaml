@@ -1,10 +1,13 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.5.0
+    # match the ruff that CI installs; `ruff check .` is the enforced gate.
+    # No ruff-format hook: the code base is not ruff-formatted (it would
+    # rewrite 132 of 155 files), so the hook reformatted whatever a commit
+    # touched and buried the real change in noise.
+    rev: v0.15.11
     hooks:
       - id: ruff
         args: [--fix]
-      - id: ruff-format
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0

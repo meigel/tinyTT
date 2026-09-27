@@ -1,5 +1,5 @@
 """
-DMRG implementation for fast matvec and hadamard products (tinygrad backend).
+DMRG sweeps for the TT-matrix × TT matvec and the Hadamard product.
 Inspired by TT-Toolbox from MATLAB.
 """
 

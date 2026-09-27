@@ -12,7 +12,7 @@ A clear and concise description of the problem.
 
 **To Reproduce**
 Minimal code snippet that reproduces the issue. Include tensor shapes, TT
-ranks, and the backend you're using.
+ranks, dtype and device.
 
 ```python
 import tinytt as tt
@@ -26,8 +26,9 @@ What you expected to happen.
 Full error traceback or incorrect output.
 
 **Environment**
-- Backend: [tinygrad / PyTorch] and version
-- Device: [CPU / CUDA / Metal]
+- tinyTT version:
+- PyTorch version:
+- Device: [CPU / CUDA / MPS]
 - Python version:
 - OS:
 

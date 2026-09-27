@@ -376,7 +376,7 @@ class StreamingCurvature:
         float
             The spectral certificate error norm if compressed, else 0.0.
         """
-        # Ensure rows is a tinygrad tensor
+        # Ensure rows is a backend tensor
         rows = tn.tensor(rows) if not tn.is_tensor(rows) else rows
         if len(rows.shape) != 2 or int(rows.shape[1]) != self.dimension:
             raise ValueError("rows must have shape (batch, dimension)")
@@ -397,7 +397,7 @@ class StreamingCurvature:
         # Diagonal decays
         self.diagonal = (1.0 - gamma) * self.diagonal
 
-        # Update factor: handle rank=0 separately to avoid tinygrad cat issues
+        # Update factor: rank 0 is handled separately (nothing to concatenate)
         new_factor = ((gamma / batch) ** 0.5) * rows.transpose(0, 1)  # (dim, batch)
         if self.rank == 0:
             self.factor = new_factor

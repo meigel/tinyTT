@@ -17,9 +17,12 @@ jobs:
         with:
           python-version: '3.11'
 
-      - run: pip install mkdocs mkdocs-material mkdocstrings[python] mkdocs-literate-nav
+      # mkdocs.yml uses only the material theme and the search plugin
+      - run: pip install mkdocs mkdocs-material
 
-      - run: mkdocs build --site-dir _site
+      # --strict: a broken link or nav entry fails the build instead of
+      # deploying a site with holes in it
+      - run: mkdocs build --strict --site-dir _site
 
       - uses: actions/upload-pages-artifact@v3
         with:

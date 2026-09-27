@@ -245,7 +245,7 @@ tinytt/                    # the library
 └── experimental/          # research code, API not yet stable
     ├── clora.py           #   tt-CLoRA
     └── momentum.py        #   DFI / DFO momentum, bug_with_momentum
-tests/                     # 66 files, 1477 tests, 100% statement coverage
+tests/                     # 69 files, 1539 tests, 100% statement and branch coverage
 examples/                  # 24 runnable scripts
 docs/                      # mkdocs sources; every snippet is executed by the suite
 benchmarks/                # wall-clock benchmarks with baseline comparison

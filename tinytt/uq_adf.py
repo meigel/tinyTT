@@ -1,5 +1,5 @@
 """
-Adaptive TT regression (UQ-ADF) ported to tinyTT/tinygrad.
+Adaptive TT regression (UQ-ADF).
 """
 from __future__ import annotations
 

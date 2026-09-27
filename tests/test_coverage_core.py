@@ -151,7 +151,7 @@ def test_construct_from_cores_on_different_devices_is_rejected():
 
 
 def test_construct_from_unsupported_source_type():
-    with pytest.raises(NotImplementedError, match="numpy arrays"):
+    with pytest.raises(NotImplementedError, match="a numpy array"):
         tt.TT(5)
 
 

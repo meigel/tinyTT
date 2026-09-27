@@ -4,8 +4,9 @@
 
 Core functionality lives in `tinytt/` (TT classes, solvers, helpers,
 backends, autograd, and manifold geometry). Key supporting areas:
-- `tests/` — 53 test files, 693 tests.
+- `tests/` — 69 test files, 1539 tests; 100% statement and branch coverage, gated in CI.
 - `examples/` — 24 runnable scripts covering core features.
+- `benchmarks/` — `bench.py`, wall-clock timings with baseline comparison.
 - `docs/` — the mkdocs site.  `mkdocs build --strict` must stay clean, and
   every Python snippet in `README.md` and `docs/` must run: `test_docs_snippets.py`
   executes them cumulatively per file.  A block that genuinely cannot run here
@@ -34,7 +35,7 @@ backends, autograd, and manifold geometry). Key supporting areas:
 | Truncation | `truncation.py` | Threshold, Dörfler, adaptive truncation rules |
 | **Problems** | **`problems/`** | **DarcySampler — parametric 2D Darcy flow (FEM+KL)** |
 | Autograd | `grad.py` | `watch`/`unwatch`/`grad` helpers |
-| **Backend** | `_backend.py` | The PyTorch backend.  Everything goes through `import tinytt._backend as tn`; nothing imports `torch` directly. |
+| **Backend** | `_backend.py` | The PyTorch backend.  Package code imports `tinytt._backend as tn`; user code uses the public alias `tinytt.backend`.  Nothing imports `torch` directly. |
 | **Experimental** | `experimental/` | Research code with an unstable API: tt-CLoRA (`clora.py`), DFI/DFO momentum and `bug_with_momentum` (`momentum.py`).  The core never imports it; promotion rules are in its `__init__` docstring. |
 | Errors | `errors.py` | Exception classes |
 
@@ -111,10 +112,15 @@ backends, autograd, and manifold geometry). Key supporting areas:
 
 - `python3 -m venv venv && source venv/bin/activate` creates/activates the venv.
 - `pip install -r requirements.txt` installs numpy and PyTorch.
-- `pip install -r requirements-dev.txt` installs pytest and ruff.
-- `PYTHONPATH=. pytest -q tests` runs the suite (693 tests, ~105 s on CPU;
-  ~37 s of that is `test_examples_run.py`, which executes all 24 examples).
-- `ruff check tinytt tests` must be clean before a commit.
+- `pip install -r requirements-dev.txt` installs pytest, ruff, scipy, coverage
+  and scikit-fem (the last is needed for the coverage gate).
+- `PYTHONPATH=. pytest -q tests` runs the suite (1539 tests; about 6 min on a CPU
+  container under coverage, including `test_examples_run.py`, which executes
+  all 24 examples).
+- `ruff check .` must be clean before a commit (CI lints the whole tree).
+- The coverage gate is 100% of statements and branches:
+  `python -m coverage run -m pytest tests -q && python -m coverage report`.
+- `python benchmarks/bench.py --compare baseline.json` for performance work.
 
 To run a focused subset:
 ```

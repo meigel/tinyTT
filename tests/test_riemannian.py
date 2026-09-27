@@ -323,7 +323,7 @@ class TestTangentProject:
         cores = _make_tt_cores(d=3, n=3, r=2, seed=72)
         ns = [int(c.shape[1]) for c in cores]
         Z = np.random.default_rng(2).standard_normal(ns)
-        # Both ndarray and tinygrad tensor inputs should work.
+        # Both ndarray and backend tensor inputs should work.
         proj_np = _tt_dense_from_cores(tangent_project(cores, Z))
         proj_tn = _tt_dense_from_cores(tangent_project(cores, tn.tensor(Z, dtype=tn.float64)))
         np.testing.assert_allclose(proj_np, proj_tn, atol=1e-12)

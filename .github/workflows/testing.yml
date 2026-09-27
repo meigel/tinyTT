@@ -22,10 +22,6 @@ jobs:
         # requirements-dev.txt includes scikit-fem: without it tinytt.problems
         # cannot import, its tests skip, and the 100% coverage gate fails.
         run: pip install -r requirements.txt -r requirements-dev.txt
-      - name: Drop the stub backend directory if checkout left one
-        # An empty `tinygrad/` directory (left by an uninitialised submodule in
-        # older checkouts) shadows the installed package under PYTHONPATH=.
-        run: rmdir tinygrad || true
       - name: Run tests with coverage
         # fail_under = 100 in pyproject.toml: the report step fails the job if
         # any statement is uncovered.

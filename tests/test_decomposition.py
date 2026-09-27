@@ -38,24 +38,24 @@ class TestRankChopNumpy:
         assert r_loose <= r_tight
 
 
-class TestRankChopTinygrad:
-    def test_rank_chop_tinygrad_zero_norm(self):
+class TestRankChopOnTensors:
+    def test_rank_chop_zero_norm(self):
         s = tn.tensor([0.0, 0.0, 0.0])
         assert rank_chop(s, 1e-10) == 1
 
-    def test_rank_chop_tinygrad_basic(self):
+    def test_rank_chop_basic(self):
         s = tn.tensor([10.0, 1.0, 0.1, 0.01, 0.001])
         eps = 0.05
         r = rank_chop(s, eps)
         assert r >= 1
         assert r <= int(s.shape[0])
 
-    def test_rank_chop_tinygrad_all_energy(self):
+    def test_rank_chop_all_energy(self):
         s = tn.tensor([1.0, 1.0, 1.0])
         r = rank_chop(s, 0.0)
         assert r == 3
 
-    def test_rank_chop_tinygrad_single_value(self):
+    def test_rank_chop_single_value(self):
         s = tn.tensor([5.0])
         r = rank_chop(s, 1e-10)
         assert r == 1
@@ -66,7 +66,7 @@ class TestRankChopTinygrad:
         eps = 0.05
         r_np = rank_chop(s_np, eps)
         r_tn = rank_chop(s_tn, eps)
-        assert r_np == r_tn, f"numpy={r_np}, tinygrad={r_tn}"
+        assert r_np == r_tn, f"numpy={r_np}, tensor={r_tn}"
 
 
 class TestSVD:

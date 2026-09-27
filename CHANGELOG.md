@@ -11,12 +11,16 @@ made it.
 
 | Version | Bump commit | Date | Backend | Test functions at the bump |
 |---|---|---|---|---|
-| 0.6 | unreleased | — | PyTorch | 1228 (1477 once parametrised) |
+| 0.6 | tag `v0.6` | 2026-09-27 | PyTorch | 1280 (1539 once parametrised) |
 | 0.5 | `6d48f70` | 2026-09-11 | PyTorch only | 525 |
 | 0.4 | `c802d88` | 2026-06-16 | tinygrad (default) or PyTorch | 348 |
 | 0.3 | `2986af5` | 2026-01-19 | tinygrad | 32 |
 
-## Unreleased (0.6)
+## 0.6 — 2026-09-27
+
+Author and maintainer: Martin Eigel.  `pyproject.toml` and `LICENSE` now say
+so; they had carried metadata copied into the first commit.  torchTT, which
+inspired the API, is credited in the README.
 
 ### Breaking changes
 
@@ -49,7 +53,40 @@ Refusals where a wrong answer used to come back:
 | `uq_adf` on an empty `UQMeasurementSet` | "stack expects a non-empty list" | `ValueError` naming the empty set; a mismatched set names both counts |
 | `random_ctt` with a basis that returns no `.shape` | silently assumed 2 basis functions | `InvalidArguments` asking for `basis_size=` |
 
+### Deprecated (removal in 0.7)
+
+Research code moved to the new `tinytt.experimental` package (see *Added*).
+The old names still work and raise a `DeprecationWarning` naming the new one:
+
+| Old | New |
+|---|---|
+| `tinytt.clora` | `tinytt.experimental.clora` |
+| `tinytt.manifold.momentum`, `tinytt.manifold.DFIMomentum` / `DFOMomentum` | `tinytt.experimental.momentum` |
+| `tinytt.bug.bug_with_momentum` | `tinytt.experimental.momentum.bug_with_momentum` |
+
 ### Added
+
+**Public names for the modules the documentation imports.**
+`tinytt.backend`, `tinytt.functional` and `tinytt.linesearch` are the public
+names of `_backend`, `_functional` and `_linesearch` — the same module
+objects, so state such as the default device is shared.  Every tutorial had
+started with `import tinytt._backend as tn`.  `tinytt.solvers` now exports
+`cg`, `gmres`, `gmres_restart` and `BiCGSTAB_reset` (the README listed the
+last two there before they existed), and `tinytt.round_tt` is exported.
+
+**`tinytt.experimental`**, for research methods whose API may still change:
+tt-CLoRA and DFI/DFO transported momentum.  The history is the reason — the
+adaptive NGF solver, a flow-matching backend and the conditional transport
+maps each entered the core API and left it within weeks.  The package
+docstring gives the promotion bar: a test against an independent reference,
+an executed tutorial or example, an API unchanged for a minor release, and a
+CHANGELOG entry.  The core never imports it; a test checks that.  `expsum`
+and the periodic FEM blocks stay in the core: they are numerical building
+blocks with closed-form tests.
+
+**`benchmarks/bench.py`**: median wall-clock times for TT-SVD, rounding,
+matvec, DMRG Hadamard, AMEn, `eig_solve` and a TDVP step, with `--save`,
+`--compare` and `--fail-slower`.  Not run in CI, where timings are noise.
 
 **`tinytt.solvers.eig_solve` — a variational eigenvalue solver.**  The one
 real capability gap left by 0.5: there was no ground-state or eigenpair
@@ -92,6 +129,13 @@ is 4e-6 — and in a sweep it is the *vector* that becomes the next core.
 
 ### Silent wrong results, fixed
 
+* **`dmrg_hadamard` and `dmrg_matvec` returned ranks above `rmax`** — up to
+  `rmax + kickrank`: `rmax=3` gave `R = [1, 3, 7, 1]`.  The rank kick ran on
+  the final sweep as well, appending columns after the cap with nothing left
+  to trim them.  **`dmrg_cross` did the same with its `kick`** (`rmax=1` gave
+  `[1, 3, 3, 1]`); its extra columns carry zero weight, so the result is now
+  rounded back to `rmax`, exactly.  Found by covering the per-bond `rmax`
+  branches.
 * **`tn.linalg.svd` returned a wrong decomposition for exactly rank-deficient
   input on macOS** (`150eaa8`).  The Accelerate `gesdd` path behind
   `torch.linalg.svd` gave, for a 131×131 rank-64 matrix, singular values whose
@@ -122,6 +166,9 @@ is 4e-6 — and in a sweep it is the *vector* that becomes the next core.
 
 ### Crashes and unhelpful errors, fixed
 
+* `ttm_round` squeezed a right boundary bond larger than 1 instead of summing
+  it as `ttm_to_matrix` does, and failed further down with a bare reshape
+  error.
 * `TT.set_core` with a core of the wrong *length* raised `IndexError: tuple
   index out of range` — the length check was last in an `or` chain that
   indexed `shape[3]` first.  It now raises the documented `InvalidArguments`.
@@ -137,6 +184,14 @@ is 4e-6 — and in a sweep it is the *vector* that becomes the next core.
 
 ### Removed dead code
 
+* Found by branch coverage: the `if nb >= 1` guards in the basis builders
+  (callers return early for `nb == 0`), a KSL loop whose only exit was a
+  `break` on its last iteration, an always-true window check in `uq_adf`, an
+  `if cores_new` right after a read of `cores[0]`, and four tinygrad-era
+  `hasattr(x, "contiguous")` guards in `_ttm_base`.
+* `diagnose_doerfler.py`, a one-off debugging script committed at the
+  repository root in July; the `_rank_chop_tinygrad` alias; module docstrings
+  and an error message that still said "backed by tinygrad".
 * `dynamics._tdvp._coefficient` (no callers), the unreachable empty-sample
   branches in `uq_adf`, the redundant `else` in `random_ctt`'s basis-size
   detection, and the tinygrad `try/except TypeError` around `backward` in
@@ -173,6 +228,21 @@ is 4e-6 — and in a sweep it is the *vector* that becomes the next core.
 
 ### Coverage and CI
 
+* **Branch coverage is on and gated at 100%**, together with statements
+  (6883 statements, 2396 branches, none missed).  The first branch run found
+  52 untaken branches; `tests/test_coverage_branches.py` covers the reachable
+  ones — iteration caps asserted to report non-convergence, per-bond `rmax`
+  lists, degree-0 bases against closed forms — and the rest were dead code
+  (above).  The GLL Newton cap is the one `pragma: no branch`.
+* Test order no longer matters: `conftest.py` seeds the torch and numpy RNGs
+  before every test and every module.  Twenty-eight test files draw from
+  `tt.random` without a seed, which is what made the KSL order test flaky;
+  a retraction test turned out to depend on order in the same way.
+* CI: the obsolete `rmdir tinygrad` step is gone; the docs build runs with
+  `--strict` and installs only what `mkdocs.yml` uses.
+* pre-commit: ruff pinned to the version CI uses (it was v0.5.0), and the
+  `ruff-format` hook removed — the code base is not ruff-formatted, so the
+  hook rewrote most of whatever a commit touched.
 * Statement coverage **88% → 100%** (6860 statements, 0 missing), and CI now
   fails below 100 (`fail_under` in `pyproject.toml`).  Nine
   `# pragma: no cover` lines remain, each with its reason on the line.

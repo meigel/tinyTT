@@ -19,7 +19,7 @@ rng = np.random.RandomState(42)
 class TestExtrasFull:
 
     def test_meshgrid_2d(self):
-        """Meshgrid of two tinygrad tensors returns 2 TT tensors matching numpy.
+        """Meshgrid of two backend tensors returns 2 TT tensors matching numpy.
 
         Uses indexing='ij' so that the first TT dimension corresponds to the
         first vector (matching TT's natural ordering).

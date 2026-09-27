@@ -1,5 +1,5 @@
 """
-Additional TT helpers backed by tinygrad.
+Additional TT helpers: constructors, products, reshaping, padding.
 """
 
 from __future__ import annotations
@@ -137,7 +137,7 @@ def reshape(tens, shape, eps=1e-16, rmax=sys.maxsize):
 def meshgrid(vectors):
     if len(vectors) == 0:
         return []
-    # Coerce numpy dtypes to tinygrad dtypes
+    # Coerce numpy dtypes to backend dtypes
     first = vectors[0]
     if hasattr(first, 'dtype'):
         dtype = first.dtype if tn.is_tensor(first) else tn._infer_dtype(first.dtype)
@@ -221,7 +221,7 @@ def dot(a, b, axis=None):
         raise InvalidArguments("Both operands should be TT instances.")
     if axis is not None:
         raise NotImplementedError(
-            "Partial contractions are not implemented in the tinygrad backend yet."
+            "Partial contractions (axis=...) are not implemented."
         )
     if a.is_ttm or b.is_ttm:
         raise NotImplementedError("Dot is only implemented for TT tensors.")

@@ -481,8 +481,6 @@ def rank_chop(s, eps):
     return int(admissible[0]) if admissible.size else int(s_np.size)
 
 
-# Backwards-compatible alias (the name predates the tinygrad removal).
-_rank_chop_tinygrad = rank_chop
 _rank_chop_np = rank_chop
 
 

@@ -1,5 +1,5 @@
 """
-Core TT class backed by tinygrad.
+Core TT class.
 """
 
 from __future__ import annotations
@@ -95,9 +95,9 @@ def _split_ttm_core(core, groups, eps=1e-12, rmax=sys.maxsize):
 
 
 class TT:
-    """Tensor Train (TT) tensor / TT-matrix backed by tinygrad.
+    """Tensor Train (TT) tensor / TT-matrix.
 
-    The core data structure of tinyTT.  Stores ``d`` cores (tinygrad Tensors)
+    The core data structure of tinyTT.  Stores ``d`` cores (backend tensors)
     in left-canonical or mixed-canonical gauge.  For a TT-vector
     (``is_ttm=False``) cores have shape ``(r_k, n_k, r_{k+1})``; for a
     TT-matrix (``is_ttm=True``) cores have shape
@@ -277,7 +277,7 @@ class TT:
             return
 
         raise NotImplementedError(
-            "Function only implemented for tinygrad tensors, numpy arrays, list of cores as tensors and None."
+            "TT() accepts a backend tensor, a numpy array, a list of cores, or None."
         )
 
     def to(self, device=None, dtype=None):
