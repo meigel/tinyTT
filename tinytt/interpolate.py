@@ -70,6 +70,23 @@ def _max_matrix(M):
     return float(Mnp[idx]), idx
 
 
+def _pivoted_rows(Mnp, n):
+    """First ``n`` pivot rows of a column-pivoted QR of ``Mnp.T``.
+
+    Greedy Gram-Schmidt: repeatedly take the row with the largest norm after
+    projecting out the rows already chosen.  This is the pivot order of
+    LAPACK ``geqp3`` (up to ties) in O(m n^2) and needs only numpy.
+    """
+    R = np.array(Mnp, dtype=np.result_type(Mnp, np.float64), copy=True)
+    idx = np.empty(n, dtype=np.int64)
+    for j in range(n):
+        norms = np.einsum('ij,ij->i', R, R.conj()).real
+        i = int(np.argmax(norms))
+        idx[j] = i
+        q = R[i] / np.sqrt(norms[i]) if norms[i] > 0 else R[i]
+        R -= np.outer(R @ q.conj(), q)
+    return idx
+
 def _maxvol(M, tol=MAXVOL_TOL, max_iter=MAXVOL_MAX_ITER,
             pivot_eps=MAXVOL_PIVOT_EPS):
     """Row indices of a dominant submatrix (maxvol).
@@ -103,8 +120,13 @@ def _maxvol(M, tol=MAXVOL_TOL, max_iter=MAXVOL_MAX_ITER,
     if n >= m:
         return np.arange(m, dtype=np.int64), True
 
-    row_norms = np.sum(Mnp * Mnp, axis=1)
-    idx = np.argsort(row_norms)[-n:].astype(np.int64)
+    # Rank-revealing start: the first ``n`` column pivots of a pivoted QR of
+    # ``M^T`` select ``n`` rows spanning the column space with a well-conditioned
+    # submatrix.  Picking the ``n`` rows of largest norm instead can return
+    # (numerically) linearly dependent rows when the function is concentrated,
+    # and the swap iteration rarely recovers within ``max_iter`` from a
+    # singular start.
+    idx = np.sort(_pivoted_rows(Mnp, n))
     Msub = Mnp[idx, :]
     try:
         Mat = np.linalg.solve(Msub.T, Mnp.T).T

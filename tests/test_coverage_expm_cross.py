@@ -174,10 +174,32 @@ class TestMaxvol:
 
         rng = np.random.default_rng(8)
         matrix = rng.standard_normal((8, 3))
-        # a guard of 1 rejects every pivot, since |pivot| <= max(|Mat|)
-        indices, converged = _maxvol(matrix, pivot_eps=1.0)
+        # a guard of 1 rejects every pivot, since |pivot| <= max(|Mat|);
+        # tol=0 keeps a dominant starting set from returning first
+        indices, converged = _maxvol(matrix, tol=0.0, pivot_eps=1.0)
         assert not converged
         assert len(indices) == 3
+
+    def test_nearly_parallel_dominant_rows_do_not_poison_the_start(self):
+        """Regression: the start used to be the ``n`` rows of largest norm.
+        When those rows are nearly parallel (a concentrated function), that
+        submatrix is numerically singular, the first solve returns garbage
+        and the swap iteration does not recover; cross then divides by the
+        ill-conditioned submatrix.  A pivoted start must give a
+        well-conditioned dominant submatrix."""
+        from tinytt.interpolate import _maxvol
+
+        rng = np.random.default_rng(0)
+        m, n, k = 400, 20, 3
+        # the 380 rows of largest norm span only a k-dimensional subspace
+        big = 1e3 * rng.uniform(1, 2, (m - n, k)) @ rng.standard_normal((k, n))
+        small = 1e-3 * rng.standard_normal((n, n))
+        matrix = np.vstack([big, small])[rng.permutation(m)]
+        indices, converged = _maxvol(matrix)
+        assert converged
+        assert np.linalg.cond(matrix[indices]) < 1e10
+        coeff = np.linalg.solve(matrix[indices].T, matrix.T).T
+        assert np.abs(coeff).max() <= 1.05 + 1e-8
 
     def test_the_iteration_cap_is_reported_as_non_convergence(self):
         from tinytt.interpolate import _maxvol
