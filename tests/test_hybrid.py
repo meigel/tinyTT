@@ -126,6 +126,25 @@ def test_tempered_cross_peaked_function():
     assert len(info2["stages"]) == 1
 
 
+def test_tempered_cross_log_domain_avoids_underflow():
+    # a very peaked function: f underflows to exactly 0 away from the peak, so f ** 0.1 cannot flatten it,
+    # whereas tempering log f does
+    N = [10] * 4
+    center = np.array([3, 7, 1, 5])
+
+    def logf(I):
+        I = tn.to_numpy(I).astype(float)
+        return tn.tensor(-2000.0 * ((I - center) ** 2).sum(axis=1), dtype=tn.float64)
+
+    x, info = tempered_cross(logf, N, log_domain=True, betas=(0.001, 0.01, 1.0), eps=1e-10, nswp=4)
+    grid = np.stack(np.meshgrid(*[np.arange(n) for n in N], indexing="ij"), -1).reshape(-1, 4)
+    ref = np.exp(tn.to_numpy(logf(tn.tensor(grid)))).reshape(N)
+    assert np.linalg.norm(tn.to_numpy(x.full()) - ref) / np.linalg.norm(ref) < 1e-6
+    x_neg, _ = tempered_cross(lambda I: logf(I) - 50.0, N, log_domain=True, log_shift=-50.0,
+                              betas=(1.0,), x_start=x, eps=1e-10, nswp=2)
+    assert np.linalg.norm(tn.to_numpy(x_neg.full()) - ref) / np.linalg.norm(ref) < 1e-6
+
+
 def test_tempered_cross_rejects_bad_betas():
     with pytest.raises(InvalidArguments):
         tempered_cross(lambda I: I, [2, 2], betas=())

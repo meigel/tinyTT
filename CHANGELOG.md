@@ -42,7 +42,8 @@ made it.
   `counting_tt`), exact contraction of a TT with a chain-structured
   computation network (`chain_contract`), the positivity-preserving
   square-root variant (`born_contract`), and a tempered cross approximation
-  for peaked functions (`tempered_cross`). Tutorial: *Hybrid Discrete
+  for peaked functions (`tempered_cross`, with `log_domain=True` for
+  likelihoods, which would otherwise underflow to zero before tempering). Tutorial: *Hybrid Discrete
   Posteriors*. (`tests/test_hybrid.py`)
 - `interpolate._maxvol` started from the `n` rows of largest norm, which are
   nearly parallel for concentrated functions; the start was then numerically

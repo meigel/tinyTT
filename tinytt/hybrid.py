@@ -181,7 +181,8 @@ def born_contract(g, unary, pair):
 # tempered cross approximation
 # ---------------------------------------------------------------------------------------------
 
-def tempered_cross(function, N, betas=(0.1, 0.4, 1.0), x_start=None, round_eps=1e-10, **cross_kwargs):
+def tempered_cross(function, N, betas=(0.1, 0.4, 1.0), x_start=None, round_eps=1e-10, log_domain=False,
+                   log_shift=0.0, **cross_kwargs):
     """Cross approximation of a peaked nonnegative function via ``f**beta`` for increasing ``beta``.
 
     Each stage runs :func:`tinytt.interpolate.dmrg_cross` on ``function(I)**beta``, starting from
@@ -192,7 +193,8 @@ def tempered_cross(function, N, betas=(0.1, 0.4, 1.0), x_start=None, round_eps=1
     Parameters
     ----------
     function : callable
-        ``function(I)`` on an ``(m, d)`` int64 backend tensor, returning ``m`` nonnegative values.
+        ``function(I)`` on an ``(m, d)`` int64 backend tensor, returning ``m`` nonnegative values,
+        or their logarithms if ``log_domain`` is true.
     N : list[int]
         Mode sizes.
     betas : sequence of float
@@ -201,6 +203,13 @@ def tempered_cross(function, N, betas=(0.1, 0.4, 1.0), x_start=None, round_eps=1
         Start of the first stage.
     round_eps : float
         Relative accuracy of the rounding between stages.
+    log_domain : bool
+        If true, ``function`` returns ``log f`` and each stage approximates
+        ``exp(beta * (log f - log_shift))``.  Use this for likelihoods: ``f`` itself underflows to
+        ``0`` for poorly fitting states, and ``0 ** beta`` stays ``0``, so tempering ``f`` directly
+        cannot flatten it.  ``-inf`` (states outside the support) gives ``0``.
+    log_shift : float
+        Constant subtracted from ``log f`` (e.g. the log-value at a mode estimate) to avoid overflow.
     **cross_kwargs
         Passed to :func:`dmrg_cross` (``eps``, ``nswp``, ``rmax``, ...).
 
@@ -216,7 +225,11 @@ def tempered_cross(function, N, betas=(0.1, 0.4, 1.0), x_start=None, round_eps=1
     x = x_start
     info = dict(evaluations=0, sweeps=0, stages=[])
     for beta in betas:
-        res = dmrg_cross(lambda idx, b=beta: function(idx) ** b, N, x_start=x, **cross_kwargs)
+        if log_domain:
+            stage = lambda idx, b=beta: tn.exp(b * (function(idx) - log_shift))  # noqa: E731
+        else:
+            stage = lambda idx, b=beta: function(idx) ** b  # noqa: E731
+        res = dmrg_cross(stage, N, x_start=x, **cross_kwargs)
         info["evaluations"] += res.n_evaluations
         info["sweeps"] += res.sweeps
         info["stages"].append(dict(beta=beta, maxvol_converged=res.maxvol_converged,
