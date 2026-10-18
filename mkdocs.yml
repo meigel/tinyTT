@@ -45,5 +45,6 @@ nav:
     - Quantized TT (QTT): tutorials/qtt.md
     - Streaming TT: tutorials/streaming.md
     - UQ-ADF: tutorials/uq-adf.md
+    - Hybrid Discrete Posteriors: tutorials/hybrid.md
     - Backend: tutorials/backend.md
   - Examples: examples.md

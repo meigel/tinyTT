@@ -38,6 +38,17 @@ made it.
   a numpy fallback. A silently wrong factorization inside a rounding sweep
   on macOS corrupted a certified computation downstream, and nothing
   checked Q and R before. (`tests/test_svd_rank_deficient.py`)
+- `tinytt.hybrid`: exact TTs of automaton-checkable formulas (`automaton_tt`,
+  `counting_tt`), exact contraction of a TT with a chain-structured
+  computation network (`chain_contract`), the positivity-preserving
+  square-root variant (`born_contract`), and a tempered cross approximation
+  for peaked functions (`tempered_cross`). Tutorial: *Hybrid Discrete
+  Posteriors*. (`tests/test_hybrid.py`)
+- `interpolate._maxvol` started from the `n` rows of largest norm, which are
+  nearly parallel for concentrated functions; the start was then numerically
+  singular, the swap iteration did not recover, and `dmrg_cross` returned TTs
+  with errors far above `eps` while reporting `maxvol_converged=False`. The
+  start is now the pivot set of a column-pivoted Gram-Schmidt (`581d03f`).
 
 ## 0.6 — 2026-09-27
 

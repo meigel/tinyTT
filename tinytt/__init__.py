@@ -13,6 +13,9 @@ tt.uq_adf
     Uncertainty quantification via ADF regression.
 tt.interpolate
     TT-cross interpolation, maxvol.
+tt.hybrid
+    Hybrid discrete posteriors: automaton TTs for formulas, exact chain and Born contraction,
+    tempered cross approximation.
 tt.truncation
     Configurable truncation rules for SVD rank selection.
 tt.streaming
@@ -36,7 +39,7 @@ tt.linesearch
     Armijo backtracking line search.
 """
 
-from . import bug, dynamics, errors, fem, grad, interpolate, solvers, tdvp, uq_adf
+from . import bug, dynamics, errors, fem, grad, hybrid, interpolate, solvers, tdvp, uq_adf
 from ._decomposition import round_tt
 from ._dmrg import dmrg_hadamard
 from ._extras import (
@@ -172,6 +175,7 @@ __all__ = [
     'solvers',
     'amen_mm',
     'interpolate',
+    'hybrid',
     'uq_adf',
     'tdvp',
     'bug',
