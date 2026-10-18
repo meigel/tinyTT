@@ -28,6 +28,10 @@ made it.
   dropped singular values, which equals `||x - round(x)||` in exact
   arithmetic. Default return values are unchanged.
   (`tests/test_round_discarded.py`)
+- The verified SVD now also falls back to LAPACK `gesvd` when
+  `torch.linalg.svd` raises `LinAlgError` (gesdd did not converge). On macOS
+  this stopped `round_tt` on TT cores of rank about 100.
+  (`tests/test_svd_rank_deficient.py`)
 
 ## 0.6 — 2026-09-27
 

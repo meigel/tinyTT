@@ -257,3 +257,23 @@ def test_forced_gesvd_falls_back_to_torch_when_host_result_is_faulty(monkeypatch
         tn, "_host_svd", lambda x, fm, prefer: _faulty_svd_right_values_wrong_vectors(x, fm)
     )
     _assert_valid(A, *tn.linalg.svd(tn.tensor(A), full_matrices=False))
+
+
+def _svd_not_converged(*args, **kwargs):
+    raise torch.linalg.LinAlgError(
+        "linalg.svd: The algorithm failed to converge because the input matrix is "
+        "ill-conditioned or has too many repeated singular values (error code: 1)."
+    )
+
+
+def test_svd_falls_back_when_gesdd_does_not_converge(monkeypatch):
+    rng = np.random.default_rng(7)
+    a = torch.tensor(rng.standard_normal((40, 25)), dtype=torch.float64)
+    monkeypatch.setattr(torch.linalg, "svd", _svd_not_converged)
+    u, s, vh = tn.linalg.svd(a, full_matrices=False)
+    np.testing.assert_allclose((u * s) @ vh, a, atol=1e-12)
+    import tinytt
+
+    x = tinytt.TT(torch.tensor(rng.standard_normal((6, 5, 4, 3)), dtype=torch.float64))
+    y = x.round(1e-12)
+    np.testing.assert_allclose(y.numpy(), x.numpy(), atol=1e-10)

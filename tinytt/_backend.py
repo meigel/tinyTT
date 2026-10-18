@@ -589,7 +589,8 @@ class _Linalg:
         reconstruction residual and the orthonormality of the thin factors
         (one extra matmul each), and on failure recomputes with LAPACK
         ``gesvd`` via scipy (numpy as a last resort), verifying that result
-        too.  ``TINYTT_SVD_DRIVER=gesvd`` forces the scipy path for every
+        too.  The same fallback is used when ``torch.linalg.svd`` raises
+        ``LinAlgError`` (gesdd did not converge).  ``TINYTT_SVD_DRIVER=gesvd`` forces the scipy path for every
         call (detached from autograd), which is how a platform fault is
         isolated.  See
         tests/test_svd_rank_deficient.py.
@@ -598,12 +599,20 @@ class _Linalg:
             u, s, vh = _host_svd(x, full_matrices, prefer="gesvd")
             if _svd_defect(x, u, s, vh) is None:
                 return u, s, vh
-        u, s, vh = torch.linalg.svd(x, full_matrices=full_matrices)
-        if x.numel() == 0:
-            return u, s, vh
-        defect = _svd_defect(x, u, s, vh)
-        if defect is None:
-            return u, s, vh
+        try:
+            u, s, vh = torch.linalg.svd(x, full_matrices=full_matrices)
+        except torch.linalg.LinAlgError as exc:
+            # gesdd can also fail to converge outright (seen with Accelerate on
+            # macOS for TT cores of rank ~100); treat it like a failed check.
+            if x.numel() == 0:
+                raise
+            defect = f"torch.linalg.svd raised: {exc}"
+        else:
+            if x.numel() == 0:
+                return u, s, vh
+            defect = _svd_defect(x, u, s, vh)
+            if defect is None:
+                return u, s, vh
         for prefer in ("gesvd", "numpy"):
             try:
                 u2, s2, vh2 = _host_svd(x, full_matrices, prefer=prefer)
