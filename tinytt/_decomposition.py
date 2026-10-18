@@ -312,7 +312,8 @@ def rl_orthogonal(tt_cores, R, is_ttm):
     return cores_new, R
 
 
-def round_tt(tt_cores, R, eps, rmax=None, is_ttm=False, rule=None, **kwargs):
+def round_tt(tt_cores, R, eps, rmax=None, is_ttm=False, rule=None,
+             return_discarded=False, **kwargs):
     """
     Rounds a TT-tensor (tt_cores have to be orthogonal)
 
@@ -333,6 +334,11 @@ def round_tt(tt_cores, R, eps, rmax=None, is_ttm=False, rule=None, **kwargs):
         The TT-cores of the rounded tensor.
     R : list of inteders of length d+1.
         rounded ranks.
+    discarded : float, only if ``return_discarded=True``.
+        Frobenius norm of the discarded singular values, accumulated over
+        the bonds as sqrt(sum of squares).  After the left-orthogonalization
+        the discarded parts at different bonds are mutually orthogonal, so
+        in exact arithmetic this equals ``||x - round(x)||_F``.
 
     """
     legacy_rmax = kwargs.pop("Rmax", None)
@@ -348,8 +354,9 @@ def round_tt(tt_cores, R, eps, rmax=None, is_ttm=False, rule=None, **kwargs):
     d = len(tt_cores)
     if d == 1:
         tt_cores = [tt_cores[0].clone()]
-        return tt_cores, R
+        return (tt_cores, R, 0.0) if return_discarded else (tt_cores, R)
     tt_cores, R = lr_orthogonal(tt_cores, R, is_ttm)
+    disc2 = 0.0
     core_now = tt_cores[-1]
     eps = eps / np.sqrt(d - 1)
 
@@ -366,6 +373,8 @@ def round_tt(tt_cores, R, eps, rmax=None, is_ttm=False, rule=None, **kwargs):
         else:
             r_now = min([rmax[i], rank_chop(S, _scalar(tn.linalg.norm(S)) * eps)])
         r_now = int(r_now)
+        if return_discarded and r_now < S.shape[0]:
+            disc2 += float(tn.to_numpy(tn.linalg.norm(S[r_now:])).reshape(-1)[0]) ** 2
 
         U = U[:, :r_now]
         S = S[:r_now]
@@ -385,6 +394,8 @@ def round_tt(tt_cores, R, eps, rmax=None, is_ttm=False, rule=None, **kwargs):
 
         core_now = core_next
 
+    if return_discarded:
+        return tt_cores, R, float(np.sqrt(disc2))
     return tt_cores, R
 
 
@@ -478,7 +489,9 @@ def rank_chop(s, eps):
     # tail_energy[r] <= eps^2.
     tail_energy = np.cumsum(s_np[::-1] ** 2)[::-1]
     admissible = np.flatnonzero(tail_energy <= eps * eps)
-    return int(admissible[0]) if admissible.size else int(s_np.size)
+    # A tolerance at or above ||s|| would admit rank 0, which no caller can
+    # represent (round_tt failed on the reshape).  Keep at least one term.
+    return max(1, int(admissible[0])) if admissible.size else int(s_np.size)
 
 
 _rank_chop_np = rank_chop

@@ -16,6 +16,19 @@ made it.
 | 0.4 | `c802d88` | 2026-06-16 | tinygrad (default) or PyTorch | 348 |
 | 0.3 | `2986af5` | 2026-01-19 | tinygrad | 32 |
 
+## Unreleased (after 0.6)
+
+- `rank_chop` returned rank 0 when the tolerance was at or above the norm of
+  the singular values, although its docstring promised at least 1, and
+  `round_tt` then failed with a reshape error (for example `x.round(eps)` with
+  `eps >= sqrt(d-1)`, or an absolute tolerance above `||x||`). It now keeps at
+  least one term.
+- `round_tt(..., return_discarded=True)` and
+  `TT.round(..., return_discarded=True)` also return the Frobenius norm of the
+  dropped singular values, which equals `||x - round(x)||` in exact
+  arithmetic. Default return values are unchanged.
+  (`tests/test_round_discarded.py`)
+
 ## 0.6 — 2026-09-27
 
 Author and maintainer: Martin Eigel.  `pyproject.toml` and `LICENSE` now say

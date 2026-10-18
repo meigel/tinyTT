@@ -723,7 +723,14 @@ class TT:
             self, other, y0=initial, eps=eps, verb=verb, nswp=nswp
         )
 
-    def round(self, eps=1e-12, rmax=sys.maxsize):
+    def round(self, eps=1e-12, rmax=sys.maxsize, return_discarded=False):
+        """TT-SVD rounding to relative accuracy ``eps`` (and rank ``rmax``).
+
+        With ``return_discarded=True`` the result is ``(rounded, discarded)``,
+        where ``discarded`` is the Frobenius norm of the dropped singular
+        values (equal to ``||self - rounded||`` in exact arithmetic), see
+        :func:`round_tt`.
+        """
         if not isinstance(rmax, list):
             rmax = [1] + (len(self.__N) - 1) * [rmax] + [1]
         # Contraction guard with retry: rounding must never inflate the norm
@@ -738,9 +745,12 @@ class TT:
         in_norm = None
         out = None
         for _attempt in range(4):
-            tt_cores, _ = round_tt(
-                [c.clone() for c in self.cores], self.__R.copy(), eps, rmax, self.__is_ttm
-            )
+            args = ([c.clone() for c in self.cores], self.__R.copy(), eps, rmax,
+                    self.__is_ttm)
+            if return_discarded:
+                tt_cores, _, discarded = round_tt(*args, return_discarded=True)
+            else:
+                tt_cores, _ = round_tt(*args)
             out = TT(tt_cores)
             if in_norm is None:
                 in_norm = _nrm(self)
@@ -762,11 +772,11 @@ class TT:
                 for i in range(1, len(out.R) - 1)
             )
             if clipped:
-                return out
+                return (out, discarded) if return_discarded else out
             on = _nrm(out)
             margin = max(10.0 * float(eps), 1e-9)
             if abs(on - in_norm) <= max(in_norm * margin, 1e-4):
-                return out
+                return (out, discarded) if return_discarded else out
         raise RuntimeError(  # pragma: no cover - needs four BLAS-level faults
             f"round failed the contraction check 4x (||out||={_nrm(out):.6g} > "
             f"||in||={in_norm:.6g}); kernel-level fault, not a tolerance issue"
