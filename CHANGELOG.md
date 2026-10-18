@@ -26,8 +26,10 @@ made it.
 - `round_tt(..., return_discarded=True)` and
   `TT.round(..., return_discarded=True)` also return the Frobenius norm of the
   dropped singular values, which equals `||x - round(x)||` in exact
-  arithmetic. Default return values are unchanged.
-  (`tests/test_round_discarded.py`)
+  arithmetic. `round_tt(..., absolute=True)` takes `eps` as an absolute bound
+  on that norm, and `return_norm=True` also returns `||x||` read off the
+  orthogonalized core, so that callers need no extra norm sweep. Default
+  return values are unchanged. (`tests/test_round_discarded.py`)
 - The verified SVD now also falls back to LAPACK `gesvd` when
   `torch.linalg.svd` raises `LinAlgError` (gesdd did not converge). On macOS
   this stopped `round_tt` on TT cores of rank about 100.

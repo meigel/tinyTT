@@ -313,7 +313,7 @@ def rl_orthogonal(tt_cores, R, is_ttm):
 
 
 def round_tt(tt_cores, R, eps, rmax=None, is_ttm=False, rule=None,
-             return_discarded=False, **kwargs):
+             return_discarded=False, absolute=False, return_norm=False, **kwargs):
     """
     Rounds a TT-tensor (tt_cores have to be orthogonal)
 
@@ -324,7 +324,9 @@ def round_tt(tt_cores, R, eps, rmax=None, is_ttm=False, rule=None,
     R : list of integers of length d+1.
         ranks of the TT-decomposition.
     eps : double.
-        desired rounding accuracy.
+        desired rounding accuracy, relative to the norm of the tensor, or
+        absolute if ``absolute=True`` (then the discarded Frobenius norm is
+        at most ``eps``).
     rmax : list of integers
         the maximum rank that is allowed.
 
@@ -339,6 +341,8 @@ def round_tt(tt_cores, R, eps, rmax=None, is_ttm=False, rule=None,
         the bonds as sqrt(sum of squares).  After the left-orthogonalization
         the discarded parts at different bonds are mutually orthogonal, so
         in exact arithmetic this equals ``||x - round(x)||_F``.
+    norm : float, only if ``return_norm=True`` (after ``discarded``).
+        Frobenius norm of the input, read off the orthogonalized last core.
 
     """
     legacy_rmax = kwargs.pop("Rmax", None)
@@ -354,10 +358,17 @@ def round_tt(tt_cores, R, eps, rmax=None, is_ttm=False, rule=None,
     d = len(tt_cores)
     if d == 1:
         tt_cores = [tt_cores[0].clone()]
-        return (tt_cores, R, 0.0) if return_discarded else (tt_cores, R)
+        nrm1 = _scalar(tn.linalg.norm(tt_cores[0]))
+        out = (tt_cores, R)
+        if return_discarded:
+            out = out + (0.0,)
+        if return_norm:
+            out = out + (nrm1,)
+        return out
     tt_cores, R = lr_orthogonal(tt_cores, R, is_ttm)
     disc2 = 0.0
     core_now = tt_cores[-1]
+    in_norm = _scalar(tn.linalg.norm(core_now))
     eps = eps / np.sqrt(d - 1)
 
     for i in range(d - 1, 0, -1):
@@ -371,7 +382,8 @@ def round_tt(tt_cores, R, eps, rmax=None, is_ttm=False, rule=None,
             r_now = apply_truncation_rule(rule, S, position=i,
                                           current_rank=R[i], max_rank=rmax[i])
         else:
-            r_now = min([rmax[i], rank_chop(S, _scalar(tn.linalg.norm(S)) * eps)])
+            tol_i = eps if absolute else _scalar(tn.linalg.norm(S)) * eps
+            r_now = min([rmax[i], rank_chop(S, tol_i)])
         r_now = int(r_now)
         if return_discarded and r_now < S.shape[0]:
             disc2 += float(tn.to_numpy(tn.linalg.norm(S[r_now:])).reshape(-1)[0]) ** 2
@@ -394,9 +406,12 @@ def round_tt(tt_cores, R, eps, rmax=None, is_ttm=False, rule=None,
 
         core_now = core_next
 
+    out = (tt_cores, R)
     if return_discarded:
-        return tt_cores, R, float(np.sqrt(disc2))
-    return tt_cores, R
+        out = out + (float(np.sqrt(disc2)),)
+    if return_norm:
+        out = out + (float(in_norm),)
+    return out
 
 
 def mat_to_tt(A, M, N, eps, rmax=1000, is_sparse=False):

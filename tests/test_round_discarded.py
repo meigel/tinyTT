@@ -53,3 +53,20 @@ def test_round_default_signature_unchanged():
     assert isinstance(y, tt.TT)
     cores, R = round_tt([c.clone() for c in x.cores], list(x.R), 1e-12, [1, 99, 99, 1])
     assert len(R) == 4
+
+
+def test_absolute_tolerance_and_norm():
+    x = _rand([6, 5, 7, 6], 4, seed=4)
+    nx = float(x.norm())
+    tol = 1e-2 * nx
+    cores, R, disc, nrm = round_tt([c.clone() for c in x.cores], list(x.R), tol,
+                                   [1] + [10**9] * 3 + [1], absolute=True,
+                                   return_discarded=True, return_norm=True)
+    y = tt.TT(cores)
+    assert abs(nrm - nx) <= 1e-12 * nx
+    assert disc <= tol * (1 + 1e-12)
+    assert abs(disc - float((x - y).norm())) <= 1e-10 * nx
+    # absolute tol equal to the relative one times the norm gives the same ranks
+    c2, R2 = round_tt([c.clone() for c in x.cores], list(x.R), 1e-2,
+                      [1] + [10**9] * 3 + [1])
+    assert R2[1] >= R[1] - 1
