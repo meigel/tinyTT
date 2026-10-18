@@ -277,3 +277,19 @@ def test_svd_falls_back_when_gesdd_does_not_converge(monkeypatch):
     x = tinytt.TT(torch.tensor(rng.standard_normal((6, 5, 4, 3)), dtype=torch.float64))
     y = x.round(1e-12)
     np.testing.assert_allclose(y.numpy(), x.numpy(), atol=1e-10)
+
+
+def test_qr_falls_back_on_a_wrong_factorization(monkeypatch):
+    rng = np.random.default_rng(8)
+    a = torch.tensor(rng.standard_normal((30, 12)), dtype=torch.float64)
+    real = torch.linalg.qr
+
+    def faulty(x, *args, **kwargs):
+        q, r = real(x, *args, **kwargs)
+        q = q.clone()
+        q[:, [0, 1]] = q[:, [1, 0]]
+        return q, r
+
+    monkeypatch.setattr(torch.linalg, "qr", faulty)
+    q, r = tn.linalg.qr(a)
+    np.testing.assert_allclose((q @ r).numpy(), a.numpy(), atol=1e-12)

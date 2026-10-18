@@ -34,6 +34,10 @@ made it.
   `torch.linalg.svd` raises `LinAlgError` (gesdd did not converge). On macOS
   this stopped `round_tt` on TT cores of rank about 100.
   (`tests/test_svd_rank_deficient.py`)
+- QR is now verified like the SVD (reconstruction and orthonormality), with
+  a numpy fallback. A silently wrong factorization inside a rounding sweep
+  on macOS corrupted a certified computation downstream, and nothing
+  checked Q and R before. (`tests/test_svd_rank_deficient.py`)
 
 ## 0.6 — 2026-09-27
 

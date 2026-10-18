@@ -552,6 +552,25 @@ def _svd_defect(x, u, s, vh):
     return None
 
 
+def _qr_defect(x, q, r):
+    """Return ``None`` for a valid reduced QR pair, else a short reason."""
+    with torch.no_grad():
+        if not (bool(torch.isfinite(q).all()) and bool(torch.isfinite(r).all())):
+            return "non-finite factor"
+        norm = float(torch.linalg.norm(x))
+        if norm == 0.0:
+            return None
+        tol = _svd_tolerance(x)
+        residual = float(torch.linalg.norm(x - q @ r))
+        if residual > tol * norm:
+            return f"reconstruction residual {residual / norm:.2e} relative"
+        k = q.shape[-1]
+        eye = torch.eye(k, dtype=q.dtype, device=q.device)
+        if float((q.mH @ q - eye).abs().max()) > tol:
+            return "orthonormality defect"
+    return None
+
+
 def _host_svd(x: torch.Tensor, full_matrices: bool, *, prefer: str):
     """Decompose on the host with scipy ``gesvd`` (or numpy)."""
     host = x.detach().cpu().numpy()
@@ -577,7 +596,30 @@ class _Linalg:
         return torch.linalg.norm(x)
 
     def qr(self, x: torch.Tensor):
-        return torch.linalg.qr(x)
+        """Verified reduced QR, like :meth:`svd`.
+
+        The orthogonalization sweeps that feed ``round_tt`` and ``TT.norm``
+        trust Q and R, so a silently wrong factorization (a threaded LAPACK
+        fault, as for gesdd) would corrupt a rounding without any later
+        check noticing it.  Every call therefore verifies the reconstruction
+        ``||QR - x||`` and the orthonormality of Q and on failure recomputes
+        with numpy (LAPACK ``geqrf``), verifying that result too.
+        """
+        q, r = torch.linalg.qr(x)
+        if x.numel() == 0 or x.requires_grad:
+            return q, r
+        defect = _qr_defect(x, q, r)
+        if defect is None:
+            return q, r
+        q2, r2 = np.linalg.qr(x.detach().cpu().numpy())
+        q2 = torch.as_tensor(q2, dtype=x.dtype, device=x.device)
+        r2 = torch.as_tensor(r2, dtype=x.dtype, device=x.device)
+        if _qr_defect(x, q2, r2) is None:
+            return q2, r2
+        raise RuntimeError(
+            f"QR of a {tuple(x.shape)} {x.dtype} matrix failed verification with torch "
+            f"and numpy ({defect}); kernel-level fault, not a tolerance issue"
+        )
 
     def svd(self, x: torch.Tensor, full_matrices: bool = False):
         """Verified SVD: every returned triple is checked before it is used.
@@ -590,9 +632,9 @@ class _Linalg:
         (one extra matmul each), and on failure recomputes with LAPACK
         ``gesvd`` via scipy (numpy as a last resort), verifying that result
         too.  The same fallback is used when ``torch.linalg.svd`` raises
-        ``LinAlgError`` (gesdd did not converge).  ``TINYTT_SVD_DRIVER=gesvd`` forces the scipy path for every
-        call (detached from autograd), which is how a platform fault is
-        isolated.  See
+        ``LinAlgError`` (gesdd did not converge).  ``TINYTT_SVD_DRIVER=gesvd``
+        forces the scipy path for every call (detached from autograd), which
+        is how a platform fault is isolated.  See
         tests/test_svd_rank_deficient.py.
         """
         if _SVD_DRIVER == "gesvd" and x.numel() > 0:
