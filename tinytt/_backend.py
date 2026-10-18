@@ -519,6 +519,57 @@ def solve(a: torch.Tensor, b: torch.Tensor):
     return torch.linalg.solve(a, b)
 
 
+_SVD_DRIVER = os.getenv("TINYTT_SVD_DRIVER", "").lower().strip()
+
+
+def _svd_tolerance(x: torch.Tensor) -> float:
+    finfo = torch.finfo(x.real.dtype if x.is_complex() else x.dtype)
+    return 50.0 * max(x.shape[-2], x.shape[-1], 1) * float(finfo.eps)
+
+
+def _svd_defect(x, u, s, vh):
+    """Return ``None`` for a valid thin SVD triple, else a short reason."""
+    with torch.no_grad():
+        k = s.shape[-1]
+        uk = u[..., :, :k]
+        vk = vh[..., :k, :]
+        tol = _svd_tolerance(x)
+        norm = float(torch.linalg.norm(x))
+        if not bool(torch.isfinite(s).all()):
+            return "non-finite singular values"
+        if norm == 0.0:
+            return None
+        residual = float(torch.linalg.norm(x - (uk * s.to(uk.dtype).unsqueeze(-2)) @ vk))
+        if residual > tol * norm:
+            return f"reconstruction residual {residual / norm:.2e} relative"
+        eye = torch.eye(k, dtype=uk.dtype, device=uk.device)
+        left = float((uk.mH @ uk - eye).abs().max())
+        right = float((vk @ vk.mH - eye).abs().max())
+        if max(left, right) > tol:
+            return f"orthonormality defect {max(left, right):.2e}"
+        if k > 1 and bool((s[..., 1:] > s[..., :-1] * (1.0 + tol) + tol * norm).any()):
+            return "singular values not sorted"
+    return None
+
+
+def _host_svd(x: torch.Tensor, full_matrices: bool, *, prefer: str):
+    """Decompose on the host with scipy ``gesvd`` (or numpy)."""
+    host = x.detach().cpu().numpy()
+    if prefer == "gesvd":
+        import scipy.linalg
+
+        u, s, vh = scipy.linalg.svd(
+            host, full_matrices=full_matrices, lapack_driver="gesvd"
+        )
+    else:
+        u, s, vh = np.linalg.svd(host, full_matrices=full_matrices)
+    return (
+        torch.as_tensor(u, dtype=x.dtype, device=x.device),
+        torch.as_tensor(s, dtype=x.real.dtype if x.is_complex() else x.dtype, device=x.device),
+        torch.as_tensor(vh, dtype=x.dtype, device=x.device),
+    )
+
+
 class _Linalg:
     """Namespace for linear algebra on backend tensors."""
 
@@ -529,29 +580,44 @@ class _Linalg:
         return torch.linalg.qr(x)
 
     def svd(self, x: torch.Tensor, full_matrices: bool = False):
+        """Verified SVD: every returned triple is checked before it is used.
+
+        ``torch.linalg.svd`` on macOS (Accelerate ``gesdd``) can return a wrong
+        triple for exactly rank-deficient inputs, and in some cases the
+        singular values are right while the vectors are wrong, so an energy
+        check alone is not sufficient.  Every call therefore verifies the
+        reconstruction residual and the orthonormality of the thin factors
+        (one extra matmul each), and on failure recomputes with LAPACK
+        ``gesvd`` via scipy (numpy as a last resort), verifying that result
+        too.  ``TINYTT_SVD_DRIVER=gesvd`` forces the scipy path for every
+        call (detached from autograd), which is how a platform fault is
+        isolated.  See
+        tests/test_svd_rank_deficient.py.
+        """
+        if _SVD_DRIVER == "gesvd" and x.numel() > 0:
+            u, s, vh = _host_svd(x, full_matrices, prefer="gesvd")
+            if _svd_defect(x, u, s, vh) is None:
+                return u, s, vh
         u, s, vh = torch.linalg.svd(x, full_matrices=full_matrices)
-        if x.device.type == "cpu" and x.numel() > 0:
-            total = float((x.abs().double() ** 2).sum())
-            energy = float((s.abs().double() ** 2).sum())
-            if total > 0.0 and np.abs(energy - total) > 1e-8 * total:
-                # A singular-value set that does not carry the Frobenius energy of
-                # the input is not a decomposition of it, and the vectors from the
-                # same call cannot be trusted either.  Apple's Accelerate gesdd
-                # returns exactly such a triple for rank-deficient inputs, where
-                # svdvals, numpy and scipy all give the correct answer; see
-                # tests/test_svd_rank_deficient.py.  Confirm on the residual and
-                # redo the decomposition with numpy, which fixes the values and the
-                # vectors together.  The guard is O(m n) in the healthy case.
-                residual = float((x - scale_cols(u, s) @ vh).abs().max())
-                scale = max(float(x.abs().max()), 1e-300)
-                if residual > 1e-8 * scale:
-                    u_np, s_np, vh_np = np.linalg.svd(
-                        x.detach().cpu().numpy(), full_matrices=full_matrices
-                    )
-                    u = torch.as_tensor(u_np, dtype=u.dtype, device=u.device)
-                    s = torch.as_tensor(s_np, dtype=s.dtype, device=s.device)
-                    vh = torch.as_tensor(vh_np, dtype=vh.dtype, device=vh.device)
-        return u, s, vh
+        if x.numel() == 0:
+            return u, s, vh
+        defect = _svd_defect(x, u, s, vh)
+        if defect is None:
+            return u, s, vh
+        for prefer in ("gesvd", "numpy"):
+            try:
+                u2, s2, vh2 = _host_svd(x, full_matrices, prefer=prefer)
+            except ImportError:
+                continue
+            if _svd_defect(x, u2, s2, vh2) is None:
+                # The host result is detached from autograd; only a faulty
+                # torch triple (which carries no useful gradient) gets here.
+                return u2, s2, vh2
+        raise RuntimeError(
+            f"SVD of a {tuple(x.shape)} {x.dtype} matrix failed verification "
+            f"with torch and every host fallback ({defect}); kernel-level "
+            "fault, not a tolerance issue"
+        )
 
     def solve(self, a: torch.Tensor, b: torch.Tensor):
         return solve(a, b)

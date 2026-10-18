@@ -96,10 +96,15 @@ class TestBackend:
 
     # svd(): an energy mismatch whose reconstruction residual is still below
     # 1e-8 * max|x| is accepted as-is -- no numpy fallback.
-    def test_svd_energy_mismatch_with_small_residual_keeps_torch_result(self, monkeypatch):
+    def test_svd_energy_mismatch_with_small_residual_is_replaced(self, monkeypatch):
+        """A triple off by 8e-9 is not an SVD to working precision.
+
+        The 0.6 guard tolerated it; the verified SVD (every triple checked at
+        50*max(m,n)*eps) replaces it by the host gesvd result.
+        """
         n = 100
         x = tn.ones((n, n), dtype=tn.float64)          # rank one, s0 = n
-        delta = 8e-9                                   # energy off by 1.6e-8 rel.
+        delta = 8e-9
         original = torch.linalg.svd
 
         def perturbed_svd(a, full_matrices=False):
@@ -108,17 +113,11 @@ class TestBackend:
             s[0] = s[0] * (1.0 + delta)
             return u, s, vh
 
-        def fail_numpy_svd(*args, **kwargs):  # pragma: no cover - must not run
-            raise AssertionError("numpy fallback must not be used")
-
         monkeypatch.setattr(torch.linalg, "svd", perturbed_svd)
-        monkeypatch.setattr(np.linalg, "svd", fail_numpy_svd)
         u, s, vh = tn.linalg.svd(x)
-        # the perturbed (torch) value was kept ...
-        assert float(s[0]) == pytest.approx(n * (1.0 + delta), rel=1e-15)
-        # ... and it still reconstructs x within the guard's tolerance
+        assert float(s[0]) == pytest.approx(n, rel=1e-13)
         rec = _np(tn.scale_cols(u, s) @ vh)
-        assert np.max(np.abs(rec - 1.0)) <= 1e-8
+        assert np.max(np.abs(rec - 1.0)) <= 1e-12
 
 
 # ---------------------------------------------------------------------------

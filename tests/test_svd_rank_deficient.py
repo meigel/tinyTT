@@ -76,3 +76,184 @@ def _full(cores):
     from tinytt import TT
 
     return TT(cores).full()
+
+
+# ---------------------------------------------------------------------------
+# Block-stacked sums, the shape TT.round sees after adding many trains, and
+# faults whose singular values are right but whose vectors are wrong.
+# ---------------------------------------------------------------------------
+
+import pytest
+import torch
+
+
+def block_stacked_matrix(rows: int = 60, rank: int = 24, terms: int = 34) -> np.ndarray:
+    """Exactly rank-``rank`` matrix made of ``terms`` column blocks.
+
+    This is the unfolding produced when ``terms`` TT trains that share their
+    left cores are added and rounded, e.g. the ground-state gradient sum in the
+    GS15 certificate (1 + 1 + M terms of rank ~24 stacked to rank ~800 and
+    rounded back to rank ~24).
+    """
+    rng = np.random.default_rng(20260927)
+    left = np.linalg.qr(rng.standard_normal((rows, rank)))[0]
+    left *= np.logspace(0, -6, rank)
+    blocks = [left @ rng.standard_normal((rank, rank)) for _ in range(terms)]
+    return np.concatenate(blocks, axis=1)
+
+
+@pytest.mark.parametrize("transpose", [False, True])
+def test_block_stacked_rank_deficient_svd_is_verified(transpose):
+    A = block_stacked_matrix()
+    if transpose:
+        A = A.T.copy()
+    u, s, vh = tn.linalg.svd(tn.tensor(A), full_matrices=False)
+    u, s, vh = (np.asarray(t) for t in (u, s, vh))
+    k = s.size
+    assert np.linalg.norm((u * s) @ vh - A) <= 1e-12 * np.linalg.norm(A)
+    assert np.abs(u.T @ u - np.eye(k)).max() <= 1e-12
+    assert np.abs(vh @ vh.T - np.eye(k)).max() <= 1e-12
+
+
+def test_round_of_block_stacked_sum_matches_exact_rank():
+    """Rounding a sum of trains with shared cores recovers the true rank."""
+    from tinytt import TT
+
+    rng = np.random.default_rng(7)
+    shared = [torch.as_tensor(rng.standard_normal((1, 4, 6)))]
+    shared += [torch.as_tensor(rng.standard_normal((6, 4, 6))) for _ in range(3)]
+    total = None
+    for _ in range(34):
+        last = torch.as_tensor(rng.standard_normal((6, 3, 1)))
+        term = TT([c.clone() for c in shared] + [last])
+        total = term if total is None else total + term
+    rounded = total.round(eps=1e-12)
+    assert max(rounded.R) <= 6
+    error = np.linalg.norm(np.asarray(rounded.full()) - np.asarray(total.full()))
+    assert error <= 1e-10 * np.linalg.norm(np.asarray(total.full()))
+
+
+def _faulty_svd_right_values_wrong_vectors(x, full_matrices=False):
+    u, s, vh = _TORCH_SVD(x, full_matrices=full_matrices)
+    # Correct singular values, vectors of the leading pair swapped: this passes
+    # an energy check and is exactly the fault mode reported for Accelerate.
+    u = u.clone()
+    u[:, [0, 1]] = u[:, [1, 0]]
+    return u, s, vh
+
+
+_TORCH_SVD = torch.linalg.svd
+
+
+def test_guard_catches_right_values_wrong_vectors(monkeypatch):
+    A = block_stacked_matrix()
+    monkeypatch.setattr(torch.linalg, "svd", _faulty_svd_right_values_wrong_vectors)
+    u, s, vh = tn.linalg.svd(tn.tensor(A), full_matrices=False)
+    u, s, vh = (np.asarray(t) for t in (u, s, vh))
+    assert np.linalg.norm((u * s) @ vh - A) <= 1e-12 * np.linalg.norm(A)
+
+
+def test_forced_gesvd_driver(monkeypatch):
+    pytest.importorskip("scipy")
+    A = block_stacked_matrix()
+    monkeypatch.setattr(tn, "_SVD_DRIVER", "gesvd")
+    calls = []
+    monkeypatch.setattr(
+        torch.linalg, "svd", lambda *a, **k: calls.append(1) or _TORCH_SVD(*a, **k)
+    )
+    u, s, vh = tn.linalg.svd(tn.tensor(A), full_matrices=False)
+    assert not calls, "forced gesvd must not call torch.linalg.svd"
+    u, s, vh = (np.asarray(t) for t in (u, s, vh))
+    assert np.linalg.norm((u * s) @ vh - A) <= 1e-12 * np.linalg.norm(A)
+
+
+def test_unrecoverable_fault_raises(monkeypatch):
+    A = block_stacked_matrix()
+    monkeypatch.setattr(torch.linalg, "svd", _faulty_svd_right_values_wrong_vectors)
+    monkeypatch.setattr(
+        tn, "_host_svd", lambda x, fm, prefer: _faulty_svd_right_values_wrong_vectors(x, fm)
+    )
+    with pytest.raises(RuntimeError, match="failed verification"):
+        tn.linalg.svd(tn.tensor(A), full_matrices=False)
+
+
+# ---------------------------------------------------------------------------
+# Every branch of the verification: each defect class is detected, and every
+# fallback route is exercised.
+# ---------------------------------------------------------------------------
+
+
+def _patched(transform):
+    def svd(x, full_matrices=False):
+        return transform(*_TORCH_SVD(x, full_matrices=full_matrices))
+
+    return svd
+
+
+def _assert_valid(A, u, s, vh):
+    u, s, vh = (np.asarray(t) for t in (u, s, vh))
+    assert np.linalg.norm((u * s) @ vh - A) <= 1e-12 * np.linalg.norm(A)
+    assert np.all(np.diff(s) <= 1e-12 * s[0])
+
+
+def test_non_finite_singular_values_are_rejected(monkeypatch):
+    A = block_stacked_matrix()
+
+    def nan_values(u, s, vh):
+        s = s.clone()
+        s[0] = float("nan")
+        return u, s, vh
+
+    assert tn._svd_defect(torch.as_tensor(A), *nan_values(*_TORCH_SVD(torch.as_tensor(A), full_matrices=False))) == "non-finite singular values"
+    monkeypatch.setattr(torch.linalg, "svd", _patched(nan_values))
+    _assert_valid(A, *tn.linalg.svd(tn.tensor(A), full_matrices=False))
+
+
+def test_non_orthonormal_null_vectors_are_rejected(monkeypatch):
+    """Changing a vector paired with a zero singular value keeps the
+    reconstruction but breaks orthonormality."""
+    A = block_stacked_matrix()
+
+    def duplicate_null_vector(u, s, vh):
+        u = u.clone()
+        u[:, -1] = u[:, 0]
+        return u, s, vh
+
+    defect = tn._svd_defect(
+        torch.as_tensor(A), *duplicate_null_vector(*_TORCH_SVD(torch.as_tensor(A), full_matrices=False))
+    )
+    assert defect is not None and defect.startswith("orthonormality")
+    monkeypatch.setattr(torch.linalg, "svd", _patched(duplicate_null_vector))
+    _assert_valid(A, *tn.linalg.svd(tn.tensor(A), full_matrices=False))
+
+
+def test_unsorted_singular_values_are_rejected(monkeypatch):
+    A = block_stacked_matrix()
+
+    def swap_leading_pair(u, s, vh):
+        order = [1, 0] + list(range(2, s.shape[0]))
+        return u[:, order], s[order], vh[order, :]
+
+    assert tn._svd_defect(
+        torch.as_tensor(A), *swap_leading_pair(*_TORCH_SVD(torch.as_tensor(A), full_matrices=False))
+    ) == "singular values not sorted"
+    monkeypatch.setattr(torch.linalg, "svd", _patched(swap_leading_pair))
+    _assert_valid(A, *tn.linalg.svd(tn.tensor(A), full_matrices=False))
+
+
+def test_numpy_fallback_when_scipy_is_unavailable(monkeypatch):
+    import sys
+
+    A = block_stacked_matrix()
+    monkeypatch.setattr(torch.linalg, "svd", _faulty_svd_right_values_wrong_vectors)
+    monkeypatch.setitem(sys.modules, "scipy.linalg", None)  # import raises ImportError
+    _assert_valid(A, *tn.linalg.svd(tn.tensor(A), full_matrices=False))
+
+
+def test_forced_gesvd_falls_back_to_torch_when_host_result_is_faulty(monkeypatch):
+    A = block_stacked_matrix()
+    monkeypatch.setattr(tn, "_SVD_DRIVER", "gesvd")
+    monkeypatch.setattr(
+        tn, "_host_svd", lambda x, fm, prefer: _faulty_svd_right_values_wrong_vectors(x, fm)
+    )
+    _assert_valid(A, *tn.linalg.svd(tn.tensor(A), full_matrices=False))
