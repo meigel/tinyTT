@@ -1,5 +1,7 @@
 import numpy as np
+
 import tinytt as tt
+import tinytt.backend as tn
 
 rng = np.random.RandomState(0)
 
@@ -13,7 +15,7 @@ c = a + b
 d = 0.5 * (a - b)
 
 val = tt.dot(a, b)
-print("dot:", float(val.numpy().item()))
+print("dot:", float(tn.to_numpy(val).item()))
 
 kron_ab = tt.kron(a, b)
 print("kron shape:", kron_ab.N)

@@ -1,269 +1,73 @@
-"""
-BUG (Basis-Update and Galerkin) helpers for TT/MPO time evolution.
+"""Explicit step-and-truncate evolution, and the real BUG integrator.
 
-The public :func:`bug` routine performs a rank-adaptive BUG-style step for
-linear MPO dynamics: local basis updates expand TT bonds from projected local
-evolution residuals, QR retractions keep the new bases well conditioned, and a
-Galerkin sweep evolves the tensor in the expanded basis before truncation.
+Two different things live here, and 0.4 conflated them:
+
+:func:`step_truncate` (called ``bug`` before 0.6)
+    ``round(Y + dt F(Y))``.  Cheap, first order, and *not* the
+    Basis-Update & Galerkin method -- it has neither a basis augmentation
+    nor a Galerkin stage.
+:func:`tinytt.dynamics.bug_step`
+    The actual rank-adaptive BUG: augment the interface bases with the
+    directions a projector-splitting predictor produces, take the step for
+    the coefficients in that enlarged space by solving the projected ODE
+    exactly, then truncate.
+
+They are measurably different: under a rank cap that bites, ``bug_step`` is
+several times more accurate than ``step_truncate`` on the same problem (see
+``tests/test_dynamics.py``).
 """
 
 from __future__ import annotations
 
-import numpy as np
-import tinytt._backend as tn
 from tinytt._tt_base import TT
-from tinytt._decomposition import QR
 
 
-def _update_left_env(L, A, W):
-    """Update left environment."""
-    return tn.einsum('laL,lpr,apqA,LqR->rAR', L, A, W, A)
-
-
-def _update_right_env(R, A, W):
-    """Update right environment."""
-    return tn.einsum('lpr,apqA,LqR,rAR->laL', A, W, A, R)
-
-
-def _project_site(L, R, W, ket):
-    """Apply effective Hamiltonian to local tensor."""
-    return tn.einsum('laL,apqA,rAR,lpr->LqR', L, W, R, ket)
-
-
-def _scalar(val):
-    if tn.is_tensor(val):
-        return float(val.numpy().item())
-    return float(val)
-
-
-def _build_left_envs(cores, mpo):
-    """Build all left environments from cores list."""
-    dtype = cores[0].dtype
-    device = cores[0].device
-    L = [tn.ones((1, 1, 1), dtype=dtype, device=device)]
-    for i in range(len(cores)):
-        L.append(_update_left_env(L[-1], cores[i], mpo.cores[i]))
-    return L
-
-
-def _build_right_envs(cores, mpo):
-    """Build all right environments from cores list."""
-    dtype = cores[0].dtype
-    device = cores[0].device
-    R = [None] * (len(cores) + 1)
-    R[-1] = tn.ones((1, 1, 1), dtype=dtype, device=device)
-    for i in range(len(cores) - 1, -1, -1):
-        R[i] = _update_right_env(R[i + 1], cores[i], mpo.cores[i])
-    return R
-
-
-def _evolve_local(theta, apply_fn, dt, max_dense=256, krylov_dim=20, krylov_tol=1e-10):
-    """Evolve local tensor using Lanczos."""
-    vec = theta.reshape(-1)
-    n = tn.numel(vec)
-    
-    if n > max_dense:
-        vec_np = vec.numpy().reshape(-1).astype(np.complex128)
-
-        def matvec(x):
-            xr = np.real(x)
-            xi = np.imag(x)
-            tr = tn.tensor(xr, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
-            yr = apply_fn(tr).numpy().reshape(-1)
-            if np.any(xi):
-                ti = tn.tensor(xi, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
-                yi = apply_fn(ti).numpy().reshape(-1)
-                return yr + 1j * yi
-            return yr
-
-        out = _krylov_exp(matvec, vec_np, dt, krylov_dim, krylov_tol, False)
-        return tn.tensor(out, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
-
-    vec_np = vec.numpy().reshape(-1).astype(np.complex128)
-    H = np.zeros((n, n), dtype=np.complex128)
-    for i in range(n):
-        basis = np.zeros(n, dtype=np.complex128)
-        basis[i] = 1.0
-        e = tn.tensor(basis, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
-        H[:, i] = apply_fn(e).numpy().reshape(-1)
-
-    w, V = np.linalg.eigh(H)
-    w_shift = w - np.min(w)
-    expw = np.exp(-dt * w_shift)
-    vec_new = (V * expw) @ (V.T @ vec_np)
-    norm = np.linalg.norm(vec_new)
-    if norm > 0:
-        vec_new = vec_new / norm
-    return tn.tensor(vec_new, dtype=theta.dtype, device=theta.device).reshape(theta.shape)
-
-
-def _zeros(shape, like):
-    return tn.zeros(shape, dtype=like.dtype, device=like.device)
-
-
-def _orthogonalize_left_bond(cores, i):
-    """Left-orthogonalize core i and absorb the R factor into core i + 1."""
-    core = cores[i]
-    r_left, n_i, r_right = core.shape
-    mat = tn.reshape(core, [r_left * n_i, r_right])
-    q, rfac = QR(mat)
-    new_rank = q.shape[1]
-    cores[i] = tn.reshape(q, [r_left, n_i, new_rank])
-    cores[i + 1] = tn.einsum("ab,bnr->anr", rfac, cores[i + 1])
-
-
-def _orthogonalize_right_bond(cores, i):
-    """Right-orthogonalize core i and absorb the factor into core i - 1."""
-    core = cores[i]
-    r_left, n_i, r_right = core.shape
-    mat = tn.reshape(tn.permute(core, [1, 2, 0]), [n_i * r_right, r_left])
-    q, rfac = QR(mat)
-    new_rank = q.shape[1]
-    cores[i] = tn.permute(tn.reshape(q, [n_i, r_right, new_rank]), [2, 0, 1])
-    cores[i - 1] = tn.einsum("lnr,ar->lna", cores[i - 1], rfac)
-
-
-def _expand_right_bond(cores, i, residual):
-    """Expand bond i|i+1 with a local residual and QR-retract the new basis."""
-    r_left, n_i, r_right = cores[i].shape
-    max_extra = max(0, min(int(residual.shape[2]), int(cores[i + 1].shape[0])))
-    if max_extra == 0:
-        return False
-
-    delta = residual[:, :, :max_extra]
-    scale = max(_scalar(tn.linalg.norm(delta)), 1.0)
-    delta = delta / scale
-    cores[i] = tn.cat([cores[i], delta], dim=2)
-
-    next_core = cores[i + 1]
-    pad = _zeros((max_extra, next_core.shape[1], next_core.shape[2]), next_core)
-    cores[i + 1] = tn.cat([next_core, pad], dim=0)
-    _orthogonalize_left_bond(cores, i)
-    return cores[i].shape[2] > r_right
-
-
-def _expand_left_bond(cores, i, residual):
-    """Expand bond i-1|i with a local residual and QR-retract the new basis."""
-    r_left, n_i, r_right = cores[i].shape
-    max_extra = max(0, min(int(residual.shape[0]), int(cores[i - 1].shape[2])))
-    if max_extra == 0:
-        return False
-
-    delta = residual[:max_extra, :, :]
-    scale = max(_scalar(tn.linalg.norm(delta)), 1.0)
-    delta = delta / scale
-    cores[i] = tn.cat([cores[i], delta], dim=0)
-
-    prev_core = cores[i - 1]
-    pad = _zeros((prev_core.shape[0], prev_core.shape[1], max_extra), prev_core)
-    cores[i - 1] = tn.cat([prev_core, pad], dim=2)
-    _orthogonalize_right_bond(cores, i)
-    return cores[i].shape[0] > r_left
+def _linear_rhs(mpo, state, eps=1e-12, rmax=1024):
+    """Compute H @ state in TT format and round."""
+    rhs = mpo @ state
+    return rhs.round(eps=eps, rmax=rmax)
 
 
 def _copy_back(dst, src):
-    dst.cores = [c.clone() for c in src.cores]
+    """Write ``src``'s cores into ``dst``, keeping ``dst``'s metadata valid.
 
-
-def _krylov_exp(matvec, vec, dt, krylov_dim, tol, complex_phase):
-    """Krylov subspace exponentiation."""
-    n = vec.shape[0]
-    v = vec.astype(np.complex128 if complex_phase else np.float64)
-    beta_prev = 0.0
-    norm_v = np.linalg.norm(v)
-    if norm_v == 0.0:
-        return np.zeros_like(v)
-    v = v / norm_v
-
-    V = np.zeros((n, krylov_dim), dtype=v.dtype)
-    alpha = np.zeros(krylov_dim, dtype=v.dtype)
-    beta = np.zeros(krylov_dim, dtype=np.float64)
-    V[:, 0] = v
-
-    for j in range(krylov_dim):
-        w = matvec(V[:, j])
-        if j > 0:
-            w = w - beta_prev * V[:, j - 1]
-        alpha[j] = np.vdot(V[:, j], w)
-        w = w - alpha[j] * V[:, j]
-        beta_j = np.linalg.norm(w)
-        beta[j] = beta_j
-        if beta_j < tol or j == krylov_dim - 1:
-            m = j + 1
-            break
-        V[:, j + 1] = w / beta_j
-        beta_prev = beta_j
-    else:
-        m = krylov_dim
-
-    T = np.zeros((m, m), dtype=alpha.dtype)
-    for j in range(m):
-        T[j, j] = alpha[j]
-        if j + 1 < m:
-            T[j, j + 1] = beta[j]
-            T[j + 1, j] = beta[j]
-
-    w, U = np.linalg.eig(T)
-    expw = np.exp(-1j * dt * w) if complex_phase else np.exp(-dt * (w - np.min(w.real)))
-    e1 = np.zeros(m, dtype=U.dtype)
-    e1[0] = 1.0
-    y = U @ (expw * (np.linalg.solve(U, e1)))
-    out = (V[:, :m] @ y) * norm_v
-    return out.real if not complex_phase else out
-
-
-def bug_like_sweep(state, mpo, dt, threshold=1e-10, max_bond_dim=1024, numiter_lanczos=25):
-    """Right-to-left local-evolution sweep.
-    
-    This is not the full BUG algorithm. It performs local Krylov evolution in a
-    right-to-left sweep and then truncates by SVD.
-    
-    Args:
-        state: Initial TT state (modified in place).
-        mpo: Hamiltonian as TT (MPO).
-        dt: Time step.
-        threshold: SVD threshold for truncation.
-        max_bond_dim: Max bond dimension.
-        numiter_lanczos: Lanczos iterations.
+    This used to assign ``dst.cores`` directly, which left ``dst.R``/``dst.N``
+    describing the cores from *before* the step -- so any rank check a caller
+    made afterwards was meaningless.
     """
-    num_sites = len(mpo.cores)
-    if num_sites != len(state.cores):
-        raise ValueError("State and Hamiltonian must have same number of sites")
-    
-    cores = [c.clone() for c in state.cores]
-    
-    left_envs = _build_left_envs(cores, mpo)
-    right_envs = _build_right_envs(cores, mpo)
-    
-    for i in range(num_sites - 1, -1, -1):
-        theta = cores[i]
-        
-        def apply_heff(x):
-            return _project_site(left_envs[i], right_envs[i + 1], mpo.cores[i], x)
-        
-        theta_new = _evolve_local(theta, apply_heff, dt,
-                                max_dense=256, krylov_dim=numiter_lanczos)
-        
-        cores[i] = theta_new
-        
-        left_envs = _build_left_envs(cores, mpo)
-        right_envs = _build_right_envs(cores, mpo)
-    
-    state = TT(cores)
-    state = state.round(eps=threshold, rmax=max_bond_dim)
-    return state
+    dst.replace_cores(src.cores)
 
 
-def bug(state, mpo, dt, threshold=1e-10, max_bond_dim=1024, numiter_lanczos=25):
-    """Evolve a TT state with a rank-adaptive BUG step.
+def step_truncate(state, mpo, dt, threshold=1e-10, max_bond_dim=1024,
+                  real_time=False):
+    """Evolve a TT state by one explicit step, then truncate.
 
-    The implementation is for linear MPO dynamics in imaginary time. It uses
-    local residuals from projected site evolutions to update neighbouring TT
-    bases, QR-retracts the expanded bases, performs a Galerkin local evolution
-    sweep in the updated bases, and truncates to ``max_bond_dim``.
+    ``Y <- round(Y + dt (-1)^... H Y)``.  First order and cheap.  For the
+    rank-adaptive Basis-Update & Galerkin integrator -- which augments the
+    bases before truncating and is substantially more accurate under a rank
+    cap -- use :func:`tinytt.dynamics.bug_step`.
 
-    The input ``state`` is updated in place for compatibility and the evolved
-    TT is also returned.
+    Parameters
+    ----------
+    state : TT
+        Current TT-vector state.
+    mpo : TT
+        Operator as TT-matrix (``mpo.is_ttm == True``).
+    dt : float
+        Time step size.
+    threshold : float, optional
+        SVD truncation threshold for rounding (default 1e-10).
+    max_bond_dim : int or list, optional
+        Maximum bond dimension (default 1024).
+    real_time : bool, optional
+        If True, use ``exp(-i·dt·H)`` approximation via ``-1j·dt`` factor
+        (Schrödinger dynamics).  If False (default), use ``-dt``
+        (dissipative PDEs or imaginary-time quantum evolution).
+
+    Returns
+    -------
+    TT
+        Evolved TT state (also updated in-place).
     """
     num_sites = len(mpo.cores)
     if num_sites != len(state.cores):
@@ -278,57 +82,45 @@ def bug(state, mpo, dt, threshold=1e-10, max_bond_dim=1024, numiter_lanczos=25):
 
     cores = [c.clone() for c in state.cores]
 
-    # Basis update: expand bonds from residual directions generated by local
-    # projected evolution, then QR-retract the expanded bases.
-    for direction in ("lr", "rl"):
-        indices = range(num_sites - 1) if direction == "lr" else range(num_sites - 1, 0, -1)
-        for i in indices:
-            left_envs = _build_left_envs(cores, mpo)
-            right_envs = _build_right_envs(cores, mpo)
-            theta = cores[i]
-
-            def apply_heff(x, site=i, L=left_envs, R=right_envs):
-                return _project_site(L[site], R[site + 1], mpo.cores[site], x)
-
-            theta_new = _evolve_local(
-                theta,
-                apply_heff,
-                dt,
-                max_dense=256,
-                krylov_dim=numiter_lanczos,
-            )
-            residual = theta_new - theta
-            residual_norm = _scalar(tn.linalg.norm(residual))
-            theta_norm = max(_scalar(tn.linalg.norm(theta)), 1.0)
-            if residual_norm <= threshold * theta_norm:
-                continue
-
-            if direction == "lr":
-                if cores[i].shape[2] < rmax[i + 1]:
-                    _expand_right_bond(cores, i, residual)
-            else:
-                if cores[i].shape[0] < rmax[i]:
-                    _expand_left_bond(cores, i, residual)
-
-    # Galerkin evolution in the expanded bases.
-    left_envs = _build_left_envs(cores, mpo)
-    right_envs = _build_right_envs(cores, mpo)
-    for i in range(num_sites):
-        theta = cores[i]
-
-        def apply_heff(x, site=i):
-            return _project_site(left_envs[site], right_envs[site + 1], mpo.cores[site], x)
-
-        cores[i] = _evolve_local(
-            theta,
-            apply_heff,
-            dt,
-            max_dense=256,
-            krylov_dim=numiter_lanczos,
-        )
-        left_envs = _build_left_envs(cores, mpo)
-        right_envs = _build_right_envs(cores, mpo)
-
-    evolved = TT(cores).round(eps=threshold, rmax=rmax)
+    rhs = _linear_rhs(mpo, TT(cores), eps=threshold * 0.1, rmax=max(rmax))
+    step_factor = -dt if not real_time else -1j * dt
+    evolved = (TT(cores) + step_factor * rhs).round(eps=threshold, rmax=rmax)
     _copy_back(state, evolved)
     return evolved
+
+
+def bug_like_sweep(state, mpo, dt, threshold=1e-10, max_bond_dim=1024,
+                   real_time=False):
+    """Alias for :func:`step_truncate`, kept because 0.4 scripts call it.
+
+    The ``numiter_lanczos`` argument went in 0.6: there is no Lanczos step in
+    step-and-truncate, so it never had an effect, and 0.5 warned that it was
+    ignored.  Passing it now raises ``TypeError``.
+    """
+    return step_truncate(state, mpo, dt, threshold=threshold,
+                         max_bond_dim=max_bond_dim, real_time=real_time)
+
+
+__all__ = [
+    "step_truncate",
+    "bug_like_sweep",
+]
+
+
+def __getattr__(name):
+    # bug_with_momentum moved to tinytt.experimental.momentum in 0.6; the old
+    # name keeps working, with a warning, until 0.7.
+    if name == "bug_with_momentum":
+        import warnings
+
+        from tinytt.experimental.momentum import bug_with_momentum
+
+        warnings.warn(
+            "tinytt.bug.bug_with_momentum moved to "
+            "tinytt.experimental.momentum.bug_with_momentum; the old name "
+            "will be removed in 0.7.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return bug_with_momentum
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

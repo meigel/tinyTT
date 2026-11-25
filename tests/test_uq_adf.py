@@ -1,4 +1,5 @@
 import math
+
 import numpy as np
 import numpy.polynomial.legendre as leg
 import pytest
@@ -46,12 +47,12 @@ def _basis_vals(x, degree, basis):
         return _legendre_basis_vals(x, degree)
     if basis == uq.PolynomBasis.Hermite:
         return _hermite_basis_vals(x, degree)
-    raise ValueError("Unknown basis {}".format(basis))
+    raise ValueError(f"Unknown basis {basis}")
 
 
 def _eval_tt_scalar(cores, y, basis):
     if tn.is_tensor(cores[0]):
-        cores = [c.numpy() for c in cores]
+        cores = [tn.to_numpy(c) for c in cores]
     val = np.asarray(cores[0][0, 0, :], dtype=float)
     for dim, yi in enumerate(y, start=1):
         core = cores[dim]
@@ -85,7 +86,7 @@ def test_uq_adf_constant_legendre():
         orthonormal=ORTHONORMAL,
     )
 
-    cores = [c.numpy() for c in res.cores]
+    cores = [tn.to_numpy(c) for c in res.cores]
     for _ in range(10):
         y = rng.uniform(-1.0, 1.0, size=M)
         pred = _eval_tt_scalar(cores, y, uq.PolynomBasis.Legendre)
@@ -119,7 +120,7 @@ def test_uq_adf_linear_legendre():
         orthonormal=ORTHONORMAL,
     )
 
-    cores = [c.numpy() for c in res.cores]
+    cores = [tn.to_numpy(c) for c in res.cores]
     errs = []
     for _ in range(30):
         y = rng.uniform(-1.0, 1.0, size=M)
@@ -155,7 +156,7 @@ def test_uq_adf_linear_hermite():
         orthonormal=ORTHONORMAL,
     )
 
-    cores = [c.numpy() for c in res.cores]
+    cores = [tn.to_numpy(c) for c in res.cores]
     eval_samples = [rng.normal(0.0, 1.0, size=M) for _ in range(40)]
     mean_val = float(np.mean([f(y) for y in eval_samples]))
     errs = []
@@ -197,7 +198,7 @@ def test_uq_adf_noisy_measurements():
         orthonormal=ORTHONORMAL,
     )
 
-    cores = [c.numpy() for c in res.cores]
+    cores = [tn.to_numpy(c) for c in res.cores]
     errs = []
     for _ in range(20):
         y = rng.uniform(-1.0, 1.0, size=M)
@@ -207,6 +208,15 @@ def test_uq_adf_noisy_measurements():
 
 
 def test_uq_adf_initial_random_vectors_regression():
+    """The linear term for dimension m must carry ``y_m``, not the others.
+
+    This test used to assert ``2.0 + y[1] - y[0]`` -- the *swapped* terms --
+    because ``_initial_guess_with_linear_terms`` had its basis index inverted
+    (``0 if k == m else 1`` instead of ``1 if k == m else 0``).  Basis index 0
+    is the constant ``P_0 = 1`` and index 1 the linear ``P_1 = y``, so with
+    solutions 3 and 1 about a sample mean of 2 the guess is
+    ``2 + 1*y_0 - 1*y_1``.  Fixed in 0.6; the expectation is corrected here.
+    """
     rng = np.random.default_rng(4)
     M = 2
     poly_dim = 2
@@ -224,5 +234,5 @@ def test_uq_adf_initial_random_vectors_regression():
     for _ in range(10):
         y = rng.uniform(-1.0, 1.0, size=M)
         pred = _eval_tt_scalar(cores, y, uq.PolynomBasis.Legendre)
-        expected = 2.0 + y[1] - y[0]
+        expected = 2.0 + y[0] - y[1]
         assert abs(pred - expected) < 1e-6

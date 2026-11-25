@@ -6,6 +6,7 @@ using UQ-ADF with 40 training samples and relaxed tolerances.
 """
 
 import time
+
 import numpy as np
 import pytest
 
@@ -19,8 +20,16 @@ if tn.default_float_dtype() == tn.float32:
 @pytest.mark.fast
 def test_uq_adf_darcy_fast():
     skfem = pytest.importorskip("skfem")
-    from skfem import (MeshQuad, ElementQuad1, InteriorBasis,
-                        BilinearForm, LinearForm, condense, solve)
+    scipy_sparse = pytest.importorskip("scipy.sparse")
+    spsolve = pytest.importorskip("scipy.sparse.linalg").spsolve
+    from skfem import (
+        BilinearForm,
+        ElementQuad1,
+        InteriorBasis,
+        LinearForm,
+        MeshQuad,
+        condense,
+    )
     from skfem.helpers import dot, grad
 
     np.random.seed(0)
@@ -52,13 +61,18 @@ def test_uq_adf_darcy_fast():
         for j, k in enumerate(ks):
             coeff += np.sqrt(lambdas[j]) * np.sin(np.pi*k*basis.doflocs[0]) * np.sin(np.pi*k*basis.doflocs[1]) * yvec[j]
         A = diffusion.assemble(basis, sigma=sigma, coeff=coeff)
-        return solve(*condense(A, b_fixed, D=D))
+        A_c, b_c, x_full, interior = condense(A, b_fixed, D=D)
+        assert scipy_sparse.issparse(A_c)
+        x_full = np.asarray(x_full, dtype=float)
+        x_full[interior] = spsolve(A_c.tocsr(), b_c)
+        return x_full
 
     # ---- samples ----
     Ns = 40
     meas = uq.UQMeasurementSet()
     for i in range(Ns):
-        meas.add(rng.uniform(-1.0, 1.0, size=M), solve_sample(rng.uniform(-1.0, 1.0, size=M)))
+        yvec = rng.uniform(-1.0, 1.0, size=M)
+        meas.add(yvec, solve_sample(yvec))
         if (i + 1) % 20 == 0:
             print(f"  [{time.perf_counter()-t0:.0f}s] samples {i+1}/{Ns}")
     print(f"  [{time.perf_counter()-t0:.0f}s] generating samples done")
@@ -77,10 +91,10 @@ def test_uq_adf_darcy_fast():
     print(f"  [{time.perf_counter()-t0:.0f}s] UQ-ADF done, ranks: {res.R}")
 
     # ---- evaluation ----
-    cores = [c.numpy() for c in res.cores]
+    cores = [tn.to_numpy(c) for c in res.cores]
     train_errs = []
     for yvec, ref in zip(meas.randomVectors[:5], meas.solutions[:5]):
-        ref_np = ref.numpy() if hasattr(ref, 'numpy') else ref
+        ref_np = tn.to_numpy(ref) if hasattr(ref, 'numpy') else ref
         val = np.asarray(cores[0][0, :, :], dtype=float)
         for dim, yi in enumerate(yvec, start=1):
             basis_vals = np.array([np.polynomial.legendre.legval(yi, [0]*k+[1]) for k in range(cores[dim].shape[1])])

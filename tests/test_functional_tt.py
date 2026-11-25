@@ -17,13 +17,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import tinytt._backend as tn
 from tinytt.functional_tt import FunctionalTT, random_ftt
 
-
 # ======================================================================
 # Helpers
 # ======================================================================
 
 def _np(t):
-    return t.numpy() if tn.is_tensor(t) else np.asarray(t)
+    return tn.to_numpy(t) if tn.is_tensor(t) else np.asarray(t)
 
 
 def _make_random_ftt_cores(d, ns, ranks, seed=0, scale=0.5):
@@ -364,9 +363,10 @@ class TestEuclideanGrads:
         assert all(c.grad is not None for c in ftt.cores)
 
         ftt.unwatch()
-        # After unwatch, requires_grad is False and grads are None
+        # After unwatch, grads are cleared
         assert all(c.grad is None for c in ftt.cores)
-        assert not any(c.requires_grad for c in ftt.cores)
+        if hasattr(ftt.cores[0], "requires_grad"):
+            assert not any(c.requires_grad for c in ftt.cores)
 
 
 # ======================================================================

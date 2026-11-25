@@ -11,13 +11,13 @@ if tn.default_float_dtype() == tn.float32:
 def _err_rel(t, ref):
     if ref.shape != t.shape:
         return np.inf
-    num = tn.linalg.norm(t - ref).numpy()
-    den = tn.linalg.norm(ref).numpy()
+    num = tn.to_numpy(tn.linalg.norm(t - ref))
+    den = tn.to_numpy(tn.linalg.norm(ref))
     return float(num / den)
 
 
 def test_dmrg_cross_interpolation():
-    func1 = lambda I: 1 / (2 + (I + 1).sum(axis=1).cast(tn.float64))
+    func1 = lambda I: 1 / (2 + tn.cast((I + 1).sum(axis=1), tn.float64))
     N = [20] * 4
     x = tntt.interpolate.dmrg_cross(func1, N, eps=1e-7)
     Is = tntt.meshgrid([tn.arange(0, n, dtype=tn.float64) for n in N])
@@ -37,7 +37,7 @@ def test_dmrg_cross_interpolation_nonvect():
 
 
 def test_function_interpolate_multivariable():
-    func1 = lambda I: 1 / (2 + (I + 1).sum(axis=1).cast(tn.float64))
+    func1 = lambda I: 1 / (2 + tn.cast((I + 1).sum(axis=1), tn.float64))
     N = [20] * 4
 
     Is = tntt.meshgrid([tn.arange(0, n, dtype=tn.float64) for n in N])

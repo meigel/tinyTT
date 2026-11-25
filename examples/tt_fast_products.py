@@ -1,4 +1,5 @@
 import numpy as np
+
 import tinytt as tt
 
 rng = np.random.RandomState(1)
@@ -9,7 +10,7 @@ y_full = rng.rand(2, 2, 2).astype(np.float64)
 x = tt.TT(x_full, eps=1e-12)
 y = tt.TT(y_full, eps=1e-12)
 
-z = tt.fast_hadammard(x, y, eps=1e-8)
+z = tt.fast_hadamard(x, y, eps=1e-8)
 print("fast hadamard ranks:", z.R)
 
 A_full = rng.rand(8, 8).astype(np.float64)

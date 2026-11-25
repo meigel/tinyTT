@@ -1,28 +1,103 @@
 """
-Core TT class backed by tinygrad.
+Core TT class.
 """
 
 from __future__ import annotations
 
 import sys
-import math
+
 import numpy as np
+
 import tinytt._backend as tn
-from tinytt._decomposition import mat_to_tt, to_tt, round_tt
 from tinytt._aux_ops import dense_matvec
+from tinytt._decomposition import (
+    SVD,
+    lr_orthogonal,
+    mat_to_tt,
+    rank_chop,
+    round_tt,
+    to_tt,
+)
+from tinytt._decomposition import (
+    _scalar as _decomp_scalar,
+)
 from tinytt._dmrg import dmrg_matvec
 from tinytt.errors import (
-    ShapeMismatch,
-    RankMismatch,
     IncompatibleTypes,
     InvalidArguments,
+    RankMismatch,
+    ShapeMismatch,
 )
 
 
-class TT:
-    """Tensor Train (TT) tensor / TT-matrix backed by tinygrad.
+def _is_scipy_sparse_matrix(source) -> bool:
+    return hasattr(source, "toarray") and hasattr(source, "tocsr") and hasattr(source, "shape")
 
-    The core data structure of tinyTT.  Stores ``d`` cores (tinygrad Tensors)
+
+def _exact_log(value: int, base: int) -> int:
+    """Exact integer log: largest k with ``base**k == value``, else -1.
+
+    ``int(math.log(value, base))`` is wrong for exact powers because of
+    floating-point error (e.g. ``math.log(243, 3) == 4.999...``).
+    """
+    if value < 1 or base < 2:
+        return -1
+    k, acc = 0, 1
+    while acc < value:
+        acc *= base
+        k += 1
+    return k if acc == value else -1
+
+
+def _split_ttm_core(core, groups, eps=1e-12, rmax=sys.maxsize):
+    """Split one TT-matrix core into ``len(groups)`` finer TT-matrix cores.
+
+    ``core`` has shape ``(r, M, N, r')`` with ``M = prod(m_i)`` and
+    ``N = prod(n_i)`` over ``groups = [(m_0, n_0), ...]``.  Row and column
+    indices are split in the same coarse-to-fine order and interleaved so
+    that each output core carries one ``(m_i, n_i)`` pair, then the chain is
+    recovered by successive SVDs.
+    """
+    if len(groups) == 1:
+        return [core]
+    r_left, M, N, r_right = core.shape
+    ms = [g[0] for g in groups]
+    ns = [g[1] for g in groups]
+    k = len(groups)
+    # (r, m_0..m_{k-1}, n_0..n_{k-1}, r')
+    block = tn.reshape(core, [r_left] + ms + ns + [r_right])
+    # interleave to (r, m_0, n_0, m_1, n_1, ..., r')
+    perm = [0]
+    for i in range(k):
+        perm += [1 + i, 1 + k + i]
+    perm.append(1 + 2 * k)
+    block = tn.permute(block, perm)
+
+    cores = []
+    left = r_left
+    tail = block
+    for i in range(k - 1):
+        mat = tn.reshape(tail, [left * ms[i] * ns[i], -1])
+        u, sv, vh = SVD(mat)
+        keep = rank_chop(sv, _decomp_scalar(tn.linalg.norm(sv)) * eps / max(k - 1, 1))
+        cap = rmax[i + 1] if isinstance(rmax, list) else rmax
+        keep = max(1, min(int(keep), int(tn.numel(sv)), int(cap)))
+        cores.append(tn.reshape(u[:, :keep], [left, ms[i], ns[i], keep]))
+        tail = tn.scale_rows(sv[:keep], vh[:keep, :])
+        shape_tail = [keep]
+        for j in range(i + 1, k):
+            shape_tail += [ms[j], ns[j]]
+        shape_tail.append(r_right)
+        tail = tn.reshape(tail, shape_tail)
+        left = keep
+    cores.append(tn.reshape(tail, [left, ms[-1], ns[-1], r_right]))
+    return cores
+
+
+class TT:
+    """Tensor Train (TT) tensor / TT-matrix.
+
+    The core data structure of tinyTT.  Stores ``d`` cores (backend tensors)
     in left-canonical or mixed-canonical gauge.  For a TT-vector
     (``is_ttm=False``) cores have shape ``(r_k, n_k, r_{k+1})``; for a
     TT-matrix (``is_ttm=True``) cores have shape
@@ -53,6 +128,8 @@ class TT:
     def __init__(
         self, source, shape=None, eps=1e-10, rmax=sys.maxsize, device=None, dtype=None
     ):
+        if device is not None:
+            device = tn.map_device(device)
         if source is None:
             self.cores = []
             self.__M = []
@@ -75,7 +152,6 @@ class TT:
             devices = {c.device for c in cores if tn.is_tensor(c)}
             if len(devices) > 1:
                 raise InvalidArguments("All cores must live on the same device.")
-            prev = 1
             N = []
             M = []
             R = [cores[0].shape[0]]
@@ -84,8 +160,9 @@ class TT:
                 s = cores[i].shape
                 if s[0] != R[-1]:
                     raise RankMismatch(
-                        "Ranks of the given cores do not match: for core number %d previous rank is %d and and current rank is %d."
-                        % (i, R[-1], s[0])
+                        "Ranks of the given cores do not match: core "
+                        f"{i} has left rank {s[0]} but the previous core "
+                        f"ends at rank {R[-1]}."
                     )
                 if len(s) == 3:
                     R.append(s[2])
@@ -124,12 +201,36 @@ class TT:
             )
             return
 
+        if _is_scipy_sparse_matrix(source):
+            if shape is None:
+                raise InvalidArguments("Sparse matrix input requires TT-matrix shape=[(m1,n1), ...].")
+            if not (
+                isinstance(shape, list)
+                and len(shape) > 0
+                and isinstance(shape[0], tuple)
+            ):
+                raise InvalidArguments("Sparse matrix input requires TT-matrix shape=[(m1,n1), ...].")
+            self.__M = [s[0] for s in shape]
+            self.__N = [s[1] for s in shape]
+            self.cores, self.__R = mat_to_tt(
+                source, self.__M, self.__N, eps, rmax, is_sparse=True
+            )
+            if dtype is not None or device is not None:
+                self.cores = [
+                    tn.cast(c, dtype) if dtype is not None else c for c in self.cores
+                ]
+                if device is not None:
+                    self.cores = [c.to(device) for c in self.cores]
+            self.__is_ttm = True
+            self.shape = [(m, n) for m, n in zip(self.__M, self.__N)]
+            return
+
         if isinstance(source, np.ndarray):
             source = tn.tensor(source, dtype=dtype, device=device)
 
         if tn.is_tensor(source):
             if dtype is not None:
-                source = source.cast(dtype)
+                source = tn.cast(source, dtype)
             if device is not None and source.device != device:
                 source = source.to(device)
             if shape is None:
@@ -176,11 +277,19 @@ class TT:
             return
 
         raise NotImplementedError(
-            "Function only implemented for tinygrad tensors, numpy arrays, list of cores as tensors and None."
+            "TT() accepts a backend tensor, a numpy array, a list of cores, or None."
         )
 
     def to(self, device=None, dtype=None):
-        cores = [tn.tensor(c, dtype=dtype, device=device) for c in self.cores]
+        """Copy to another device and/or dtype.
+
+        Always returns independent cores: ``tn.tensor`` hands back the same
+        object when no conversion is needed, which used to make the result
+        alias ``self``.
+        """
+        cores = [
+            tn.tensor(c, dtype=dtype, device=device).clone() for c in self.cores
+        ]
         return TT(cores)
 
     def detach(self):
@@ -196,10 +305,13 @@ class TT:
             )
         core = core if tn.is_tensor(core) else tn.tensor(core)
         if self.__is_ttm:
+            # The length check has to come first: `or` evaluates left to
+            # right, so indexing shape[3] on a 2-D core raised IndexError
+            # instead of the documented InvalidArguments.
             if (
-                core.shape[0] != self.__R[k]
+                len(core.shape) != 4
+                or core.shape[0] != self.__R[k]
                 or core.shape[3] != self.__R[k + 1]
-                or len(core.shape) != 4
             ):
                 raise InvalidArguments(
                     "The given core must match the ranks and the dimensionality."
@@ -207,17 +319,36 @@ class TT:
             self.cores[k] = core.clone()
             self.__M[k] = core.shape[1]
             self.__N[k] = core.shape[2]
+            self.shape = self._shape_arg()
         else:
             if (
-                core.shape[0] != self.__R[k]
+                len(core.shape) != 3
+                or core.shape[0] != self.__R[k]
                 or core.shape[2] != self.__R[k + 1]
-                or len(core.shape) != 3
             ):
                 raise InvalidArguments(
                     "The given core must match the ranks and the dimensionality."
                 )
             self.cores[k] = core.clone()
             self.__N[k] = core.shape[1]
+            self.shape = self._shape_arg()
+
+    def replace_cores(self, cores) -> TT:
+        """Replace every core in place, refreshing the cached metadata.
+
+        Assigning ``tt.cores = [...]`` directly leaves ``R``, ``N``, ``M`` and
+        ``shape`` describing the *old* cores, so any later rank query is
+        wrong.  This does the assignment and the bookkeeping together.
+        """
+        rebuilt = TT([c.clone() if tn.is_tensor(c) else tn.tensor(c)
+                      for c in cores])
+        self.cores = rebuilt.cores
+        self.__M = rebuilt.M if rebuilt.is_ttm else []
+        self.__N = rebuilt.N
+        self.__R = rebuilt.R
+        self.__is_ttm = rebuilt.is_ttm
+        self.shape = self._shape_arg()
+        return self
 
     def _shape_arg(self):
         return (
@@ -243,8 +374,7 @@ class TT:
                     tfull = tfull[:, :, 0]
                 return tfull
 
-            fn = tn.maybe_jit(("full_ttm", len(self.__N), len(self.cores)), _full_ttm)
-            return fn(*self.cores)
+            return _full_ttm(*self.cores)
 
         def _full_tt(*cores):
             tfull = cores[0][0, :, :]
@@ -256,14 +386,26 @@ class TT:
                 tfull = tn.squeeze(tfull)
             return tfull
 
-        fn = tn.maybe_jit(("full_tt", len(self.__N), len(self.cores)), _full_tt)
-        return fn(*self.cores)
+        return _full_tt(*self.cores)
 
     def numpy(self):
-        return self.full().numpy()
+        return tn.to_numpy(self.full())
 
     def norm(self):
-        return tn.linalg.norm(self.full())
+        """Frobenius norm, computed in TT format (O(d n r^3), never dense).
+
+        Uses a left-orthogonalisation sweep rather than ``sqrt(<x, x>)``:
+        after the sweep every core but the last is orthonormal, so the norm
+        is the norm of the last core.  This avoids both the exponential cost
+        of ``full()`` and the catastrophic cancellation that ``<x, x>``
+        suffers on a tensor that is close to zero (e.g. a residual).
+        """
+        if len(self.cores) == 1:
+            return tn.linalg.norm(self.cores[0])
+        cores, _ = lr_orthogonal(
+            [c.clone() for c in self.cores], self.__R.copy(), self.__is_ttm
+        )
+        return tn.linalg.norm(cores[-1])
 
     def __repr__(self):
         if self.__is_ttm:
@@ -288,7 +430,7 @@ class TT:
     def _scalar_value(self, x):
         if isinstance(x, (int, float, complex)):
             return x
-        return tn.tensor(x).numpy().item()
+        return tn.to_numpy(tn.tensor(x)).item()
 
     def _scaled_first_core(self, scalar):
         cores_new = [c.clone() for c in self.cores]
@@ -314,9 +456,9 @@ class TT:
                 cores_new.append(
                     tn.ones([1, self.__N[i], 1], dtype=ref.dtype, device=ref.device)
                 )
-        if cores_new:
-            s = tn.tensor(scalar, dtype=cores_new[0].dtype, device=cores_new[0].device)
-            cores_new[0] = cores_new[0] * s
+        # never empty: self.cores[0] was read above, so d >= 1
+        s = tn.tensor(scalar, dtype=cores_new[0].dtype, device=cores_new[0].device)
+        cores_new[0] = cores_new[0] * s
         return TT(cores_new)
 
     def _tt_native_add(self, other):
@@ -373,6 +515,65 @@ class TT:
                     block = tn.cat([top, bot], dim=0)
             new_cores.append(block)
         return TT(new_cores)
+
+    def hadamard(self, other, eps: float = 1e-12, rmax=None):
+        """Elementwise (Hadamard) product with truncation.
+
+        ``a * b`` is *exact* and therefore multiplies the bond ranks, so a
+        chain like ``x * x * x * x`` reaches rank ``r**16``.  This method
+        rounds the product back down, which is almost always what a caller
+        of a repeated Hadamard product wants.
+
+        Parameters
+        ----------
+        other : TT
+        eps : float
+            Relative truncation tolerance applied to the product.
+        rmax : int or list of int, optional
+            Optional hard rank cap.
+        """
+        product = self * other
+        if not isinstance(product, TT):  # pragma: no cover - defensive
+            # `TT.__mul__` returns a TT on every non-raising path, so this
+            # cannot currently be reached; kept in case `__mul__` ever gains
+            # a scalar-returning branch.
+            return product
+        return product.round(eps=eps, **({} if rmax is None else {"rmax": rmax}))
+
+    def _ttm_resplit(self, shape_new, eps=1e-12, rmax=sys.maxsize):
+        """Split each TT-matrix core into the finer modes given by ``shape_new``.
+
+        TT-native replacement for routing ``to_qtt`` through a dense reshape,
+        which defeated the whole point of quantising an operator.
+        """
+        if not self.__is_ttm:
+            raise IncompatibleTypes("_ttm_resplit is only defined for TT-matrices.")
+        targets: list[list[tuple[int, int]]] = []
+        pos = 0
+        for k in range(len(self.__N)):
+            group: list[tuple[int, int]] = []
+            m_acc, n_acc = 1, 1
+            while pos < len(shape_new) and (
+                m_acc < self.__M[k] or n_acc < self.__N[k]
+            ):
+                m_k, n_k = shape_new[pos]
+                group.append((m_k, n_k))
+                m_acc *= m_k
+                n_acc *= n_k
+                pos += 1
+            if m_acc != self.__M[k] or n_acc != self.__N[k]:
+                raise ShapeMismatch(
+                    f"target modes {group} do not factor core {k} of shape "
+                    f"({self.__M[k]}, {self.__N[k]})"
+                )
+            targets.append(group)
+        if pos != len(shape_new):
+            raise ShapeMismatch("target shape has leftover modes.")
+
+        cores_new: list[tn.Tensor] = []
+        for core, group in zip(self.cores, targets):
+            cores_new.extend(_split_ttm_core(core, group, eps=eps, rmax=rmax))
+        return TT(cores_new)
 
     def _tt_native_hadamard(self, other):
         """Exact TT Hadamard (elementwise) product via Khatri-Rao on each core.
@@ -485,26 +686,28 @@ class TT:
             if self.__is_ttm and not other.is_ttm:
                 if self.__N != other.N:
                     raise ShapeMismatch("Shapes do not match.")
-                full = dense_matvec(self.cores, other.full())
-                return TT(full, shape=self.__M)
+                # TT-matrix @ TT-vector via per-core contraction (no .full()).
+                # Uses ttm_apply (exact, no intermediate rounding) not tt_matvec
+                # (which has a backend-index-ordering issue for certain inputs).
+                from ._ttm_base import ttm_apply
+                return TT(ttm_apply(self.cores, other.cores))
             if self.__is_ttm and other.is_ttm:
                 if self.__N != other.M:
                     raise ShapeMismatch("Shapes do not match.")
-                d = len(self.__N)
-                full = tn.tensordot(
-                    self.full(),
-                    other.full(),
-                    axes=(list(range(d, 2 * d)), list(range(d))),
-                )
-                return TT(full, shape=[(m, n) for m, n in zip(self.__M, other.N)])
+                # TT-matrix @ TT-matrix, core by core.  Ranks compound
+                # multiplicatively; this used to build both dense operators.
+                from ._ttm_base import ttm_multiply
+                return TT(ttm_multiply(self.cores, other.cores))
             if not self.__is_ttm and other.is_ttm:
                 if self.__N != other.M:
                     raise ShapeMismatch("Shapes do not match.")
-                d = len(self.__N)
-                full = tn.tensordot(
-                    self.full(), other.full(), axes=(list(range(d)), list(range(d)))
-                )
-                return TT(full, shape=other.N)
+                # row-vector @ TT-matrix == (A^T x) with the transpose taken
+                # core-wise, so this is again a per-core contraction.
+                transposed = [
+                    tn.permute(c, [0, 2, 1, 3]) for c in other.cores
+                ]
+                from ._ttm_base import ttm_apply
+                return TT(ttm_apply(transposed, self.cores))
         raise InvalidArguments("Wrong arguments.")
 
     def fast_matvec(
@@ -520,42 +723,123 @@ class TT:
             self, other, y0=initial, eps=eps, verb=verb, nswp=nswp
         )
 
-    def round(self, eps=1e-12, rmax=sys.maxsize):
-        if not isinstance(rmax, list):
-            rmax = [1] + len(self.__N) * [rmax] + [1]
-        tt_cores, _ = round_tt(self.cores, self.__R.copy(), eps, rmax, self.__is_ttm)
-        return TT(tt_cores)
+    def round(self, eps=1e-12, rmax=sys.maxsize, return_discarded=False):
+        """TT-SVD rounding to relative accuracy ``eps`` (and rank ``rmax``).
 
-    def to_qtt(self, eps=1e-12, mode_size=2, rmax=sys.maxsize):
+        With ``return_discarded=True`` the result is ``(rounded, discarded)``,
+        where ``discarded`` is the Frobenius norm of the dropped singular
+        values (equal to ``||self - rounded||`` in exact arithmetic), see
+        :func:`round_tt`.
+        """
+        if not isinstance(rmax, list):
+            rmax = [1] + (len(self.__N) - 1) * [rmax] + [1]
+        # Contraction guard with retry: rounding must never inflate the norm
+        # (||round_eps(x)|| <= ||x||).  A BLAS/LAPACK-level fault on
+        # near-degenerate spectra (dgesdd deflation race, threaded) can
+        # silently corrupt a sweep attempt; a fresh clone retry recovers the
+        # correct result.  If every attempt fails the check, raise instead of
+        # shipping a corrupted tensor.
+        def _nrm(t):
+            return float(tn.to_numpy(tn.abs(t.norm())).item())
+
+        in_norm = None
+        out = None
+        for _attempt in range(4):
+            args = ([c.clone() for c in self.cores], self.__R.copy(), eps, rmax,
+                    self.__is_ttm)
+            if return_discarded:
+                tt_cores, _, discarded = round_tt(*args, return_discarded=True)
+            else:
+                tt_cores, _ = round_tt(*args)
+            out = TT(tt_cores)
+            if in_norm is None:
+                in_norm = _nrm(self)
+            # two-sided contraction check: rounding must neither inflate nor
+            # deflate the norm beyond the requested tolerance (legit change
+            # is <= ~eps relative; corruption was 25-400x).  Absolute floor:
+            # (1) numerically-zero tensors round to SVD noise, and (2) inner()
+            # on ~zero tensors reports contraction noise that GROWS with the
+            # chain depth (~1e-7 at n=64 up to ~2e-6 at n=1024) far above the
+            # tensor's true 0 norm.  1e-4 admits those while still catching
+            # any 25x+ corruption of a tensor above ~1e-5 norm (i.e. anything
+            # that can matter at tol ~ 1e-4).
+            # A hard rank cap is a *lossy* operation: the norm change it
+            # causes is bounded by the discarded singular values, not by eps.
+            # Only apply the eps-based guard when no bond was actually clipped
+            # by rmax, otherwise legitimate `round(rmax=k)` calls are rejected.
+            clipped = any(
+                out.R[i] >= rmax[i] and out.R[i] < self.__R[i]
+                for i in range(1, len(out.R) - 1)
+            )
+            if clipped:
+                return (out, discarded) if return_discarded else out
+            on = _nrm(out)
+            margin = max(10.0 * float(eps), 1e-9)
+            if abs(on - in_norm) <= max(in_norm * margin, 1e-4):
+                return (out, discarded) if return_discarded else out
+        raise RuntimeError(  # pragma: no cover - needs four BLAS-level faults
+            f"round failed the contraction check 4x (||out||={_nrm(out):.6g} > "
+            f"||in||={in_norm:.6g}); kernel-level fault, not a tolerance issue"
+        )
+
+    def to_qtt(self, eps=1e-12, mode_size=2, rmax=sys.maxsize, skip_cores=None):
+        """Convert to QTT format, optionally skipping specified cores.
+
+        Parameters
+        ----------
+        eps : float
+            Rounding tolerance for the QTT conversion.
+        mode_size : int
+            Target mode size for quantisation (default 2).
+        rmax : int
+            Maximum TT rank after conversion.
+        skip_cores : list of int, optional
+            Indices of cores to leave in standard TT format (not quantised).
+            Useful for parametric cores in mixed QTT/TT formats.
+        """
         cores_new = []
+        skip = set(skip_cores) if skip_cores is not None else set()
         if self.__is_ttm:
             shape_new = []
             for i in range(len(self.__N)):
-                if self.__N[i] != self.__M[i]:
-                    raise ShapeMismatch("Only quadratic TTM can be tranformed to QTT.")
-                if self.__N[i] == mode_size ** int(math.log(self.N[i], mode_size)):
-                    shape_new += [(mode_size, mode_size)] * int(
-                        math.log(self.__N[i], mode_size)
-                    )
+                if i in skip:
+                    shape_new.append((self.__M[i], self.__N[i]))
                 else:
-                    raise ShapeMismatch(
-                        "Reshaping error: check if the dimensions are powers of the desired mode size:\r\n"
-                        f"core size {list(self.cores[i].shape)} cannot be reshaped."
-                    )
-            import tinytt._extras as _extras
-
-            result = _extras.reshape(self, shape_new, eps, rmax)
+                    if self.__N[i] != self.__M[i]:
+                        raise ShapeMismatch("Only quadratic TTM can be tranformed to QTT.")
+                    _k = _exact_log(self.__N[i], mode_size)
+                    if _k >= 0:
+                        shape_new += [(mode_size, mode_size)] * _k
+                    else:
+                        raise ShapeMismatch(
+                            "Reshaping error: check if the dimensions are powers of the desired mode size:\r\n"
+                            f"core size {list(self.cores[i].shape)} cannot be reshaped."
+                        )
+            result = self._ttm_resplit(shape_new, eps=eps, rmax=rmax)
         else:
-            for core in self.cores:
-                if int(math.log(core.shape[1], mode_size)) > 1:
+            for i, core in enumerate(self.cores):
+                if i in skip:
+                    cores_new.append(core)
+                elif _exact_log(core.shape[1], mode_size) < 0:
+                    raise ShapeMismatch(
+                        "Reshaping error: check if the dimensions are powers "
+                        "of the desired mode size:\r\n"
+                        f"core size {list(core.shape)} is not a power of "
+                        f"{mode_size}"
+                    )
+                elif _exact_log(core.shape[1], mode_size) > 1:
+                    _k = _exact_log(core.shape[1], mode_size)
                     nnew = (
                         [core.shape[0] * mode_size]
-                        + [mode_size] * (int(math.log(core.shape[1], mode_size)) - 2)
+                        + [mode_size] * (_k - 2)
                         + [core.shape[2] * mode_size]
                     )
                     try:
                         core = tn.reshape(core, nnew)
-                    except Exception as exc:
+                    except Exception as exc:  # pragma: no cover - unreachable
+                        # `_exact_log` already established that the mode size
+                        # is an exact power, so prod(nnew) == numel(core) by
+                        # construction and the reshape cannot fail.
                         raise ShapeMismatch(
                             "Reshaping error: check if the dimensions are powers of the desired mode size:\r\n"
                             f"core size {list(core.shape)} cannot be reshaped to {nnew}"
@@ -574,8 +858,9 @@ class TT:
         return result
 
     def qtt_to_tens(self, original_shape):
-        if not isinstance(original_shape, list):
-            raise InvalidArguments("Original shape must be a list.")
+        if not isinstance(original_shape, (list, tuple)):
+            raise InvalidArguments("Original shape must be a list or tuple.")
+        original_shape = list(original_shape)
 
         core = None
         cores_new = []
@@ -592,23 +877,24 @@ class TT:
                     so_far_m = core.shape[1]
                     so_far_n = core.shape[2]
                 else:
-                    # Merge two adjacent TTM cores: [r_i, M, N, r_mid] @ [r_mid, m, n, r_o]
-                    # Result: [r_i, M, N, m, n, r_o]   (6D intermediate)
-                    core = tn.einsum("rijl,lkno->rijkno", core, c)
+                    # Merge two adjacent TTM cores and immediately regroup to
+                    # 4-D (r, M*m, N*n, r').  Accumulating a 6-D intermediate
+                    # meant a third merge hit einsum with the wrong rank.
+                    core = tn.einsum("rijl,lkno->rikjno", core, c)
+                    core = tn.reshape(
+                        core,
+                        [
+                            core.shape[0],
+                            core.shape[1] * core.shape[2],
+                            core.shape[3] * core.shape[4],
+                            core.shape[5],
+                        ],
+                    )
                     so_far_m *= c.shape[1]
                     so_far_n *= c.shape[2]
 
                 target_m, target_n = original_shape[k]
                 if so_far_m == target_m and so_far_n == target_n:
-                    # If we merged multiple cores, group M dims and N dims via permute+reshape
-                    if len(core.shape) == 6:
-                        # [r, M, N, m, n, r'] -> [r, M, m, N, n, r']
-                        core = tn.permute(core, [0, 1, 3, 2, 4, 5])
-                        new_m = core.shape[1] * core.shape[2]
-                        new_n = core.shape[3] * core.shape[4]
-                        core = tn.reshape(
-                            core, [core.shape[0], new_m, new_n, core.shape[-1]]
-                        )
                     cores_new.append(core)
                     core = None
                     k += 1

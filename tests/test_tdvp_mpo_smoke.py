@@ -1,6 +1,8 @@
 import numpy as np
+import pytest
 
 import tinytt as tt
+import tinytt._backend as tn
 from tinytt.tdvp import build_ising_mpo, tdvp_imag_time, tdvp_real_time
 
 
@@ -48,11 +50,15 @@ def test_tdvp_real_time_smoke():
         rng.randn(2, 2, 2).astype(np.float64),
         rng.randn(2, 2, 1).astype(np.float64),
     ]
-    psi_re = tt.TT(cores)
-    psi_im = tt.TT([np.zeros_like(c) for c in cores])
+    psi = tt.TT(cores)
 
-    out_re, out_im = tdvp_real_time(psi_re, H, dt=0.01, psi_im=psi_im, nswp=1, eps=1e-8, rmax=8, max_dense=64)
-    assert isinstance(out_re, tt.TT)
-    assert isinstance(out_im, tt.TT)
-    assert out_re.N == psi_re.N
-    assert out_im.N == psi_re.N
+    # 0.5: real time uses native complex arithmetic, so this returns one
+    # complex TT rather than a (real, imaginary) pair.
+    out = tdvp_real_time(psi, H, dt=0.01, nswp=1, eps=1e-8, rmax=8, max_dense=64)
+    assert isinstance(out, tt.TT)
+    assert not out.is_ttm
+    assert out.N == psi.N
+    assert tn.is_complex_dtype(out.cores[0].dtype)
+
+    with pytest.raises(TypeError):
+        tdvp_real_time(psi, H, dt=0.01, psi_im=psi)

@@ -28,7 +28,7 @@ def test_uq_adf_fast_constant_legendre():
         device=None,
         orthonormal=False,
     )
-    cores = [c.numpy() for c in res.cores]
+    cores = [tn.to_numpy(c) for c in res.cores]
 
     def eval_tt(y):
         val = np.asarray(cores[0][0, 0, :], dtype=float)

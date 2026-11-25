@@ -1,23 +1,24 @@
 """
-Adaptive TT regression (UQ-ADF) ported to tinyTT/tinygrad.
+Adaptive TT regression (UQ-ADF).
 """
 from __future__ import annotations
 
-import math
 import sys
+
 import numpy as np
 
 import tinytt
 import tinytt._backend as tn
 from tinytt._decomposition import rl_orthogonal, round_tt
+from tinytt._functional import basis_matrix
 
 
-class PolynomBasis(object):
+class PolynomBasis:
     Hermite = 'hermite'
     Legendre = 'legendre'
 
 
-class UQMeasurementSet(object):
+class UQMeasurementSet:
     def __init__(self):
         self.randomVectors = []
         self.solutions = []
@@ -38,7 +39,7 @@ def _normalize_basis(basis):
         return PolynomBasis.Hermite
     if basis in (PolynomBasis.Legendre, 'legendre', 'Legendre'):
         return PolynomBasis.Legendre
-    raise ValueError("Unknown basis '{}'".format(basis))
+    raise ValueError(f"Unknown basis '{basis}'")
 
 
 def _to_tensor(data, dtype, device):
@@ -48,7 +49,7 @@ def _to_tensor(data, dtype, device):
 def _to_device_dtype(tensor, device, dtype):
     out = tensor
     if dtype is not None and out.dtype != dtype:
-        out = out.cast(dtype)
+        out = tn.cast(out, dtype)
     if device is not None and out.device != device:
         out = out.to(device)
     return out
@@ -57,7 +58,7 @@ def _to_device_dtype(tensor, device, dtype):
 def _stack(tensors, dim=0):
     if len(tensors) == 0:
         raise ValueError('stack expects a non-empty list')
-    return tensors[0].stack(*tensors[1:], dim=dim)
+    return tn.stack(tensors, dim=dim)
 
 
 def _outer(a, b):
@@ -72,46 +73,33 @@ def _solve(a, b):
     return tn.linalg.solve(a, b)
 
 
-def _hermite_matrix(x, degree):
-    n_samples = x.shape[0]
-    if degree == 0:
-        return tn.zeros((n_samples, 0), dtype=x.dtype, device=x.device)
-    if degree == 1:
-        return tn.ones((n_samples, 1), dtype=x.dtype, device=x.device)
-    cols = [tn.ones((n_samples,), dtype=x.dtype, device=x.device), x]
-    for n in range(1, degree - 1):
-        cols.append(x * cols[-1] - float(n) * cols[-2])
-    return tn.stack(cols, dim=1)
+def _basis_matrix(x, degree, basis, orthonormal, measure="probability"):
+    """Evaluate one polynomial family, delegating to :mod:`tinytt._functional`.
 
+    ``degree`` here is the **mode size** (number of columns), matching the
+    ``dimensions`` entry of the corresponding TT core.
 
-def _legendre_matrix(x, degree):
-    n_samples = x.shape[0]
-    if degree == 0:
-        return tn.zeros((n_samples, 0), dtype=x.dtype, device=x.device)
-    if degree == 1:
-        return tn.ones((n_samples, 1), dtype=x.dtype, device=x.device)
-    cols = [tn.ones((n_samples,), dtype=x.dtype, device=x.device), x]
-    for n in range(1, degree - 1):
-        cols.append(((2.0 * n + 1.0) * x * cols[-1] - n * cols[-2]) / (n + 1.0))
-    return tn.stack(cols, dim=1)
-
-
-def _basis_matrix(x, degree, basis, orthonormal):
-    if basis == PolynomBasis.Hermite:
-        mat = _hermite_matrix(x, degree)
-        if orthonormal and degree > 0:
-            n = np.arange(degree, dtype=float)
-            scale = np.exp(-0.5 * np.array([math.lgamma(k + 1.0) for k in n], dtype=float))
-            mat = mat * tn.tensor(scale, dtype=x.dtype, device=x.device)
-        return mat
-    if basis == PolynomBasis.Legendre:
-        mat = _legendre_matrix(x, degree)
-        if orthonormal and degree > 0:
-            n = np.arange(degree, dtype=float)
-            scale = np.sqrt((2.0 * n + 1.0) / 2.0)
-            mat = mat * tn.tensor(scale, dtype=x.dtype, device=x.device)
-        return mat
-    raise ValueError("Unknown basis '{}'".format(basis))
+    Parameters
+    ----------
+    x : Tensor, shape ``(n_samples,)``
+    degree : int
+        Number of basis functions.
+    basis : PolynomBasis
+    orthonormal : bool
+    measure : {"probability", "lebesgue"}
+        Which measure the orthonormalisation refers to.  ``"probability"``
+        (default) is consistent across families — Hermite for ``N(0, 1)``,
+        Legendre for ``U(-1, 1)``.  Before 0.5 the two families silently used
+        different measures, mis-scaling a mixed model by ``sqrt(2)`` per
+        Legendre dimension.
+    """
+    family = "hermite" if basis == PolynomBasis.Hermite else "legendre"
+    if basis not in (PolynomBasis.Hermite, PolynomBasis.Legendre):
+        raise ValueError(f"Unknown basis '{basis}'")
+    return basis_matrix(x, degree, family=family, measure=measure,
+                        orthonormal=orthonormal,
+                        dtype=x.dtype if tn.is_tensor(x) else None,
+                        device=x.device if tn.is_tensor(x) else None)
 
 
 def _dirac_core(size, index, dtype, device):
@@ -168,19 +156,19 @@ def _calc_right_stack(cores, positions):
     if d <= 1:
         return right_stack
 
-    n_samples = positions[1].shape[0]
+    _n_samples = positions[1].shape[0]
 
     # Initialise from the rightmost core: meas_cmp has trailing dim 1.
     core = cores[d - 1]
     core_sh = core.permute(1, 0, 2)                                  # (mode, r_l, 1)
-    R = tn.einsum('jm,mlr->jlr', positions[d - 1], core_sh)[:, :, 0].realize()
+    R = (tn.einsum('jm,mlr->jlr', positions[d - 1], core_sh)[:, :, 0])
     right_stack[d - 1] = R
 
     for k in range(d - 2, 0, -1):
         core = cores[k]
         core_sh = core.permute(1, 0, 2)                              # (mode, r_l, r_r)
-        tmp = tn.einsum('jm,mlr->jlr', positions[k], core_sh).realize()
-        right_stack[k] = tn.einsum('jlr,jr->jl', tmp, right_stack[k + 1]).realize()
+        tmp = (tn.einsum('jm,mlr->jlr', positions[k], core_sh))
+        right_stack[k] = (tn.einsum('jlr,jr->jl', tmp, right_stack[k + 1]))
 
     return right_stack
 
@@ -208,7 +196,7 @@ def _calc_left_stack(core_pos, cores, positions, solutions_batched, left_is_stac
 
     core = cores[core_pos]
     core_sh = core.permute(1, 0, 2)                                   # (mode, r_l, r_r)
-    meas_cmp = tn.einsum('jm,mlr->jlr', positions[core_pos], core_sh).realize()
+    meas_cmp = (tn.einsum('jm,mlr->jlr', positions[core_pos], core_sh))
     # Make a second copy so the scheduler doesn't reuse the same buffer twice
     # in the upcoming Gram product.
     meas_cmp_t = meas_cmp.clone()
@@ -249,26 +237,26 @@ def _calc_delta(core_pos, cores, positions, solutions_batched,
 
     if core_pos == 0:
         core0_2d = core.reshape(mode, r_right)
-        pred = tn.einsum('mr,jr->jm', core0_2d, right_stack[1]).realize()
-        res = (pred - solutions_batched).realize()
-        dyad = tn.einsum('jm,jr->jmr', res, right_stack[1]).realize()
+        pred = (tn.einsum('mr,jr->jm', core0_2d, right_stack[1]))
+        res = (pred - solutions_batched)
+        dyad = (tn.einsum('jm,jr->jmr', res, right_stack[1]))
         return dyad.sum(0).reshape(1, mode, r_right)
 
     core_sh = core.permute(1, 0, 2)                                   # (mode, r_l, r_r)
-    meas_cmp = tn.einsum('jm,mlr->jlr', positions[core_pos], core_sh).realize()
+    meas_cmp = (tn.einsum('jm,mlr->jlr', positions[core_pos], core_sh))
 
     if core_pos < d - 1:
-        is_part = tn.einsum('jlr,jr->jl', meas_cmp, right_stack[core_pos + 1]).realize()
-        dyadic_part = tn.einsum('jm,jr->jmr', positions[core_pos], right_stack[core_pos + 1]).realize()
+        is_part = (tn.einsum('jlr,jr->jl', meas_cmp, right_stack[core_pos + 1]))
+        dyadic_part = (tn.einsum('jm,jr->jmr', positions[core_pos], right_stack[core_pos + 1]))
     else:
-        is_part = meas_cmp[:, :, 0].realize()                         # (n, r_l)
-        dyadic_part = positions[core_pos].unsqueeze(2).realize()      # (n, mode, 1)
+        is_part = (meas_cmp[:, :, 0])                         # (n, r_l)
+        dyadic_part = (positions[core_pos].unsqueeze(2))      # (n, mode, 1)
 
     if core_pos > 1:
-        is_part = tn.einsum('jlm,jm->jl', left_is_stack[core_pos - 1], is_part).realize()
+        is_part = (tn.einsum('jlm,jm->jl', left_is_stack[core_pos - 1], is_part))
 
-    diff = (is_part - left_ought_stack[core_pos - 1]).realize()
-    return tn.einsum('jl,jmr->lmr', diff, dyadic_part).realize()
+    diff = (is_part - left_ought_stack[core_pos - 1])
+    return (tn.einsum('jl,jmr->lmr', diff, dyadic_part))
 
 
 def _calc_norm_a_projgrad(delta, core_pos, positions, right_stack, left_is_stack):
@@ -281,16 +269,16 @@ def _calc_norm_a_projgrad(delta, core_pos, positions, right_stack, left_is_stack
         mode = delta.shape[1]
         r1 = delta.shape[2]
         delta_2d = delta.reshape(mode, r1)
-        tmp = tn.einsum('mr,jr->jm', delta_2d, right_stack[1]).realize()
+        tmp = (tn.einsum('mr,jr->jm', delta_2d, right_stack[1]))
         tmp_b = tmp.clone()
         return tn.sqrt((tmp * tmp_b).sum())
 
     delta_sh = delta.permute(1, 0, 2)                                 # (mode, r_l, r_r)
     delta_meas = tn.einsum('jm,mlr->jlr', positions[core_pos], delta_sh)  # (n, r_l, r_r)
     if core_pos < d - 1:
-        right_part = tn.einsum('jlr,jr->jl', delta_meas, right_stack[core_pos + 1]).realize()
+        right_part = (tn.einsum('jlr,jr->jl', delta_meas, right_stack[core_pos + 1]))
     else:
-        right_part = delta_meas[:, :, 0].realize()                    # (n, r_l)
+        right_part = (delta_meas[:, :, 0])                    # (n, r_l)
 
     right_part_b = right_part.clone()
     if core_pos > 1:
@@ -364,13 +352,13 @@ def _als_update_core(core_pos, cores, positions, right_stack, left_mats_batch,
     for _ in range(int(cg_maxit)):
         ap = matvec(p)
         denom = _dot(p, ap)
-        if float(denom.numpy()) == 0.0:
+        if float(tn.to_numpy(denom)) == 0.0:
             break
         alpha = rs_old / denom
         x = x + alpha * p
         r = r - alpha * ap
         rs_new = _dot(r, r)
-        if tol > 0.0 and float(rs_new.numpy()) <= (tol * tol) * float(rs0.numpy()):
+        if tol > 0.0 and float(tn.to_numpy(rs_new)) <= (tol * tol) * float(tn.to_numpy(rs0)):
             break
         p = r + (rs_new / rs_old) * p
         rs_old = rs_new
@@ -386,6 +374,20 @@ def _update_left_mats(left_mats_batch, core, positions, core_pos):
 
 
 def _prepare_measurements(measurements, device, dtype):
+    # Checked here rather than left to fail downstream: with no samples the
+    # first thing to break is the mean-based initial guess, and it did so as
+    # "stack expects a non-empty list", which names neither the function nor
+    # the cause.
+    if len(measurements.solutions) == 0:
+        raise ValueError(
+            "uq_adf needs at least one measurement; the UQMeasurementSet is "
+            "empty.  Add samples with measurements.add(y, solution)."
+        )
+    if len(measurements.randomVectors) != len(measurements.solutions):
+        raise ValueError(
+            f"measurements hold {len(measurements.randomVectors)} parameter "
+            f"vectors but {len(measurements.solutions)} solutions"
+        )
     random_vectors = np.asarray(measurements.randomVectors, dtype=float)
     if random_vectors.ndim != 2:
         raise ValueError('randomVectors must be a 2D array-like')
@@ -483,7 +485,12 @@ def _initial_guess_with_linear_terms(measurements, dimensions, dtype, device):
         tmp = (sol - mean).reshape(1, dimensions[0], 1)
         cores = [tmp]
         for k, size in enumerate(dimensions[1:]):
-            idx = 0 if k == m else 1
+            # Basis index 0 is the constant P_0 = 1 and index 1 the linear
+            # P_1 = y, so term m must carry the *linear* factor on dimension m
+            # and the constant everywhere else.  The two were the wrong way
+            # round, which swapped the terms at d = 2 and, at d >= 3, built a
+            # degree-(d-1) monomial that did not involve y_m at all.
+            idx = 1 if k == m else 0
             cores.append(_dirac_core(size, idx, dtype, device))
         x = x + tinytt.TT(cores)
 
@@ -500,7 +507,7 @@ def uq_adf(measurements, dimensions, basis, targeteps=1e-8, maxitr=1000, device=
     basis = _normalize_basis(basis)
     update_rule = str(update_rule).lower()
     if update_rule not in ("gradient", "als"):
-        raise ValueError("Unknown update_rule '{}'".format(update_rule))
+        raise ValueError(f"Unknown update_rule '{update_rule}'")
     random_vectors, solutions = _prepare_measurements(measurements, device, dtype)
     positions = _build_positions(random_vectors, dimensions, basis, orthonormal)
     solutions_batched = _stack_solutions(solutions)                    # (n, mode_0)
@@ -511,16 +518,12 @@ def uq_adf(measurements, dimensions, basis, targeteps=1e-8, maxitr=1000, device=
         cores = _initial_guess_from_mean(solutions, dimensions, dtype, device)
     cores = _add_rank_noise(cores, dimensions, init_rank, init_noise, dtype, device)
 
-    if solutions_batched is not None:
-        solutions_norm = tn.sqrt((solutions_batched * solutions_batched).sum())
-    else:
-        solutions_norm = tn.tensor(0.0, dtype=dtype, device=device)
+    # never None here: _prepare_measurements refuses an empty set
+    solutions_norm = tn.sqrt((solutions_batched * solutions_batched).sum())
     rank_window = max(1, int(rank_window))
     residuals = [1000.0] * rank_window
     last_rank_update = 0
     n_samples = len(solutions)
-    if n_samples == 0:
-        raise ValueError("The measurements list must contain at least one sample.")
 
     iteration = 0
     while maxitr == 0 or iteration < maxitr:
@@ -539,27 +542,28 @@ def uq_adf(measurements, dimensions, basis, targeteps=1e-8, maxitr=1000, device=
                 residual = _calc_residual_norm(cores[0], right_stack, solutions_batched)
                 rel_res = residual / solutions_norm
                 if callback is not None:
-                    callback(iteration, float(rel_res.numpy()), cores, ranks)
-                if targeteps and float(rel_res.numpy()) <= targeteps:
+                    callback(iteration, float(tn.to_numpy(rel_res)), cores, ranks)
+                if targeteps and float(tn.to_numpy(rel_res)) <= targeteps:
                     return tinytt.TT(cores)
-                residuals.append(float(rel_res.numpy()))
-                if len(residuals) >= rank_window:
-                    stagnation = residuals[-1] / residuals[-rank_window] > 0.99
-                    if stagnation and adapt_rank:
-                        ranks = _ranks_from_cores(cores)
-                        max_rank = max(ranks)
-                        if (iteration - last_rank_update) < max(1, int(rank_every)):
-                            pass
-                        elif rank_max is None or (max_rank + rank_increase) <= rank_max:
-                            cores = _rank_enrich(cores, rank_increase, rank_noise)
-                            last_rank_update = iteration
-                            residuals = [residuals[-1]] * rank_window
-                            rank_updated = True
-                            break
-                        else:
-                            return tinytt.TT(cores)
-                    elif stagnation and not adapt_rank:
+                residuals.append(float(tn.to_numpy(rel_res)))
+                # residuals starts as [1000.0] * rank_window and only grows,
+                # so the window is always full (the old length check was dead)
+                stagnation = residuals[-1] / residuals[-rank_window] > 0.99
+                if stagnation and adapt_rank:
+                    ranks = _ranks_from_cores(cores)
+                    max_rank = max(ranks)
+                    if (iteration - last_rank_update) < max(1, int(rank_every)):
+                        pass
+                    elif rank_max is None or (max_rank + rank_increase) <= rank_max:
+                        cores = _rank_enrich(cores, rank_increase, rank_noise)
+                        last_rank_update = iteration
+                        residuals = [residuals[-1]] * rank_window
+                        rank_updated = True
+                        break
+                    else:
                         return tinytt.TT(cores)
+                elif stagnation and not adapt_rank:
+                    return tinytt.TT(cores)
 
             if update_rule == "als":
                 if core_pos == 0:
@@ -585,13 +589,13 @@ def uq_adf(measurements, dimensions, basis, targeteps=1e-8, maxitr=1000, device=
                     left_mats_batch = _update_left_mats(left_mats_batch, cores[core_pos], positions, core_pos)
                 continue
 
-            delta = _calc_delta(core_pos, cores, positions, solutions_batched, right_stack, left_is_stack, left_ought_stack).realize()
-            norm_a_proj = _calc_norm_a_projgrad(delta, core_pos, positions, right_stack, left_is_stack).realize()
+            delta = (_calc_delta(core_pos, cores, positions, solutions_batched, right_stack, left_is_stack, left_ought_stack))
+            norm_a_proj = (_calc_norm_a_projgrad(delta, core_pos, positions, right_stack, left_is_stack))
             delta_b = delta.clone()
             py_r = (delta * delta_b).sum()
 
             denom = norm_a_proj * norm_a_proj.clone()
-            if float(denom.numpy()) > 0.0:
+            if float(tn.to_numpy(denom)) > 0.0:
                 step = py_r / denom
                 cores[core_pos] = cores[core_pos] - step * delta
 
@@ -630,7 +634,7 @@ def evaluate(result, y, basis, orthonormal=False):
     orthonormal : bool
         Must match the value used during fitting.
     """
-    cores = [c.numpy() for c in result.cores]
+    cores = [tn.to_numpy(c) for c in result.cores]
     if len(y) != len(cores) - 1:
         raise ValueError(
             f"y has length {len(y)} but the model expects {len(cores) - 1} stochastic dims."
@@ -640,12 +644,12 @@ def evaluate(result, y, basis, orthonormal=False):
         core = cores[dim]
         degree = core.shape[1]
         # _basis_matrix expects a 1-d tensor of x values.
-        basis_row = _basis_matrix(
+        basis_row = tn.to_numpy(_basis_matrix(
             tn.tensor(np.asarray([float(yi)], dtype=np.float64), dtype=tn.float64),
             degree,
             basis,
             orthonormal,
-        ).numpy()[0]                          # shape (degree,)
+        ))[0]                          # shape (degree,)
         tmp = np.tensordot(core, basis_row, axes=([1], [0]))
         value = value @ tmp
     value = np.squeeze(value)

@@ -1,7 +1,7 @@
 import pytest
 
 import tinytt as tt
-from tinytt.errors import ShapeMismatch, InvalidArguments
+from tinytt.errors import InvalidArguments, ShapeMismatch
 
 
 def test_dot_invalid_axis():
@@ -28,7 +28,7 @@ def test_qtt_to_tens_invalid_arg():
     x = tt.random([4], 1)
     x_qtt = x.to_qtt(mode_size=2)
     with pytest.raises(InvalidArguments):
-        x_qtt.qtt_to_tens((4,))
+        x_qtt.qtt_to_tens(4)  # int, not list/tuple
 
 
 def test_qtt_to_tens_mode_mismatch():

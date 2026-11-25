@@ -4,28 +4,12 @@ Tests for the GMRES iterative solver.
 
 import os
 import sys
+
 import numpy as np
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import tinytt._backend as tn
-from tinytt._iterative_solvers import gmres_restart, gmres, _scalar
-
-
-def _has_clang():
-    if not tn._is_cpu_device(tn.default_device()):
-        return True
-    try:
-        import subprocess
-        subprocess.run(["clang", "--version"], capture_output=True, check=True)
-        return True
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return False
-
-
-NEEDS_CLANG = pytest.mark.skipif(
-    not _has_clang(), reason="CPU backend requires clang for kernel compilation"
-)
+from tinytt._iterative_solvers import gmres, gmres_restart
 
 
 def _make_spd(n, seed=0):
@@ -60,9 +44,9 @@ class TestGMRES:
 
         op = _LinOp(A_tn)
         x, converged, iters = gmres_restart(
-            op, b_tn, x0_tn, N, max_iterations=5, threshold=1e-10
+            op, b_tn, x0_tn, max_iterations=5, threshold=1e-10
         )
-        np.testing.assert_allclose(x.numpy(), b_np, atol=1e-8)
+        np.testing.assert_allclose(tn.to_numpy(x), b_np, atol=1e-8)
         assert converged
 
     def test_diagonal_system(self):
@@ -76,10 +60,10 @@ class TestGMRES:
 
         op = _LinOp(A_tn)
         x, converged, iters = gmres_restart(
-            op, b_tn, x0_tn, N, max_iterations=20, threshold=1e-10
+            op, b_tn, x0_tn, max_iterations=20, threshold=1e-10
         )
         x_ref = np.linalg.solve(A_np, b_np)
-        np.testing.assert_allclose(x.numpy(), x_ref, atol=1e-8)
+        np.testing.assert_allclose(tn.to_numpy(x), x_ref, atol=1e-8)
         assert converged
 
     def test_zero_rhs(self):
@@ -91,13 +75,12 @@ class TestGMRES:
 
         op = _LinOp(A_tn)
         x, converged, iters = gmres(
-            op, b_tn, x0_tn, N, max_iterations=5, threshold=1e-10
+            op, b_tn, x0_tn, max_iterations=5, threshold=1e-10
         )
-        np.testing.assert_allclose(x.numpy(), np.zeros(N), atol=1e-10)
+        np.testing.assert_allclose(tn.to_numpy(x), np.zeros(N), atol=1e-10)
         assert converged
         assert iters == 0
 
-    @NEEDS_CLANG
     def test_restart_convergence(self):
         """GMRES with restart should converge on a random SPD system."""
         N = 10
@@ -108,11 +91,11 @@ class TestGMRES:
 
         op = _LinOp(A_tn)
         x, converged, iters = gmres_restart(
-            op, b_tn, x0_tn, N, max_iterations=N, threshold=1e-6
+            op, b_tn, x0_tn, max_iterations=N, threshold=1e-6
         )
         assert converged, f"GMRES restart did not converge after {iters} iterations"
         r = b_tn - op.matvec(x)
-        res = float(tn.linalg.norm(r).numpy())
+        res = float(tn.to_numpy(tn.linalg.norm(r)))
         assert res < 1e-6, f"Residual too large: {res}"
 
     def test_early_convergence(self):
@@ -129,13 +112,12 @@ class TestGMRES:
 
         op = _LinOp(A_tn)
         x, converged, iters = gmres(
-            op, b_tn, x0_tn, n, max_iterations=10, threshold=1e-10
+            op, b_tn, x0_tn, max_iterations=10, threshold=1e-10
         )
         assert converged
         assert iters == 0
-        np.testing.assert_allclose(x.numpy(), x0_np, atol=1e-10)
+        np.testing.assert_allclose(tn.to_numpy(x), x0_np, atol=1e-10)
 
-    @NEEDS_CLANG
     def test_gmres_restart_wrapper(self):
         """gmres_restart should return (x, converged, iters) with converged=True."""
         N = 8
@@ -146,7 +128,7 @@ class TestGMRES:
 
         op = _LinOp(A_tn)
         result = gmres_restart(
-            op, b_tn, x0_tn, N, max_iterations=N, threshold=1e-6
+            op, b_tn, x0_tn, max_iterations=N, threshold=1e-6
         )
         assert isinstance(result, tuple)
         assert len(result) == 3

@@ -1,13 +1,17 @@
 """
-DMRG implementation for fast matvec and hadamard products (tinygrad backend).
+DMRG sweeps for the TT-matrix × TT matvec and the Hadamard product.
 Inspired by TT-Toolbox from MATLAB.
 """
 
 from __future__ import annotations
 
+import logging
+
 import tinytt._backend as tn
-from tinytt._decomposition import rank_chop, QR, SVD
+from tinytt._decomposition import QR, SVD, rank_chop
 from tinytt._extras import random
+
+logger = logging.getLogger(__name__)
 
 
 def dmrg_matvec(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4, verb=False):
@@ -18,14 +22,13 @@ def dmrg_matvec_python(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4
     if y0 is None:
         y0 = random(A.M, 2, dtype=A.cores[0].dtype, device=A.cores[0].device)
 
-    y_cores = y0.cores
+    y_cores = list(y0.cores)  # never mutate the caller's initial guess
     Ry = y0.R.copy()
 
     d = len(x.N)
     if isinstance(rmax, int):
         rmax = [1] + [rmax] * (d - 1) + [1]
 
-    N = x.N
     M = A.M
     r_enlarge = [2] * d
 
@@ -38,7 +41,7 @@ def dmrg_matvec_python(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4
 
     for i in range(nswp):
         if verb:
-            print('sweep ', i)
+            logger.info('sweep %d', i)
 
         for k in range(d - 1, 0, -1):
             core = y_cores[k]
@@ -62,7 +65,7 @@ def dmrg_matvec_python(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4
 
         for k in range(d - 1):
             if verb:
-                print('\tcore ', k)
+                logger.info('\tcore %d', k)
             W_prev = tn.einsum('ijk,klm->ijlm', y_cores[k], y_cores[k + 1])
 
             if not last:
@@ -77,30 +80,38 @@ def dmrg_matvec_python(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4
                 W = tn.conj(W_prev)
 
             b = tn.linalg.norm(W)
-            b_val = float(b.numpy().item()) if tn.is_tensor(b) else float(b)
+            b_val = float(tn.to_numpy(b).item()) if tn.is_tensor(b) else float(b)
             if b_val != 0.0:
                 a = tn.linalg.norm(W - tn.conj(W_prev))
-                delta_cores[k] = float(a.numpy().item()) / b_val
+                delta_cores[k] = float(tn.to_numpy(a).item()) / b_val
             else:
                 delta_cores[k] = 0.0
 
-            if delta_cores[k] / delta_cores_prev[k] >= 1 and delta_cores[k] > eps:
+            # Guard zero division (initial guess = exact solution)
+            dp = delta_cores_prev[k]
+            if dp != 0.0 and delta_cores[k] != 0.0:
+                ratio = delta_cores[k] / dp
+            else:
+                ratio = 0.0
+            if ratio >= 1 and delta_cores[k] > eps:
                 r_enlarge[k] += 1
-
-            if delta_cores[k] / delta_cores_prev[k] < 0.1 and delta_cores[k] < eps:
-                r_enlarge[k] = max(1, r_enlarge[k] - 1)
+            if ratio < 0.1 and delta_cores[k] < eps:
+                    r_enlarge[k] = max(1, r_enlarge[k] - 1)
 
             U, S, V = SVD(tn.reshape(W, [W.shape[0] * W.shape[1], -1]))
-            r_new = rank_chop(S.numpy(), b_val * eps / (d ** (0.5 if last else 1.5)))
+            r_new = rank_chop(tn.to_numpy(S), b_val * eps / (d ** (0.5 if last else 1.5)))
             if not last:
                 r_new += r_enlarge[k]
             r_new = min([r_new, S.shape[0], rmax[k + 1]])
             r_new = max(1, int(r_new))
 
             W1 = U[:, :r_new]
-            W2 = tn.transpose(V[:r_new, :], 0, 1) @ tn.diag(S[:r_new])
+            W2 = tn.scale_cols(tn.transpose(V[:r_new, :], 0, 1), S[:r_new])
 
-            if i < nswp - 1:
+            # No kick on the final sweep: the kick appends `kickrank` columns
+            # after the rmax cap, and on the last sweep nothing trims them
+            # again, so the result came back with ranks rmax + kickrank.
+            if i < nswp - 1 and not last:
                 W1, Rmat = QR(
                     tn.cat(
                         (W1, tn.randn((W1.shape[0], kickrank), dtype=W1.dtype, device=A.cores[0].device)),
@@ -117,7 +128,8 @@ def dmrg_matvec_python(A, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4
                 W2 = tn.transpose(W2, 0, 1)
 
             if verb:
-                print('\tcore ', k, ': delta ', delta_cores[k], ' rank ', Ry[k + 1], ' ->', r_new)
+                logger.info('\tcore %d: delta %g rank %d -> %d',
+                            k, delta_cores[k], Ry[k + 1], r_new)
             Ry[k + 1] = r_new
             y_cores[k] = tn.conj(tn.reshape(W1, [Ry[k], M[k], r_new]))
             y_cores[k + 1] = tn.conj(tn.reshape(W2, [r_new, M[k + 1], Ry[k + 2]]))
@@ -144,14 +156,13 @@ def dmrg_hadamard(x, y, z0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4, ver
 def dmrg_hadamard_python(z, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank=4, verb=False):
     if y0 is None:
         y0 = random(z.N, 2, dtype=z.cores[0].dtype, device=z.cores[0].device)
-    y_cores = y0.cores
+    y_cores = list(y0.cores)  # never mutate the caller's initial guess
     Ry = y0.R.copy()
 
     d = len(x.N)
     if isinstance(rmax, int):
         rmax = [1] + [rmax] * (d - 1) + [1]
 
-    N = x.N
     M = z.N
     r_enlarge = [2] * d
 
@@ -164,7 +175,7 @@ def dmrg_hadamard_python(z, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank
 
     for i in range(nswp):
         if verb:
-            print('sweep ', i)
+            logger.info('sweep %d', i)
 
         for k in range(d - 1, 0, -1):
             core = y_cores[k]
@@ -186,7 +197,7 @@ def dmrg_hadamard_python(z, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank
 
         for k in range(d - 1):
             if verb:
-                print('\tcore ', k)
+                logger.info('\tcore %d', k)
             W_prev = tn.einsum('ijk,klm->ijlm', y_cores[k], y_cores[k + 1])
 
             if not last:
@@ -201,30 +212,38 @@ def dmrg_hadamard_python(z, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank
                 W = tn.conj(W_prev)
 
             b = tn.linalg.norm(W)
-            b_val = float(b.numpy().item()) if tn.is_tensor(b) else float(b)
+            b_val = float(tn.to_numpy(b).item()) if tn.is_tensor(b) else float(b)
             if b_val != 0.0:
                 a = tn.linalg.norm(W - tn.conj(W_prev))
-                delta_cores[k] = float(a.numpy().item()) / b_val
+                delta_cores[k] = float(tn.to_numpy(a).item()) / b_val
             else:
                 delta_cores[k] = 0.0
 
-            if delta_cores[k] / delta_cores_prev[k] >= 1 and delta_cores[k] > eps:
+            # Guard zero division (initial guess = exact solution)
+            dp = delta_cores_prev[k]
+            if dp != 0.0 and delta_cores[k] != 0.0:
+                ratio = delta_cores[k] / dp
+            else:
+                ratio = 0.0
+            if ratio >= 1 and delta_cores[k] > eps:
                 r_enlarge[k] += 1
-
-            if delta_cores[k] / delta_cores_prev[k] < 0.1 and delta_cores[k] < eps:
-                r_enlarge[k] = max(1, r_enlarge[k] - 1)
+            if ratio < 0.1 and delta_cores[k] < eps:
+                    r_enlarge[k] = max(1, r_enlarge[k] - 1)
 
             U, S, V = SVD(tn.reshape(W, [W.shape[0] * W.shape[1], -1]))
-            r_new = rank_chop(S.numpy(), b_val * eps / (d ** (0.5 if last else 1.5)))
+            r_new = rank_chop(tn.to_numpy(S), b_val * eps / (d ** (0.5 if last else 1.5)))
             if not last:
                 r_new += r_enlarge[k]
             r_new = min([r_new, S.shape[0], rmax[k + 1]])
             r_new = max(1, int(r_new))
 
             W1 = U[:, :r_new]
-            W2 = tn.transpose(V[:r_new, :], 0, 1) @ tn.diag(S[:r_new])
+            W2 = tn.scale_cols(tn.transpose(V[:r_new, :], 0, 1), S[:r_new])
 
-            if i < nswp - 1:
+            # No kick on the final sweep: the kick appends `kickrank` columns
+            # after the rmax cap, and on the last sweep nothing trims them
+            # again, so the result came back with ranks rmax + kickrank.
+            if i < nswp - 1 and not last:
                 W1, Rmat = QR(
                     tn.cat(
                         (W1, tn.randn((W1.shape[0], kickrank), dtype=W1.dtype, device=z.cores[0].device)),
@@ -241,7 +260,8 @@ def dmrg_hadamard_python(z, x, y0=None, nswp=20, eps=1e-12, rmax=32768, kickrank
                 W2 = tn.transpose(W2, 0, 1)
 
             if verb:
-                print('\tcore ', k, ': delta ', delta_cores[k], ' rank ', Ry[k + 1], ' ->', r_new)
+                logger.info('\tcore %d: delta %g rank %d -> %d',
+                            k, delta_cores[k], Ry[k + 1], r_new)
             Ry[k + 1] = r_new
             y_cores[k] = tn.conj(tn.reshape(W1, [Ry[k], M[k], r_new]))
             y_cores[k + 1] = tn.conj(tn.reshape(W2, [r_new, M[k + 1], Ry[k + 2]]))

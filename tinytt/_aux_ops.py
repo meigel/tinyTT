@@ -3,38 +3,38 @@ Additional operations.
 
 @author: ion
 """
+import numpy as np
+
 import tinytt._backend as tn
 
 
-def apply_mask(cores, R, indices):
-    """
-    compute the entries 
+def apply_mask(cores, indices):
+    """Evaluate a TT at a batch of multi-indices.
 
-    Args:
-        cores ([type]): [description]
-        R ([type]): [description]
-        indices ([type]): [description]
+    Parameters
+    ----------
+    cores : list of Tensor
+        TT cores, shape ``(r_{k-1}, n_k, r_k)``.
+    indices : Tensor or array-like, shape ``(M, d)``
+        One multi-index per row.
+
+    Returns
+    -------
+    Tensor, shape ``(M,)``
     """
     d = len(cores)
-    dt = cores[0].dtype
-    M = len(indices)
-    # result = tn.zeros((M), dtype = dt)
-
-    # for i in range(M):
-    #     tmp = tn.ones(1)
-    #     for k in range(d):
-    #         tmp = tn.einsum('i,ik->k',tmp,cores[k][:,indices[i][k],:])
-    #     result[i] = tn.sum(tmp)
-
-    result = tn.ones((M, 1), dtype=dt, device=cores[0].device)
+    idx = tn.to_numpy(indices) if tn.is_tensor(indices) else np.asarray(indices)
+    idx = np.asarray(idx, dtype=np.int64).reshape(len(idx), -1)
+    if idx.shape[1] != d:
+        raise ValueError(
+            f"indices has {idx.shape[1]} columns but the TT has {d} modes"
+        )
+    result = tn.ones((idx.shape[0], 1), dtype=cores[0].dtype,
+                     device=cores[0].device)
     for i in range(d):
-        # Convert index column to Python list (tinygrad needs list for integer indexing)
-        if tn.is_tensor(indices):
-            idx_col = [int(indices[j, i].numpy().item()) for j in range(len(indices))]
-        else:
-            idx_col = [int(indices[j, i]) for j in range(len(indices))]
-        result = tn.einsum('ij,jik->ik', result, cores[i][:, idx_col, :])
-
+        # One host transfer for the whole index array, not one per element.
+        result = tn.einsum('ij,jik->ik', result,
+                           cores[i][:, idx[:, i].tolist(), :])
     return tn.squeeze(result)
 
 
@@ -59,10 +59,9 @@ def dense_matvec(cores, other):
             result = tn.tensordot(result, cores[i], ([D - d, -1], [2, 0]))
         return tn.squeeze(result, -1)
 
-    fn = tn.maybe_jit(("dense_matvec", len(cores)), _dense_matvec_impl)
-    return fn(other, *cores)
+    return _dense_matvec_impl(other, *cores)
 
-def bilinear_form_aux(x_cores, A_cores, y_cores, d):
+def bilinear_form_aux(x_cores, A_cores, y_cores, d=None):
     """
     Computes the bilinear form xT A y given the TT cores.
 
@@ -75,11 +74,13 @@ def bilinear_form_aux(x_cores, A_cores, y_cores, d):
     Returns:
         torch.tensor: the result as 1 element torch.tensor.
     """
-    result = tn.ones((1,1,1), dtype = A_cores[0].dtype, device = A_cores[0].device)
-    
+    if d is None:
+        d = len(A_cores)
+    result = tn.ones((1, 1, 1), dtype=A_cores[0].dtype, device=A_cores[0].device)
+
     for i in range(d):
-        result = tn.einsum('lsr,lmL->srmL',result,tn.conj(x_cores[i])) 
-        result = tn.einsum('srmL,smnS->LSrn',result,A_cores[i]) 
-        result = tn.einsum('LSrn,rnR->LSR',result,y_cores[i]) 
-        
-    return tn.squeeze(result)
+        result = tn.einsum('lsr,lmL->srmL',result,tn.conj(x_cores[i]))
+        result = tn.einsum('srmL,smnS->LSrn',result,A_cores[i])
+        result = tn.einsum('LSrn,rnR->LSR',result,y_cores[i])
+
+    return result

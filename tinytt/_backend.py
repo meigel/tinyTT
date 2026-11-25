@@ -1,383 +1,699 @@
 """
-Thin backend shim over tinygrad ``Tensor`` operations.
+Tensor backend for tinyTT — PyTorch.
 
-Wraps common tinygrad functions so the rest of tinyTT can work through a
-single ``import tinytt._backend as tn`` indirection, which simplifies future
-backend swaps (e.g. replacing tinygrad with PyTorch / JAX).
+The rest of tinyTT works exclusively through ``import tinytt._backend as tn``
+so that no module reaches into ``torch`` directly.  Historically this was a
+facade over two backends (tinygrad and PyTorch); the tinygrad backend was
+removed in 0.5 and this module is now the single implementation.
 
-All functions in this module follow tinygrad's API convention.
+Device and precision are controlled by environment variables:
+
+``TINYTT_DEVICE``
+    ``cpu`` (default), ``cuda``, ``cuda:1``, ``mps``, or the legacy
+    ``GPU``/``GPU:0`` spelling.
+``TINYTT_FORCE_FP32``
+    Force single precision even where float64 is available.
 """
 
 from __future__ import annotations
 
-import importlib
 import os
-import sys
-from pathlib import Path
 
 import numpy as np
+import torch
 
-if "XDG_CACHE_HOME" not in os.environ:
-    os.environ["XDG_CACHE_HOME"] = "/tmp"
+__all__ = [
+    "Tensor",
+    "manual_seed",
+    "float32",
+    "float64",
+    "complex64",
+    "complex128",
+    "supports_fp64",
+    "default_float_dtype",
+    "default_device",
+    "coerce_dtype",
+    "real_dtype",
+    "is_complex_dtype",
+    "is_tensor",
+    "tensor",
+    "assign",
+    "ones",
+    "zeros",
+    "rand",
+    "randn",
+    "eye",
+    "arange",
+    "linspace",
+    "reshape",
+    "permute",
+    "transpose",
+    "squeeze",
+    "unsqueeze",
+    "stack",
+    "cat",
+    "diag",
+    "einsum",
+    "tensordot",
+    "pad",
+    "tile",
+    "numel",
+    "scale_rows",
+    "scale_cols",
+    "conj",
+    "conj_transpose",
+    "real",
+    "sqrt",
+    "abs",
+    "sin",
+    "cos",
+    "exp",
+    "where",
+    "zeros_like",
+    "ones_like",
+    "astype",
+    "to_numpy",
+    "cast",
+    "linalg",
+    "tnf",
+    "dtypes",
+    "map_device",
+]
 
-_TINYGRAD_ROOT = Path(__file__).resolve().parents[1] / "tinygrad"
-if _TINYGRAD_ROOT.exists() and str(_TINYGRAD_ROOT) not in sys.path:
-    sys.path.insert(0, str(_TINYGRAD_ROOT))
+# ---------------------------------------------------------------------------
+# backend selection (kept only to give a clear error to 0.4 callers)
+# ---------------------------------------------------------------------------
 
-if not os.getenv("TINYTT_DEVICE") and not os.getenv("DEV"):
-    os.environ["DEV"] = "CPU"
+_REQUESTED = os.getenv("TINYTT_BACKEND", "pytorch").lower().strip()
+if _REQUESTED in ("tinygrad", "tiny"):
+    # 0.5 warned and carried on with PyTorch; 0.6 refuses.  Carrying on was
+    # the wrong default for a variable whose whole purpose was to select a
+    # backend: the caller asked for tinygrad and silently got something else.
+    raise ValueError(
+        "TINYTT_BACKEND=tinygrad is not supported: the tinygrad backend was "
+        "removed in tinyTT 0.5, warned for one release, and PyTorch is the "
+        "only backend. Unset TINYTT_BACKEND or set it to 'pytorch'."
+    )
+if _REQUESTED not in ("pytorch", "torch", ""):
+    raise ValueError(
+        f"Unknown TINYTT_BACKEND={_REQUESTED!r}. PyTorch is the only backend; "
+        "unset the variable or set it to 'pytorch'."
+    )
 
-_TINYTT_DEVICE_ENV = os.getenv("TINYTT_DEVICE")
-_OPS_GPU_EXISTS = (_TINYGRAD_ROOT / "tinygrad" / "runtime" / "ops_gpu.py").exists()
-if _TINYTT_DEVICE_ENV and _TINYTT_DEVICE_ENV.upper().startswith("GPU") and not _OPS_GPU_EXISTS:
-    suffix = _TINYTT_DEVICE_ENV[3:]
-    mapped = "CL" + suffix
-    os.environ["DEV"] = mapped
-    os.environ.setdefault(mapped.split(":")[0], "1")
-    os.environ.pop("GPU", None)
-
-from tinygrad import Tensor, dtypes, TinyJit
-
-USE_TINYJIT = os.getenv("TINYTT_TINYJIT", "0").lower() in ("1", "true", "yes")
-_jit_cache: dict[tuple, TinyJit] = {}
+Tensor = torch.Tensor
+float32 = torch.float32
+float64 = torch.float64
+complex64 = torch.complex64
+complex128 = torch.complex128
 
 
-def maybe_jit(key, fn):
-    if not USE_TINYJIT:
-        return fn
-    if key not in _jit_cache:
-        _jit_cache[key] = TinyJit(fn)
-    return _jit_cache[key]
+class _Dtypes:
+    """Dtype namespace, so callers can write ``tn.dtypes.float64``."""
 
-float32 = dtypes.float32
-float64 = dtypes.float64
+    int32 = torch.int32
+    int64 = torch.int64
+    float32 = torch.float32
+    float64 = torch.float64
+    complex64 = torch.complex64
+    complex128 = torch.complex128
+    bool = torch.bool
+
+
+dtypes = _Dtypes()
+
 _FORCE_FP32 = os.getenv("TINYTT_FORCE_FP32", "0").lower() in ("1", "true", "yes")
 _FP64_SUPPORT_CACHE: dict[str, bool] = {}
 
+_REAL_OF = {
+    torch.complex64: torch.float32,
+    torch.complex128: torch.float64,
+}
+_COMPLEX_OF = {
+    torch.float32: torch.complex64,
+    torch.float64: torch.complex128,
+}
 
-def _is_cpu_device(device):
+
+def manual_seed(seed: int) -> None:
+    """Seed the backend's random number generator."""
+    torch.manual_seed(seed)
+
+
+# ---------------------------------------------------------------------------
+# device helpers
+# ---------------------------------------------------------------------------
+
+def _map_device(raw: str | None) -> str:
+    """Map a ``TINYTT_DEVICE`` value to a PyTorch device string."""
+    if raw is None:
+        return "cpu"
+    dev = str(raw).lower().strip()
+    if dev.startswith("gpu"):  # legacy tinygrad spelling: GPU, GPU:0
+        suffix = dev[3:]
+        if torch.cuda.is_available():
+            return f"cuda{suffix}" if suffix else "cuda"
+        return "cpu"
+    if dev.startswith("cpu") or dev in ("clang", "llvm"):
+        return "cpu"
+    return dev
+
+
+def map_device(raw: str | None) -> str:
+    """Normalise a device string to PyTorch's expected format."""
+    return _map_device(raw)
+
+
+def _is_cpu_device(device) -> bool:
     if device is None:
         return True
-    dev = str(device).upper()
-    return dev.startswith("CPU") or dev in ("CLANG", "LLVM")
+    text = str(device).lower()
+    return text.startswith("cpu") or text in ("clang", "llvm", "")
 
 
-def supports_fp64(device=None):
+def default_device() -> str | None:
+    raw = os.getenv("TINYTT_DEVICE")
+    return _map_device(raw) if raw else None
+
+
+def _normalize_device(device):
+    return None if device is None else _map_device(str(device))
+
+
+def _resolve_device(device):
+    return _normalize_device(device if device is not None else default_device())
+
+
+def supports_fp64(device=None) -> bool:
+    """Whether the given device supports float64."""
     dev = _resolve_device(device)
     if dev is None or _is_cpu_device(dev):
         return True
-    dev_key = _normalize_device(dev)
-    if dev_key in _FP64_SUPPORT_CACHE:
-        return _FP64_SUPPORT_CACHE[dev_key]
+    key = str(dev)
+    if key in _FP64_SUPPORT_CACHE:
+        return _FP64_SUPPORT_CACHE[key]
     try:
-        probe = Tensor([1.0], dtype=float64, device=dev_key)
-        (probe + probe).realize()
-        _FP64_SUPPORT_CACHE[dev_key] = True
-    except Exception:
-        _FP64_SUPPORT_CACHE[dev_key] = False
-        global _FORCE_FP32
-        if not _FORCE_FP32:
-            _FORCE_FP32 = True
-            os.environ["TINYTT_FORCE_FP32"] = "1"
-    return _FP64_SUPPORT_CACHE[dev_key]
+        if key.startswith("cuda"):
+            supported = torch.cuda.get_device_capability(key)[0] >= 7
+        elif key.startswith("mps"):
+            supported = False  # MPS has no float64
+        else:
+            supported = True
+    except (RuntimeError, AssertionError, ValueError):
+        supported = False
+    _FP64_SUPPORT_CACHE[key] = supported
+    return supported
 
 
-def _should_force_fp32(device):
+def _should_force_fp32(device) -> bool:
     dev = _resolve_device(device)
     if dev is None or _is_cpu_device(dev):
         return False
-    if _FORCE_FP32:
-        return True
-    return not supports_fp64(dev)
+    return _FORCE_FP32 or not supports_fp64(dev)
 
 
 def default_float_dtype(device=None):
     return float32 if _should_force_fp32(device) else float64
 
 
+# ---------------------------------------------------------------------------
+# dtype helpers
+# ---------------------------------------------------------------------------
+
+def is_complex_dtype(dtype) -> bool:
+    return dtype in _REAL_OF
+
+
+def real_dtype(dtype):
+    """The real dtype matching ``dtype`` (identity for real dtypes)."""
+    return _REAL_OF.get(dtype, dtype)
+
+
+def complex_dtype(dtype):
+    """The complex dtype matching ``dtype`` (identity for complex dtypes)."""
+    return _COMPLEX_OF.get(dtype, dtype)
+
+
 def _infer_dtype(data):
-    if isinstance(data, Tensor):
+    if isinstance(data, torch.Tensor):
         return data.dtype
     if isinstance(data, np.ndarray):
-        if data.dtype == np.float32:
-            return float32
-        if data.dtype == np.float64:
-            return float64
+        return {
+            np.dtype(np.float32): float32,
+            np.dtype(np.float64): float64,
+            np.dtype(np.complex64): complex64,
+            np.dtype(np.complex128): complex128,
+        }.get(data.dtype)
     return None
 
 
 def coerce_dtype(dtype, device=None, data=None):
     target = dtype if dtype is not None else _infer_dtype(data)
-    if target == float64 and _should_force_fp32(device):
+    if not _should_force_fp32(device):
+        return target
+    if target == float64:
         return float32
+    if target == complex128:
+        return complex64
     return target
 
 
-def default_device():
-    device = os.getenv("TINYTT_DEVICE") or os.getenv("DEV")
-    return _normalize_device(device) if device else None
-
-
-def _normalize_device(device):
-    if device is None:
-        return None
-    dev = str(device)
-    dev_upper = dev.upper()
-    if dev_upper.startswith("GPU"):
-        try:
-            importlib.import_module("tinygrad.runtime.ops_gpu")
-            return dev
-        except Exception:
-            suffix = dev[3:] if dev_upper.startswith("GPU") else ""
-            return "CL" + suffix
-    return dev
-
-
-def _resolve_device(device):
-    resolved = device if device is not None else default_device()
-    return _normalize_device(resolved)
-
+# ---------------------------------------------------------------------------
+# creation
+# ---------------------------------------------------------------------------
 
 def is_tensor(x) -> bool:
-    return isinstance(x, Tensor)
+    return isinstance(x, torch.Tensor)
+
+
+def _constant(x: torch.Tensor) -> torch.Tensor:
+    """tinyTT tensors are constants unless a caller explicitly asks for grad."""
+    x.requires_grad_(False)
+    return x
 
 
 def tensor(data, dtype=None, device=None):
     resolved = _resolve_device(device)
-    target_dtype = coerce_dtype(dtype, resolved, data)
-    if isinstance(data, Tensor):
+    target = coerce_dtype(dtype, resolved, data)
+    if isinstance(data, torch.Tensor):
         out = data
-        if target_dtype is not None and out.dtype != target_dtype:
-            out = out.cast(target_dtype)
-        if resolved is not None and out.device != resolved:
+        if target is not None and out.dtype != target:
+            if out.is_complex() and not is_complex_dtype(target):
+                # torch demotes complex -> real with a UserWarning and keeps
+                # only the real part.  Losing the imaginary half of a value is
+                # a wrong answer, not a formatting detail, so refuse unless it
+                # really is zero.  `real()` is the way to ask for the real part.
+                largest = float(out.imag.abs().max()) if out.numel() else 0.0
+                if largest > 0.0:
+                    raise ValueError(
+                        f"refusing to cast a complex tensor to {target}: the "
+                        f"imaginary part would be discarded (largest |Im| is "
+                        f"{largest:.3g}).  Use tn.real(x) to take the real "
+                        f"part deliberately."
+                    )
+                out = out.real
+            out = out.to(dtype=target)
+        if resolved is not None and str(out.device) != resolved:
             out = out.to(resolved)
         return out
-    if target_dtype is None and isinstance(data, (list, tuple, np.ndarray)):
-        target_dtype = default_float_dtype(resolved)
-    return Tensor(data, dtype=target_dtype, device=resolved)
+    if target is None and isinstance(data, (list, tuple, np.ndarray)):
+        target = default_float_dtype(resolved)
+    return _constant(torch.tensor(data, dtype=target, device=resolved))
+
+
+def assign(destination: torch.Tensor, value) -> torch.Tensor:
+    """In-place assignment that leaves the autograd graph alone.
+
+    Replaces the ``x.assign(y)`` method the tinygrad backend relied on.
+    """
+    src = value if isinstance(value, torch.Tensor) else torch.as_tensor(value)
+    with torch.no_grad():
+        destination.copy_(src.detach().to(dtype=destination.dtype))
+    return destination
+
+
+def _filled(factory, shape, dtype, device):
+    resolved = _resolve_device(device)
+    target = coerce_dtype(dtype, resolved) or default_float_dtype(resolved)
+    return _constant(factory(*shape, dtype=target, device=resolved))
 
 
 def ones(shape, dtype=None, device=None):
-    resolved = _resolve_device(device)
-    target_dtype = coerce_dtype(dtype, resolved)
-    if target_dtype is None:
-        target_dtype = default_float_dtype(resolved)
-    return Tensor.ones(*shape, dtype=target_dtype, device=resolved)
+    return _filled(torch.ones, shape, dtype, device)
 
 
 def zeros(shape, dtype=None, device=None):
-    resolved = _resolve_device(device)
-    target_dtype = coerce_dtype(dtype, resolved)
-    if target_dtype is None:
-        target_dtype = default_float_dtype(resolved)
-    return Tensor.zeros(*shape, dtype=target_dtype, device=resolved)
+    return _filled(torch.zeros, shape, dtype, device)
 
 
 def rand(shape, dtype=None, device=None):
-    resolved = _resolve_device(device)
-    target_dtype = coerce_dtype(dtype, resolved)
-    if target_dtype is None:
-        target_dtype = default_float_dtype(resolved)
-    return Tensor.rand(*shape, dtype=target_dtype, device=resolved)
+    return _filled(torch.rand, shape, dtype, device)
 
 
 def randn(shape, dtype=None, device=None):
-    resolved = _resolve_device(device)
-    target_dtype = coerce_dtype(dtype, resolved)
-    if target_dtype is None:
-        target_dtype = default_float_dtype(resolved)
-    return Tensor.randn(*shape, dtype=target_dtype, device=resolved)
+    return _filled(torch.randn, shape, dtype, device)
 
 
 def eye(n, m=None, dtype=None, device=None):
     resolved = _resolve_device(device)
-    target_dtype = coerce_dtype(dtype, resolved)
-    if target_dtype is None:
-        target_dtype = default_float_dtype(resolved)
-    return Tensor.eye(n, m, dtype=target_dtype, device=resolved)
+    target = coerce_dtype(dtype, resolved) or default_float_dtype(resolved)
+    args = (n,) if m is None else (n, m)
+    return _constant(torch.eye(*args, dtype=target, device=resolved))
 
 
 def arange(start, stop=None, step=1, dtype=None, device=None):
     resolved = _resolve_device(device)
-    target_dtype = coerce_dtype(dtype, resolved)
-    return Tensor.arange(start, stop, step, dtype=target_dtype, device=resolved)
+    target = coerce_dtype(dtype, resolved)
+    if stop is None:
+        return _constant(torch.arange(start, dtype=target, device=resolved))
+    return _constant(
+        torch.arange(start, stop, step, dtype=target, device=resolved)
+    )
 
 
 def linspace(start, stop, steps, dtype=None, device=None):
     resolved = _resolve_device(device)
-    target_dtype = coerce_dtype(dtype, resolved)
-    return Tensor.linspace(start, stop, steps, dtype=target_dtype, device=resolved)
+    target = coerce_dtype(dtype, resolved)
+    return _constant(
+        torch.linspace(start, stop, steps, dtype=target, device=resolved)
+    )
 
 
-def reshape(x: Tensor, shape):
+def zeros_like(x: torch.Tensor):
+    return torch.zeros_like(x)
+
+
+def ones_like(x: torch.Tensor):
+    return torch.ones_like(x)
+
+
+# ---------------------------------------------------------------------------
+# shapes
+# ---------------------------------------------------------------------------
+
+def reshape(x: torch.Tensor, shape):
     return x.reshape(shape)
 
 
-def permute(x: Tensor, dims):
+def permute(x: torch.Tensor, dims):
     return x.permute(dims)
 
 
-def transpose(x: Tensor, dim0: int, dim1: int):
+def transpose(x: torch.Tensor, dim0: int, dim1: int):
     return x.transpose(dim0, dim1)
 
 
-def squeeze(x: Tensor, dim: int | None = None):
+def squeeze(x: torch.Tensor, dim: int | None = None):
     return x.squeeze() if dim is None else x.squeeze(dim)
 
 
-def unsqueeze(x: Tensor, dim: int):
+def unsqueeze(x: torch.Tensor, dim: int):
     return x.unsqueeze(dim)
 
 
 def stack(tensors, dim=0):
-    return Tensor.stack(*tensors, dim=dim)
+    return torch.stack(list(tensors), dim=dim)
 
 
 def cat(tensors, dim=0):
-    return Tensor.cat(*tensors, dim=dim)
+    return torch.cat(list(tensors), dim=dim)
 
 
-def diag(x: Tensor):
-    return Tensor.diag(x)
+def diag(x: torch.Tensor):
+    return torch.diag(x)
 
 
-def einsum(formula: str, *operands: Tensor):
-    return Tensor.einsum(formula, *operands)
-
-
-def tensordot(a: Tensor, b: Tensor, axes=2):
-    if isinstance(axes, int):
-        a_axes = list(range(a.ndim - axes, a.ndim))
-        b_axes = list(range(axes))
-    else:
-        a_axes, b_axes = axes
-        a_axes = list(a_axes)
-        b_axes = list(b_axes)
-    a_axes = [ax + a.ndim if ax < 0 else ax for ax in a_axes]
-    b_axes = [ax + b.ndim if ax < 0 else ax for ax in b_axes]
-    a_remain = [i for i in range(a.ndim) if i not in a_axes]
-    b_remain = [i for i in range(b.ndim) if i not in b_axes]
-    letters = list("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
-    if a.ndim + b.ndim > len(letters):
-        raise ValueError("tensordot supports up to 52 dims")
-    a_labels = letters[:a.ndim]
-    b_labels = letters[a.ndim:a.ndim + b.ndim]
-    for ai, bi in zip(a_axes, b_axes):
-        b_labels[bi] = a_labels[ai]
-    out_labels = [a_labels[i] for i in a_remain] + [b_labels[i] for i in b_remain]
-    formula = "".join(a_labels) + "," + "".join(b_labels) + "->" + "".join(out_labels)
-    return Tensor.einsum(formula, a, b)
-
-
-def pad(x: Tensor, padding, value: float = 0.0):
-    return x.pad(padding, value=value)
-
-
-def tile(x: Tensor, reps):
+def tile(x: torch.Tensor, reps):
     return x.repeat(reps)
 
 
-def numel(x: Tensor) -> int:
-    val = x.numel()
-    return int(val) if not isinstance(val, int) else val
+def pad(x: torch.Tensor, padding, value: float = 0.0):
+    """Pad ``x``; accepts numpy-style ``((l, r), (t, b), …)`` or a flat list."""
+    if padding and isinstance(padding[0], (tuple, list)):
+        flat: list[int] = []
+        for p in reversed(padding):
+            flat.extend(p)
+    else:
+        flat = list(padding)
+    return torch.nn.functional.pad(x, pad=flat, mode="constant", value=value)
 
 
-def conj(x: Tensor):
-    return x
+def numel(x: torch.Tensor) -> int:
+    return x.numel()
 
 
-def sqrt(x: Tensor):
+def scale_rows(s: torch.Tensor, mat: torch.Tensor):
+    """``diag(s) @ mat`` without forming ``diag(s)``.
+
+    Cheaper than the matmul (no r x r temporary) and dtype-promoting, so a
+    real vector of singular values scales a complex matrix correctly.
+    """
+    return s.reshape(-1, 1) * mat
+
+
+def scale_cols(mat: torch.Tensor, s: torch.Tensor):
+    """``mat @ diag(s)`` without forming ``diag(s)``."""
+    return mat * s.reshape(1, -1)
+
+
+# ---------------------------------------------------------------------------
+# contraction
+# ---------------------------------------------------------------------------
+
+def einsum(formula: str, *operands: torch.Tensor):
+    return torch.einsum(formula, *operands)
+
+
+def tensordot(a: torch.Tensor, b: torch.Tensor, axes=2):
+    return torch.tensordot(a, b, dims=axes)
+
+
+# ---------------------------------------------------------------------------
+# element-wise
+# ---------------------------------------------------------------------------
+
+def conj(x: torch.Tensor):
+    return torch.conj(x)
+
+
+def conj_transpose(x: torch.Tensor, dim0: int = 0, dim1: int = 1):
+    """Conjugate transpose of two axes (plain transpose for real dtypes)."""
+    out = x.transpose(dim0, dim1)
+    return out.conj() if out.is_complex() else out
+
+
+def real(x: torch.Tensor):
+    return x.real if x.is_complex() else x
+
+
+def sqrt(x: torch.Tensor):
     return x.sqrt()
 
 
-def abs(x: Tensor):
+def abs(x: torch.Tensor):  # noqa: A001 - mirrors the numpy/torch name
     return x.abs()
 
 
-def sin(x: Tensor):
+def sin(x: torch.Tensor):
     return x.sin()
 
 
-def cos(x: Tensor):
+def cos(x: torch.Tensor):
     return x.cos()
 
 
+def exp(x: torch.Tensor):
+    return x.exp()
+
+
 def where(condition, x, y):
-    return condition.where(x, y)
+    if condition.dtype != torch.bool:
+        condition = condition.bool()
+    return torch.where(condition, x, y)
 
 
-def zeros_like(x: Tensor):
-    return Tensor.zeros(*x.shape, dtype=x.dtype, device=x.device)
+def astype(x: torch.Tensor, dtype):
+    return x.to(dtype=dtype)
 
 
-def ones_like(x: Tensor):
-    return Tensor.ones(*x.shape, dtype=x.dtype, device=x.device)
+def cast(x: torch.Tensor, dtype):
+    return x.to(dtype=dtype)
 
 
-def astype(x: Tensor, dtype):
-    return x.cast(dtype)
+def to_numpy(x):
+    """Extract a numpy array from a backend tensor (or pass numpy through)."""
+    if hasattr(x, "detach"):
+        return x.detach().cpu().numpy()
+    return np.asarray(x)
 
 
-def _stack_rows(rows):
-    if len(rows) == 1:
-        return rows[0].reshape(1, -1)
-    return rows[0].stack(*rows[1:], dim=0)
+# ---------------------------------------------------------------------------
+# linear algebra
+# ---------------------------------------------------------------------------
 
-
-def _backsolve(R: Tensor, y: Tensor):
-    n = int(R.shape[0])
-    y2 = y
-    squeeze = False
-    if y2.ndim == 1:
-        y2 = y2.reshape(n, 1)
-        squeeze = True
-    x_rows = [None] * n
-    for i in range(n - 1, -1, -1):
-        rhs = y2[i]
-        if i + 1 < n:
-            R_row = R[i, i + 1:]
-            x_tail = _stack_rows(x_rows[i + 1:])
-            rhs = rhs - (R_row.reshape(1, -1) @ x_tail).squeeze(0)
-        x_rows[i] = rhs / R[i, i]
-    x = _stack_rows(x_rows)
-    return x.squeeze(1) if squeeze else x
-
-
-def solve(a: Tensor, b: Tensor):
-    if not isinstance(a, Tensor) or not isinstance(b, Tensor):
-        a_np = np.asarray(a)
-        b_np = np.asarray(b)
-        return np.linalg.solve(a_np, b_np)
+def solve(a: torch.Tensor, b: torch.Tensor):
+    """Solve ``a @ x = b`` for square ``a``."""
+    if not isinstance(a, torch.Tensor) or not isinstance(b, torch.Tensor):
+        return np.linalg.solve(np.asarray(a), np.asarray(b))
     if a.ndim != 2 or a.shape[0] != a.shape[1]:
         raise ValueError("solve expects a square 2D matrix")
-    backend = os.getenv("TINYTT_SOLVE_BACKEND", "numpy").lower()
-    if _is_cpu_device(a.device) and backend == "numpy":
-        out = np.linalg.solve(a.numpy(), b.numpy())
-        return Tensor(out, dtype=a.dtype, device=a.device)
-    q, r = a.qr()
-    y = q.transpose(0, 1) @ b
-    return _backsolve(r, y)
+    return torch.linalg.solve(a, b)
+
+
+_SVD_DRIVER = os.getenv("TINYTT_SVD_DRIVER", "").lower().strip()
+
+
+def _svd_tolerance(x: torch.Tensor) -> float:
+    finfo = torch.finfo(x.real.dtype if x.is_complex() else x.dtype)
+    return 50.0 * max(x.shape[-2], x.shape[-1], 1) * float(finfo.eps)
+
+
+def _svd_defect(x, u, s, vh):
+    """Return ``None`` for a valid thin SVD triple, else a short reason."""
+    with torch.no_grad():
+        k = s.shape[-1]
+        uk = u[..., :, :k]
+        vk = vh[..., :k, :]
+        tol = _svd_tolerance(x)
+        norm = float(torch.linalg.norm(x))
+        if not bool(torch.isfinite(s).all()):
+            return "non-finite singular values"
+        if norm == 0.0:
+            return None
+        residual = float(torch.linalg.norm(x - (uk * s.to(uk.dtype).unsqueeze(-2)) @ vk))
+        if residual > tol * norm:
+            return f"reconstruction residual {residual / norm:.2e} relative"
+        eye = torch.eye(k, dtype=uk.dtype, device=uk.device)
+        left = float((uk.mH @ uk - eye).abs().max())
+        right = float((vk @ vk.mH - eye).abs().max())
+        if max(left, right) > tol:
+            return f"orthonormality defect {max(left, right):.2e}"
+        if k > 1 and bool((s[..., 1:] > s[..., :-1] * (1.0 + tol) + tol * norm).any()):
+            return "singular values not sorted"
+    return None
+
+
+def _qr_defect(x, q, r):
+    """Return ``None`` for a valid reduced QR pair, else a short reason."""
+    with torch.no_grad():
+        if not (bool(torch.isfinite(q).all()) and bool(torch.isfinite(r).all())):
+            return "non-finite factor"
+        norm = float(torch.linalg.norm(x))
+        if norm == 0.0:
+            return None
+        tol = _svd_tolerance(x)
+        residual = float(torch.linalg.norm(x - q @ r))
+        if residual > tol * norm:
+            return f"reconstruction residual {residual / norm:.2e} relative"
+        k = q.shape[-1]
+        eye = torch.eye(k, dtype=q.dtype, device=q.device)
+        if float((q.mH @ q - eye).abs().max()) > tol:
+            return "orthonormality defect"
+    return None
+
+
+def _host_svd(x: torch.Tensor, full_matrices: bool, *, prefer: str):
+    """Decompose on the host with scipy ``gesvd`` (or numpy)."""
+    host = x.detach().cpu().numpy()
+    if prefer == "gesvd":
+        import scipy.linalg
+
+        u, s, vh = scipy.linalg.svd(
+            host, full_matrices=full_matrices, lapack_driver="gesvd"
+        )
+    else:
+        u, s, vh = np.linalg.svd(host, full_matrices=full_matrices)
+    return (
+        torch.as_tensor(u, dtype=x.dtype, device=x.device),
+        torch.as_tensor(s, dtype=x.real.dtype if x.is_complex() else x.dtype, device=x.device),
+        torch.as_tensor(vh, dtype=x.dtype, device=x.device),
+    )
 
 
 class _Linalg:
-    def norm(self, x: Tensor):
-        return (x * x).sum().sqrt()
+    """Namespace for linear algebra on backend tensors."""
 
-    def qr(self, x: Tensor):
-        return x.qr()
+    def norm(self, x: torch.Tensor):
+        return torch.linalg.norm(x)
 
-    def svd(self, x: Tensor, full_matrices: bool = False):
-        return x.svd(full_matrices=full_matrices)
+    def qr(self, x: torch.Tensor):
+        """Verified reduced QR, like :meth:`svd`.
 
-    def solve(self, a: Tensor, b: Tensor):
+        The orthogonalization sweeps that feed ``round_tt`` and ``TT.norm``
+        trust Q and R, so a silently wrong factorization (a threaded LAPACK
+        fault, as for gesdd) would corrupt a rounding without any later
+        check noticing it.  Every call therefore verifies the reconstruction
+        ``||QR - x||`` and the orthonormality of Q and on failure recomputes
+        with numpy (LAPACK ``geqrf``), verifying that result too.
+        """
+        q, r = torch.linalg.qr(x)
+        if x.numel() == 0 or x.requires_grad:
+            return q, r
+        defect = _qr_defect(x, q, r)
+        if defect is None:
+            return q, r
+        q2, r2 = np.linalg.qr(x.detach().cpu().numpy())
+        q2 = torch.as_tensor(q2, dtype=x.dtype, device=x.device)
+        r2 = torch.as_tensor(r2, dtype=x.dtype, device=x.device)
+        if _qr_defect(x, q2, r2) is None:
+            return q2, r2
+        raise RuntimeError(
+            f"QR of a {tuple(x.shape)} {x.dtype} matrix failed verification with torch "
+            f"and numpy ({defect}); kernel-level fault, not a tolerance issue"
+        )
+
+    def svd(self, x: torch.Tensor, full_matrices: bool = False):
+        """Verified SVD: every returned triple is checked before it is used.
+
+        ``torch.linalg.svd`` on macOS (Accelerate ``gesdd``) can return a wrong
+        triple for exactly rank-deficient inputs, and in some cases the
+        singular values are right while the vectors are wrong, so an energy
+        check alone is not sufficient.  Every call therefore verifies the
+        reconstruction residual and the orthonormality of the thin factors
+        (one extra matmul each), and on failure recomputes with LAPACK
+        ``gesvd`` via scipy (numpy as a last resort), verifying that result
+        too.  The same fallback is used when ``torch.linalg.svd`` raises
+        ``LinAlgError`` (gesdd did not converge).  ``TINYTT_SVD_DRIVER=gesvd``
+        forces the scipy path for every call (detached from autograd), which
+        is how a platform fault is isolated.  See
+        tests/test_svd_rank_deficient.py.
+        """
+        if _SVD_DRIVER == "gesvd" and x.numel() > 0:
+            u, s, vh = _host_svd(x, full_matrices, prefer="gesvd")
+            if _svd_defect(x, u, s, vh) is None:
+                return u, s, vh
+        try:
+            u, s, vh = torch.linalg.svd(x, full_matrices=full_matrices)
+        except torch.linalg.LinAlgError as exc:
+            # gesdd can also fail to converge outright (seen with Accelerate on
+            # macOS for TT cores of rank ~100); treat it like a failed check.
+            if x.numel() == 0:
+                raise
+            defect = f"torch.linalg.svd raised: {exc}"
+        else:
+            if x.numel() == 0:
+                return u, s, vh
+            defect = _svd_defect(x, u, s, vh)
+            if defect is None:
+                return u, s, vh
+        for prefer in ("gesvd", "numpy"):
+            try:
+                u2, s2, vh2 = _host_svd(x, full_matrices, prefer=prefer)
+            except ImportError:
+                continue
+            if _svd_defect(x, u2, s2, vh2) is None:
+                # The host result is detached from autograd; only a faulty
+                # torch triple (which carries no useful gradient) gets here.
+                return u2, s2, vh2
+        raise RuntimeError(
+            f"SVD of a {tuple(x.shape)} {x.dtype} matrix failed verification "
+            f"with torch and every host fallback ({defect}); kernel-level "
+            "fault, not a tolerance issue"
+        )
+
+    def solve(self, a: torch.Tensor, b: torch.Tensor):
         return solve(a, b)
+
+    def eigh(self, x: torch.Tensor):
+        """Eigendecomposition of a Hermitian matrix; returns ``(w, V)``."""
+        return torch.linalg.eigh(x)
+
+    def cholesky(self, x: torch.Tensor):
+        return torch.linalg.cholesky(x)
+
+    def lstsq(self, a: torch.Tensor, b: torch.Tensor):
+        return torch.linalg.lstsq(a, b).solution
+
+    def matrix_exp(self, x: torch.Tensor):
+        return torch.linalg.matrix_exp(x)
 
 
 linalg = _Linalg()
 
 
 class _Tnf:
-    def pad(self, x: Tensor, padding, value: float = 0.0):
+    """Small ``torch.nn.functional`` shim kept for backwards compatibility."""
+
+    def pad(self, x: torch.Tensor, padding, value: float = 0.0):
         return pad(x, padding, value=value)
 
 

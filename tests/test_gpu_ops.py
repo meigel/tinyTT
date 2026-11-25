@@ -1,3 +1,13 @@
+"""Device-parametrised tests for the core operations.
+
+These used to skip outright unless ``TINYTT_DEVICE`` named a GPU, which meant
+they were the *only* coverage for ``fast_matvec``, ``dmrg_matvec`` and the
+TTM-multiply autograd path and yet never ran in CI (no CI job has a GPU).
+They now run on the CPU by default and on the requested device when
+``TINYTT_DEVICE`` is set, so the GPU adds a device rather than being the only
+place this code is exercised.
+"""
+
 import os
 
 import numpy as np
@@ -6,23 +16,22 @@ import pytest
 import tinytt as tt
 import tinytt._backend as tn
 
-
-DEVICE = os.getenv("TINYTT_DEVICE", "").strip()
-if not DEVICE or DEVICE.lower() in ("cpu", "clang", "llvm"):
-    pytest.skip("GPU tests require TINYTT_DEVICE", allow_module_level=True)
+DEVICE = os.getenv("TINYTT_DEVICE", "").strip() or "cpu"
 
 try:
     probe = tn.tensor([1.0], device=DEVICE)
-    probe.realize()
-    DEVICE_RESOLVED = probe.device
-except Exception:
-    pytest.skip("Requested TINYTT_DEVICE is unavailable", allow_module_level=True)
+    DEVICE_RESOLVED = str(probe.device)
+except Exception:  # pragma: no cover - only when a bad device is requested
+    pytest.skip(
+        f"Requested TINYTT_DEVICE={DEVICE!r} is unavailable",
+        allow_module_level=True,
+    )
+
 
 def _supports_fp64():
+    """Whether the resolved device supports float64, via the backend probe."""
     try:
-        t = tn.tensor([1.0], dtype=tn.float64, device=DEVICE_RESOLVED)
-        (t + t).realize()
-        return True
+        return tn.supports_fp64(DEVICE_RESOLVED)
     except Exception:
         return False
 
@@ -32,9 +41,14 @@ NP_DTYPE = np.float64 if DTYPE == tn.float64 else np.float32
 ATOL = 1e-10 if DTYPE == tn.float64 else 1e-5
 
 
+def _device_matches(actual) -> bool:
+    """``cuda`` must match ``cuda:0``, and ``cpu`` must match ``cpu``."""
+    return str(actual).lower().startswith(DEVICE_RESOLVED.split(":")[0].lower())
+
+
 def _assert_tt_device(tensor):
     for core in tensor.cores:
-        assert DEVICE_RESOLVED.lower() in str(core.device).lower()
+        assert _device_matches(core.device)
 
 
 def test_gpu_helpers_and_linalg():
@@ -46,12 +60,12 @@ def test_gpu_helpers_and_linalg():
     _assert_tt_device(y)
 
     z = x + y
-    assert np.allclose(z.full().numpy(), full + 1.0, atol=ATOL)
+    assert np.allclose(tn.to_numpy(z.full()), full + 1.0, atol=ATOL)
 
     div = tt.elementwise_divide(x, y + 1.0)
-    assert np.allclose(div.full().numpy(), full / 2.0, atol=ATOL)
+    assert np.allclose(tn.to_numpy(div.full()), full / 2.0, atol=ATOL)
 
-    dot_val = tt.dot(x, x).numpy().item()
+    dot_val = tn.to_numpy(tt.dot(x, x)).item()
     assert np.isclose(dot_val, np.sum(full * full), rtol=1e-6, atol=ATOL)
 
     kron_xy = tt.kron(x, x)
@@ -78,21 +92,21 @@ def test_gpu_fast_products():
     x = tt.random([2, 2, 2], [1, 2, 2, 1], device=DEVICE_RESOLVED, dtype=DTYPE)
     y = tt.random([2, 2, 2], [1, 2, 2, 1], device=DEVICE_RESOLVED, dtype=DTYPE)
 
-    z = tt.fast_hadammard(x, y, eps=1e-8)
-    ref = x.full().numpy() * y.full().numpy()
-    assert np.allclose(z.full().numpy(), ref, atol=1e-5)
+    z = tt.fast_hadamard(x, y, eps=1e-8)
+    ref = tn.to_numpy(x.full()) * tn.to_numpy(y.full())
+    assert np.allclose(tn.to_numpy(z.full()), ref, atol=1e-5)
 
     A = tt.random([(2, 2), (2, 2), (2, 2)], [1, 2, 2, 1], device=DEVICE_RESOLVED, dtype=DTYPE)
     mv = tt.fast_mv(A, x, eps=1e-8)
 
-    A_full = A.full().numpy().reshape(8, 8)
-    x_full = x.full().numpy().reshape(-1)
+    A_full = tn.to_numpy(A.full()).reshape(8, 8)
+    x_full = tn.to_numpy(x.full()).reshape(-1)
     mv_ref = A_full @ x_full
-    assert np.allclose(mv.full().numpy().reshape(-1), mv_ref, atol=1e-5)
+    assert np.allclose(tn.to_numpy(mv.full()).reshape(-1), mv_ref, atol=1e-5)
 
     mm = tt.fast_mm(A, A, eps=1e-8)
     mm_ref = A_full @ A_full
-    assert np.allclose(mm.full().numpy().reshape(8, 8), mm_ref, atol=1e-5)
+    assert np.allclose(tn.to_numpy(mm.full()).reshape(8, 8), mm_ref, atol=1e-5)
 
 
 def test_gpu_dmrg_and_solvers():
@@ -100,17 +114,17 @@ def test_gpu_dmrg_and_solvers():
     y = tt.random([2, 2, 2], [1, 2, 2, 1], device=DEVICE_RESOLVED, dtype=DTYPE)
 
     z = tt.dmrg_hadamard(x, y, eps=1e-8, nswp=3, verb=False)
-    ref = x.full().numpy() * y.full().numpy()
-    assert np.allclose(z.full().numpy(), ref, atol=1e-5)
+    ref = tn.to_numpy(x.full()) * tn.to_numpy(y.full())
+    assert np.allclose(tn.to_numpy(z.full()), ref, atol=1e-5)
 
     A = tt.eye([2, 2, 2], device=DEVICE_RESOLVED, dtype=DTYPE)
     b = A @ x
     sol = tt.solvers.amen_solve(A, b, nswp=4, eps=1e-10, verbose=False)
-    err = np.linalg.norm(sol.full().numpy() - x.full().numpy())
+    err = np.linalg.norm(tn.to_numpy(sol.full()) - tn.to_numpy(x.full()))
     assert err < (1e-6 if DTYPE == tn.float64 else 1e-4)
 
     als = tt.solvers.als_solve(A, b, nswp=4, eps=1e-10, verbose=False)
-    als_err = np.linalg.norm(als.full().numpy() - x.full().numpy())
+    als_err = np.linalg.norm(tn.to_numpy(als.full()) - tn.to_numpy(x.full()))
     assert als_err < (1e-6 if DTYPE == tn.float64 else 1e-4)
 
 
@@ -124,10 +138,10 @@ def test_gpu_matvec_and_fast_matvec():
 
     y = A @ x
     ref = A_full @ x_full
-    assert np.allclose(y.full().numpy().reshape(-1), ref, atol=ATOL)
+    assert np.allclose(tn.to_numpy(y.full()).reshape(-1), ref, atol=ATOL)
 
     y_fast = A.fast_matvec(x, eps=1e-10, nswp=3, verb=False)
-    assert np.allclose(y_fast.full().numpy().reshape(-1), ref, atol=1e-5)
+    assert np.allclose(tn.to_numpy(y_fast.full()).reshape(-1), ref, atol=1e-5)
 
 
 def test_gpu_ttm_multiply_and_autograd():
@@ -140,7 +154,7 @@ def test_gpu_ttm_multiply_and_autograd():
 
     C = A @ B
     ref = A_full @ B_full
-    assert np.allclose(C.full().numpy().reshape(4, 4), ref, atol=ATOL)
+    assert np.allclose(tn.to_numpy(C.full()).reshape(4, 4), ref, atol=ATOL)
 
     x_full = rng.rand(2, 3, 2).astype(NP_DTYPE)
     x = tt.TT(x_full, eps=1e-12, device=DEVICE_RESOLVED, dtype=DTYPE)
@@ -150,4 +164,4 @@ def test_gpu_ttm_multiply_and_autograd():
     assert len(grads) == len(x.cores)
     for g in grads:
         assert g is not None
-        assert DEVICE.lower() in str(g.device).lower()
+        assert _device_matches(g.device)

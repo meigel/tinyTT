@@ -12,9 +12,13 @@ Core shapes (tinyTT convention):
   A_d  : (r_d, n_d,  1)        -- last feature core
 """
 
+# Core/environment matrices keep their mathematical names (A_k, R, L, …).
+# ruff: noqa: N806
+
 from __future__ import annotations
 
 import numpy as np
+
 import tinytt._backend as tn
 
 
@@ -32,7 +36,8 @@ class FunctionalTT:
     """
 
     def __init__(self, cores: list):
-        self.cores = [c.clone() if tn.is_tensor(c) else tn.tensor(np.asarray(c)) for c in cores]
+        self.cores = [c.clone() if tn.is_tensor(c) else tn.tensor(np.asarray(c))
+                      for c in cores]
 
     @property
     def d(self):
@@ -59,13 +64,16 @@ class FunctionalTT:
     # Forward pass
     # ------------------------------------------------------------------
 
-    def forward(self, phi_list):
+    def forward(self, phi_list, normalize=False):
         """
         Evaluate f(x) for a batch of samples.
 
         Parameters
         ----------
         phi_list : list of d tensors, each of shape (m, n_k)
+        normalize : bool
+            If True, normalize R after each contraction step to kill eigenvalue drift.
+            Makes variance independent of width and rank.
 
         Returns
         -------
@@ -79,11 +87,15 @@ class FunctionalTT:
         Ad = self.cores[d]                               # (r_d, n_d, 1)
         phi_d = phi_list[d - 1]                          # (m, n_d)
         R = tn.einsum('mb,ab->ma', phi_d, Ad.squeeze(2))  # (m, r_d)
+        if normalize:
+            R = R / (R.pow(2).mean(dim=0, keepdim=True).sqrt() + 1e-8)
 
         for k in range(d - 1, 0, -1):
             Ak = self.cores[k]                           # (r_k, n_k, r_{k+1})
             phi_k = phi_list[k - 1]                      # (m, n_k)
             R = tn.einsum('mb,abc,mc->ma', phi_k, Ak, R)  # (m, r_k)
+            if normalize:
+                R = R / (R.pow(2).mean(dim=0, keepdim=True).sqrt() + 1e-8)
 
         # Output core A_0: (1, n_0, r_1)
         f = tn.einsum('ma,na->mn', R, self.cores[0].squeeze(0))  # (m, n_0)
@@ -164,6 +176,88 @@ class FunctionalTT:
             if c.grad is not None:
                 c.grad = None
 
+    def linearize(self, phi_list, frame=None):
+        """Build a cached matrix-free tangent linearization for a batch."""
+        from tinytt.manifold import FunctionalTTLinearization
+
+        return FunctionalTTLinearization(self, phi_list, frame=frame)
+
+    # ------------------------------------------------------------------
+    # Analytic integral
+    # ------------------------------------------------------------------
+
+    def integrate(self, basis, nodes=None):
+        r"""Integrate the model over ``[-1, 1]^d`` by Gauss-Legendre quadrature.
+
+        .. math::
+            \int_{[-1,1]^d} f(x)\,dx
+            = \bigl\langle A, \textstyle\bigotimes_k \int \phi(x_k)\,dx_k
+              \bigr\rangle
+
+        The one-dimensional integrals ``∫ φ_i dx`` are computed with an
+        ``n``-node Gauss-Legendre rule, which is **exact** for polynomials up
+        to degree ``2n - 1``.  By default ``n = ceil(n_features / 2)``, i.e.
+        exact for a polynomial basis of degree ``n_features - 1`` — the
+        Legendre/Hermite/monomial bases in :mod:`tinytt._functional`.  For a
+        non-polynomial basis this is a quadrature approximation, not an
+        analytic integral; raise *nodes* if you need more accuracy.
+
+        .. versionchanged:: 0.5
+           Used to hard-code a 2-node rule (exact only to degree 3) while
+           claiming to be analytic, and silently assumed every feature mode
+           had the same size.
+
+        Parameters
+        ----------
+        basis : callable
+            Univariate basis with attribute ``n_features``.  It must produce
+            the same number of features as every feature core's mode size.
+        nodes : int, optional
+            Number of Gauss-Legendre nodes.  Defaults to
+            ``ceil(n_features / 2)`` (minimum 1).
+
+        Returns
+        -------
+        float
+        """
+        d = self.d
+        if d < 1:
+            raise ValueError("integrate needs at least one feature core.")
+
+        dims = {int(self.cores[k].shape[1]) for k in range(1, d + 1)}
+        if len(dims) > 1:
+            raise ValueError(
+                "integrate assumes one shared univariate basis, so every "
+                f"feature core must have the same mode size; got {sorted(dims)}."
+            )
+        bdim = dims.pop()
+
+        n_basis = getattr(basis, "n_features", None)
+        if n_basis is not None and int(n_basis) != bdim:
+            raise ValueError(
+                f"basis has n_features={int(n_basis)} but the feature cores "
+                f"have mode size {bdim}."
+            )
+
+        n_nodes = int(nodes) if nodes is not None else max(1, -(-bdim // 2))
+        x_gq, w_gq = np.polynomial.legendre.leggauss(n_nodes)
+        phi_gq = tn.to_numpy(basis(tn.tensor(x_gq, dtype=tn.float64)))
+        if phi_gq.shape != (n_nodes, bdim):
+            raise ValueError(
+                f"basis returned {phi_gq.shape} at {n_nodes} nodes; expected "
+                f"{(n_nodes, bdim)}."
+            )
+        phi_int = w_gq @ phi_gq                       # (bdim,) — ∫ φ_i dx
+
+        phi_1d = tn.tensor(phi_int.reshape(1, bdim), dtype=tn.float64)
+
+        Ad = self.cores[d]
+        R = tn.einsum('mb,ab->ma', phi_1d, Ad.squeeze(2))
+        for k in range(d - 1, 0, -1):
+            R = tn.einsum('mb,abc,mc->ma', phi_1d, self.cores[k], R)
+        result = tn.einsum('ma,na->mn', R, self.cores[0].squeeze(0))
+        return float(tn.to_numpy(result)[0, 0])
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -174,7 +268,7 @@ class FunctionalTT:
 
 
 def random_ftt(n0: int, feature_dims: list, ranks: list, dtype=None, device=None,
-               scale=0.1, seed=None):
+               scale=None, seed=None):
     """
     Create a random FunctionalTT with tinyTT 3D core convention.
 
@@ -189,8 +283,10 @@ def random_ftt(n0: int, feature_dims: list, ranks: list, dtype=None, device=None
         Length must equal len(feature_dims).
     dtype : optional
     device : optional
-    scale : float
+    scale : float or None
         Standard deviation of the random normal initialisation.
+        If None, computed as ``1 / sqrt(max(rank) * min(feature_dims))``
+        to keep the TT contraction variance O(1) regardless of rank.
     seed : int or None
         Random seed for reproducibility.
     """
@@ -198,6 +294,12 @@ def random_ftt(n0: int, feature_dims: list, ranks: list, dtype=None, device=None
         dtype = tn.float64
     d = len(feature_dims)
     assert len(ranks) == d, "Need d ranks for d feature dims"
+
+    # Auto-scale to keep TT contraction variance O(1)
+    if scale is None:
+        max_r = max(ranks)
+        min_nk = min(feature_dims) if feature_dims else 1
+        scale = 1.0 / np.sqrt(max_r * max(min_nk, 1))
 
     rng = np.random.default_rng(seed)
 

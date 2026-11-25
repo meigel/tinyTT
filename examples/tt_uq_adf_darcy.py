@@ -2,6 +2,9 @@
 """
 UQ-ADF for parametric Darcy flow PDE with uncertain permeability.
 
+Note: tinyTT now provides tinytt.problems.darcy.DarcySampler as a
+cleaner interface for this problem.  See examples/tt_darcy_surrogate.py.
+
   -∇ · (a(x, y) · ∇u) = 1    in Ω = [0, 1]²
                        u = 0  on ∂Ω
 
@@ -19,17 +22,27 @@ Usage:  PYTHONPATH=. python examples/tt_uq_adf_darcy.py
 
 import sys
 import time
+
 import numpy as np
 
-from tinytt._backend import float64, tensor
+import tinytt.backend as tn
 from tinytt import uq_adf as uq
+from tinytt.backend import float64
 
 # ---------------------------------------------------------------------------
 # FEM solver for one parametric sample
 # ---------------------------------------------------------------------------
 try:
-    from skfem import MeshQuad, ElementQuad1, InteriorBasis
-    from skfem import BilinearForm, LinearForm, condense, solve
+    from scipy import sparse as sp
+    from scipy.sparse.linalg import spsolve
+    from skfem import (
+        BilinearForm,
+        ElementQuad1,
+        InteriorBasis,
+        LinearForm,
+        MeshQuad,
+        condense,
+    )
     from skfem.helpers import dot, grad
 except ImportError:
     sys.exit("This example requires scikit-fem (pip install scikit-fem)")
@@ -57,21 +70,29 @@ print("=" * 62, flush=True)
 n_coarse = 17   # coarse mesh for training
 n_fine = 33     # fine mesh for error evaluation
 
-mesh = MeshQuad.init_tensor(np.linspace(0, 1, n_coarse),
-                            np.linspace(0, 1, n_coarse))
-mesh = mesh.with_boundaries({
+# The boundary is given by *predicates*, not by a facet-index set: a facet
+# index is only meaningful on the mesh it came from.  Reusing the coarse
+# mesh's `boundaries` dict on the fine mesh (as this example used to do)
+# pinned the fine Dirichlet condition to arbitrary interior facets, which is
+# why the L2/H1 errors against the fine reference sat at ~1 while the coarse
+# training error was 1e-3.
+BOUNDARY_PREDICATES = {
     "left":   lambda x: x[0] == 0.0,
     "right":  lambda x: x[0] == 1.0,
     "bottom": lambda x: x[1] == 0.0,
     "top":    lambda x: x[1] == 1.0,
-})
+}
+
+mesh = MeshQuad.init_tensor(np.linspace(0, 1, n_coarse),
+                            np.linspace(0, 1, n_coarse))
+mesh = mesh.with_boundaries(BOUNDARY_PREDICATES)
 basis = InteriorBasis(mesh, ElementQuad1(), intorder=3)
 D = basis.get_dofs(list(mesh.boundaries.keys()))
 print(f"  Coarse mesh: {n_coarse}×{n_coarse},  DOFs: {basis.N}", flush=True)
 
 mesh_fine = MeshQuad.init_tensor(np.linspace(0, 1, n_fine),
                                  np.linspace(0, 1, n_fine))
-mesh_fine = mesh_fine.with_boundaries(mesh.boundaries)
+mesh_fine = mesh_fine.with_boundaries(BOUNDARY_PREDICATES)
 basis_fine = InteriorBasis(mesh_fine, ElementQuad1(), intorder=3)
 D_fine = basis_fine.get_dofs(list(mesh_fine.boundaries.keys()))
 print(f"  Fine   mesh: {n_fine}×{n_fine},  DOFs: {basis_fine.N}", flush=True)
@@ -90,6 +111,18 @@ sigma = 0.1                    # log-permeability std dev
 rng = np.random.default_rng(0)
 b_fixed = load.assemble(basis)
 
+# The load vector has to match the basis it is condensed against.  Using the
+# coarse `b_fixed` for every call made solve_sample(..., basis_fine, D_fine)
+# index a length-289 vector with fine-mesh DOFs and raise IndexError.
+_LOAD_CACHE = {id(basis): b_fixed}
+
+
+def _load_for(basis_local):
+    key = id(basis_local)
+    if key not in _LOAD_CACHE:
+        _LOAD_CACHE[key] = load.assemble(basis_local)
+    return _LOAD_CACHE[key]
+
 
 def solve_sample(yvec, basis_local, dofs):
     """Solve the Darcy PDE for one parametric sample yvec ∈ [-1,1]^M."""
@@ -101,7 +134,12 @@ def solve_sample(yvec, basis_local, dofs):
                   * np.sin(np.pi * k * basis_local.doflocs[1])
                   * yvec[j])
     A = diffusion.assemble(basis_local, sigma=sigma, coeff=coeff)
-    return solve(*condense(A, b_fixed, D=dofs))
+    A_c, b_c, x_full, interior = condense(A, _load_for(basis_local), D=dofs)
+    if not sp.issparse(A_c):
+        raise TypeError("Expected sparse condensed FEM matrix")
+    x_full = np.asarray(x_full, dtype=float)
+    x_full[interior] = spsolve(A_c.tocsr(), b_c)
+    return x_full
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +165,7 @@ print(f"  Sample generation done ({t_gen:.1f}s)", flush=True)
 # ---------------------------------------------------------------------------
 # Run UQ-ADF
 # ---------------------------------------------------------------------------
-print(f"\n  Running UQ-ADF (ALS update, adaptive rank, max 60 iterations) ...", flush=True)
+print("\n  Running UQ-ADF (ALS update, adaptive rank, max 60 iterations) ...", flush=True)
 t1 = time.perf_counter()
 
 
@@ -170,7 +208,7 @@ print(f"  Core shapes:    {[c.shape for c in res.cores]}", flush=True)
 # ---------------------------------------------------------------------------
 def eval_tt(cores, y):
     """Evaluate the TT surrogate at a single parameter point y."""
-    cores_np = [c.numpy() if hasattr(c, 'numpy') else c for c in cores]
+    cores_np = [tn.to_numpy(c) if hasattr(c, 'numpy') else c for c in cores]
     val = np.asarray(cores_np[0][0, :, :], dtype=float)   # (289, r1)
     for dim, yi in enumerate(y, start=1):
         core = cores_np[dim]                                 # (r, poly_dim, r')
@@ -183,13 +221,13 @@ def eval_tt(cores, y):
     return np.squeeze(val)
 
 
-print(f"\n  Evaluating surrogate accuracy ...", flush=True)
-cores = [c.numpy() for c in res.cores]
+print("\n  Evaluating surrogate accuracy ...", flush=True)
+cores = [tn.to_numpy(c) for c in res.cores]
 
 # Training error (first 5)
 train_errs = []
 for yvec, ref in zip(meas.randomVectors[:5], meas.solutions[:5]):
-    ref_np = ref.numpy() if hasattr(ref, 'numpy') else ref
+    ref_np = tn.to_numpy(ref) if hasattr(ref, 'numpy') else ref
     pred = eval_tt(cores, yvec)
     train_errs.append(np.linalg.norm(pred - ref_np) / np.linalg.norm(ref_np))
 print(f"    Training rel_err (avg of 5): {float(np.mean(train_errs)):.3e}", flush=True)
@@ -198,7 +236,7 @@ print(f"    Training rel_err (avg of 5): {float(np.mean(train_errs)):.3e}", flus
 eval_errs = []
 l2_errs = []
 h1_errs = []
-for j in range(3):
+for _ in range(3):
     yvec = rng.uniform(-1.0, 1.0, size=M)
     ref = solve_sample(yvec, basis, D)
     pred = eval_tt(cores, yvec)

@@ -1,0 +1,65 @@
+import numpy as np
+import pytest
+
+import tinytt._backend as tn
+from tinytt._decomposition import SVD, randomized_svd
+
+
+class TestRandomizedSVD:
+    def test_randomized_svd_low_rank(self):
+        """Verify that randomized SVD recovers a low-rank matrix of rank r=5 exactly.
+
+        Generates a matrix :math:`A = U_{\\text{true}} V_{\\text{true}} \\in \\mathbb{R}^{50 \\times 40}`
+        of rank 5 and asserts that `randomized_svd(A, k=5)` reconstructs :math:`A` with an error
+        :math:`\\|A - U \\Sigma V^T\\|_F \\le 10^{-5}`.
+        """
+        rng = np.random.default_rng(42)
+        u_np = rng.standard_normal((50, 5))
+        v_np = rng.standard_normal((5, 40))
+        mat_np = u_np @ v_np
+        mat = tn.tensor(mat_np, dtype=tn.float64)
+
+        # Compute randomized SVD with rank k=5
+        u, s, v = randomized_svd(mat, k=5, oversampling=5, seed=7)
+
+        assert u.shape == (50, 5)
+        assert s.shape == (5,)
+        assert v.shape == (5, 40)
+
+        # Check reconstruction accuracy
+        reconstructed = tn.to_numpy(u) @ np.diag(tn.to_numpy(s)) @ tn.to_numpy(v)
+        # Should be a very good approximation because rank is 5
+        np.testing.assert_allclose(reconstructed, mat_np, rtol=1e-5, atol=1e-5)
+
+    def test_svd_explicit_randomized_truncation(self):
+        """Verify that global SVD interface delegates to randomized_svd when k is specified.
+
+        Asserts that calling `SVD(mat, k=10)` returns truncated matrices matching the specified target dimensions.
+        """
+        rng = np.random.default_rng(100)
+        mat_np = rng.standard_normal((30, 20))
+        mat = tn.tensor(mat_np, dtype=tn.float64)
+
+        # Call generic SVD with rank constraint
+        u, s, v = SVD(mat, k=10)
+        assert u.shape == (30, 10)
+        assert s.shape == (10,)
+        assert v.shape == (10, 20)
+
+    def test_randomized_svd_seed_is_reproducible(self):
+        """Verify that passing a seed produces identical random sketches and factorizations.
+
+        Checks that two independent runs of `randomized_svd` with the same seed result in numerically identical factors.
+        """
+        rng = np.random.default_rng(101)
+        mat = tn.tensor(rng.standard_normal((40, 25)), dtype=tn.float64)
+        first = randomized_svd(mat, k=6, seed=11)
+        second = randomized_svd(mat, k=6, seed=11)
+        for a, b in zip(first, second):
+            np.testing.assert_allclose(tn.to_numpy(a), tn.to_numpy(b), atol=1e-10)
+
+    def test_randomized_svd_validates_rank(self):
+        """Verify that randomized_svd raises a ValueError if the rank constraint k is out of bounds."""
+        mat = tn.tensor(np.eye(5), dtype=tn.float64)
+        with pytest.raises(ValueError, match="k must lie"):
+            randomized_svd(mat, k=0)

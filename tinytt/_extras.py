@@ -1,14 +1,16 @@
 """
-Additional TT helpers backed by tinygrad.
+Additional TT helpers: constructors, products, reshaping, padding.
 """
 
 from __future__ import annotations
 
 import sys
+
 import numpy as np
+
 import tinytt._backend as tn
 import tinytt._tt_base
-from tinytt.errors import InvalidArguments, IncompatibleTypes, ShapeMismatch
+from tinytt.errors import IncompatibleTypes, InvalidArguments, ShapeMismatch
 
 
 def eye(shape, dtype=tn.float64, device=None):
@@ -74,6 +76,12 @@ def kron(first, second):
 
 
 def random(N, R, dtype=tn.float64, device=None):
+    """Random TT with standard-normal cores.
+
+    ``R`` is an int (the same rank on every interior bond) or the full
+    ``d + 1`` list including the unit boundary ranks.  ``N`` entries may be
+    ints (a TT vector) or ``(rows, cols)`` tuples (a TT-matrix).
+    """
     if isinstance(R, int):
         R = [1] + [R] * (len(N) - 1) + [1]
     elif len(N) + 1 != len(R) or R[0] != 1 or R[-1] != 1 or len(N) == 0:
@@ -91,6 +99,19 @@ def random(N, R, dtype=tn.float64, device=None):
 
 
 def randn(N, R, var=1.0, dtype=tn.float64, device=None):
+    """Random TT with total variance ``var`` spread evenly over the cores.
+
+    ``R`` is an int (the same rank on every interior bond) or the full
+    ``d + 1`` list including the unit boundary ranks -- the same spelling
+    :func:`random` accepts.  It used to require the list and raised
+    ``TypeError: 'int' object is not iterable`` on the int, so two sibling
+    factories disagreed about their own argument.
+    """
+    if isinstance(R, int):
+        R = [1] + [R] * (len(N) - 1) + [1]
+    elif len(N) + 1 != len(R) or R[0] != 1 or R[-1] != 1 or len(N) == 0:
+        raise InvalidArguments("Check if N and R are right.")
+
     d = len(N)
     prod_r = 1
     for r in R:
@@ -116,11 +137,13 @@ def reshape(tens, shape, eps=1e-16, rmax=sys.maxsize):
 def meshgrid(vectors):
     if len(vectors) == 0:
         return []
-    # Coerce numpy dtypes to tinygrad dtypes
+    # Coerce numpy dtypes to backend dtypes
     first = vectors[0]
     if hasattr(first, 'dtype'):
         dtype = first.dtype if tn.is_tensor(first) else tn._infer_dtype(first.dtype)
-    else:
+    else:  # pragma: no cover - needs a duck type with no .dtype
+        # Anything that also satisfies the `v.shape[0]` and `tn.reshape`
+        # requirements below (torch tensor, ndarray) carries a dtype.
         dtype = tn.float64
     device = first.device if tn.is_tensor(first) else None
     Xs = []
@@ -134,15 +157,15 @@ def meshgrid(vectors):
 def inner(a, b):
     """
     TT-native inner product via sequential core contraction.
-    
+
     Computes ⟨a, b⟩ = Σ_{i1,...,id} a(i1,...id) · b(i1,...,id)
     without reconstructing the full N-dimensional tensor.
-    
+
     Parameters
     ----------
     a, b : TT
         TT tensors with the same shape.
-    
+
     Returns
     -------
     Tensor
@@ -151,29 +174,45 @@ def inner(a, b):
     if not isinstance(a, tinytt._tt_base.TT) or not isinstance(b, tinytt._tt_base.TT):
         raise InvalidArguments("Both operands should be TT instances.")
     if a.is_ttm or b.is_ttm:
-        raise NotImplementedError(
-            "inner is only implemented for TT tensors (not TTM)."
-        )
+        # Frobenius inner product of two same-shape TT-matrices equals the
+        # TT inner product of the cores reshaped to (r, n_rows*n_cols, r').
+        if not a.is_ttm or not b.is_ttm or a.N != b.N or a.M != b.M:
+            raise InvalidArguments(
+                "TTM inner product requires matching row/column shapes.")
+        if list(a.shape) != list(b.shape):  # pragma: no cover - unreachable
+            # The guard above already established a.M == b.M and a.N == b.N,
+            # and TT.shape is derived from exactly those two lists.
+            raise InvalidArguments("TTM inner product requires equal shapes.")
+        a = tinytt.TT([c.reshape(c.shape[0], -1, c.shape[-1])
+                       for c in a.cores])
+        b = tinytt.TT([c.reshape(c.shape[0], -1, c.shape[-1])
+                       for c in b.cores])
     if a.N != b.N:
         raise ShapeMismatch("Operands are not the same size.")
-    
+
     d = len(a.cores)
     if d == 0:
         return tn.tensor(0.0, dtype=tn.float64)
-    
-    # Contract core 0: (n0, r1) × (n0, s1) → (r1, s1)
-    M = tn.einsum('iα,iβ->αβ', a.cores[0][0], b.cores[0][0])
-    
-    # Middle cores: (ri, si) × (ri, ni, r_{i+1}) × (si, ni, s_{i+1}) → (r_{i+1}, s_{i+1})
+
+    # <a, b> is conjugate-linear in its first argument, so every `a` core
+    # enters conjugated.  tn.conj is the identity for real dtypes.
+    # Contract core 0: (n0, r1) x (n0, s1) -> (r1, s1)
+    M = tn.einsum('ia,ib->ab', tn.conj(a.cores[0][0]), b.cores[0][0])
+
+    # Middle cores: (ri, si) x (ri, ni, r_{i+1}) x (si, ni, s_{i+1}) -> (r_{i+1}, s_{i+1})
     for i in range(1, d - 1):
-        M = tn.einsum('αβ,αiν,βiμ->νμ', M, a.cores[i], b.cores[i])
-    
+        M = tn.einsum('ab,aiu,biv->uv', M, tn.conj(a.cores[i]), b.cores[i])
+
     # Last core: contract remaining physical and rank indices
     if d > 1:
-        result = tn.einsum('αβ,αi,βi->', M, a.cores[-1][:, :, 0], b.cores[-1][:, :, 0])
+        result = tn.einsum(
+            'ab,ai,bi->', M, tn.conj(a.cores[-1][:, :, 0]), b.cores[-1][:, :, 0]
+        )
     else:
-        result = tn.einsum('i,i->', a.cores[0][0, :, 0], b.cores[0][0, :, 0])
-    
+        result = tn.einsum(
+            'i,i->', tn.conj(a.cores[0][0, :, 0]), b.cores[0][0, :, 0]
+        )
+
     return result
 
 
@@ -182,7 +221,7 @@ def dot(a, b, axis=None):
         raise InvalidArguments("Both operands should be TT instances.")
     if axis is not None:
         raise NotImplementedError(
-            "Partial contractions are not implemented in the tinygrad backend yet."
+            "Partial contractions (axis=...) are not implemented."
         )
     if a.is_ttm or b.is_ttm:
         raise NotImplementedError("Dot is only implemented for TT tensors.")
@@ -194,11 +233,11 @@ def dot(a, b, axis=None):
 def add(a, b, eps=1e-12, rmax=sys.maxsize):
     """
     TT-native addition via block-diagonal core concatenation.
-    
+
     Computes c = a + b without reconstructing full tensors.  The sum
     TT is formed by concatenating cores block-diagonally (ranks add),
     then optionally rounding to reduce rank.
-    
+
     Parameters
     ----------
     a, b : TT
@@ -207,7 +246,7 @@ def add(a, b, eps=1e-12, rmax=sys.maxsize):
         Rounding threshold (default 1e-12).  Set to 0 to skip rounding.
     rmax : int
         Maximum rank after rounding.
-    
+
     Returns
     -------
     TT
@@ -221,23 +260,112 @@ def add(a, b, eps=1e-12, rmax=sys.maxsize):
             raise ShapeMismatch("TTM shapes do not match.")
     elif a.N != b.N:
         raise ShapeMismatch("TT shapes do not match.")
-    
+
+    return _add_core_concat(a, b, eps, rmax)
+
+
+def kron_sum(terms, weights=None, eps=1e-12, rmax=sys.maxsize):
+    r"""Weighted sum of TT-matrices: ``A = Σᵢ wᵢ · Aᵢ``.
+
+    Parameters
+    ----------
+    terms : list of TT
+        TT matrices to sum (all must have the same shape).
+        Each term may itself be a Kronecker product (via :func:`kron`)
+        of spatial and parametric TT-matrices.
+    weights : array_like, optional
+        Coefficients for each term.  ``None`` (default) gives unit weights.
+    eps : float
+        Rounding tolerance after each addition (default 1e-12).
+    rmax : int
+        Maximum TT rank after rounding (default unlimited).
+
+    Returns
+    -------
+    TT
+        Weighted sum of the input TT-matrices.
+
+    Examples
+    --------
+    >>> A0 = tinytt.fem.laplacian_qtt(n)                  # base operator
+    >>> id_chain = tinytt.TT([I_p]*M)                      # parametric identity
+    >>> A = kron_sum([kron(A0, id_chain)])                 # A₀ ⊗ I_y
+    >>> for Bm, coeff in zip(Bm_list, coeffs):
+    ...     term = kron(Bm_qtt, d_chain)                    # Bₘ ⊗ Dₘ
+    ...     A = kron_sum([A, term], weights=[1.0, coeff])   # accumulate
+    """
+    import tinytt._tt_base as _tt
+
+    from . import add as _add
+
+    if weights is None:
+        weights = [1.0] * len(terms)
+    else:
+        weights = list(weights)
+
+    if len(terms) != len(weights):
+        raise InvalidArguments("Number of terms and weights must match.")
+
+    result = _tt.TT(terms[0]) if not isinstance(
+        terms[0], _tt.TT) else terms[0].clone()
+    if weights[0] != 1.0:
+        # Scaling every core would scale the tensor by w**d, not w.
+        # float() first: numpy scalars can hijack `*` into an object array.
+        cores = list(result.cores)
+        cores[0] = cores[0] * float(weights[0])
+        result = _tt.TT(cores)
+
+    for k in range(1, len(terms)):
+        term = _tt.TT(terms[k]) if not isinstance(
+            terms[k], _tt.TT) else terms[k].clone()
+        if weights[k] != 1.0:
+            cores = list(term.cores)
+            cores[0] = cores[0] * float(weights[k])
+            term = _tt.TT(cores)
+        result = _add(result, term, eps=eps, rmax=rmax)
+
+    return result
+
+def _round_or_return(tensor, eps, rmax):
+    """Round ``tensor`` unless rounding was switched off.
+
+    ``eps <= 0`` or ``rmax is None`` means "leave the ranks alone".  The old
+    convention used ``rmax=0`` for this in one module and for "unlimited" in
+    another.
+    """
+    if eps is None or eps <= 0:
+        return tensor
+    if rmax is None:
+        return tensor.round(eps=eps)
+    return tensor.round(eps=eps, rmax=rmax)
+
+
+def _add_core_concat(a, b, eps, rmax):
+    """Core concatenation addition (used by add after validation)."""
     d = len(a.cores)
     dtype = a.cores[0].dtype
     device = a.cores[0].device
     new_cores = []
-    
+
+    if d == 1:
+        # Block-stacking a single core would give outer ranks (1, 2); a 1-D
+        # TT sum is just the elementwise sum of the two cores.  TT.__add__
+        # already does this -- tinytt.add used to raise InvalidArguments here.
+        return _round_or_return(
+            tinytt._tt_base.TT([a.cores[0] + b.cores[0]]), eps, rmax
+        )
+
     for i in range(d):
         ac = a.cores[i]
         bc = b.cores[i]
-        
+
         if not a.is_ttm:
             rl, n, rr = ac.shape
             sl, _, sr = bc.shape
         else:
             rl, m, n, rr = ac.shape
             sl, _, _, sr = bc.shape
-        
+
         if i == 0:
             # First core: cat along right-rank dim
             core = tn.cat([ac, bc], dim=-1)
@@ -253,13 +381,10 @@ def add(a, b, eps=1e-12, rmax=sys.maxsize):
                 top = tn.cat([ac, tn.zeros((rl, m, n, sr), dtype=dtype, device=device)], dim=3)
                 bot = tn.cat([tn.zeros((sl, m, n, rr), dtype=dtype, device=device), bc], dim=3)
             core = tn.cat([top, bot], dim=0)
-        
+
         new_cores.append(core)
-    
-    result = tinytt._tt_base.TT(new_cores)
-    if eps > 0 and rmax > 0:
-        result = result.round(eps=eps, rmax=rmax)
-    return result
+
+    return _round_or_return(tinytt._tt_base.TT(new_cores), eps, rmax)
 
 
 def kronecker_ttm(left_factors, right_factors, dtype=tn.float64, device=None):
@@ -323,14 +448,26 @@ def parametric_sum_ttm(base_operator, perturbations, weights, dtype=tn.float64, 
     for k in range(len(perturbations)):
         p = tinytt._tt_base.TT(perturbations[k]) if not isinstance(
             perturbations[k], tinytt._tt_base.TT) else perturbations[k].clone()
-        scaled = tinytt._tt_base.TT(
-            [weights[k] * c for c in p.cores]
-        )
-        result = add(result, scaled, eps=0.0, rmax=0)
+        # Scale a single core only: scaling every core would scale the
+        # tensor by w**d, not w.  float() keeps numpy scalars from turning
+        # the multiplication into an object-array product.
+        scaled_cores = [c.clone() for c in p.cores]
+        scaled_cores[0] = float(weights[k]) * scaled_cores[0]
+        scaled = tinytt._tt_base.TT(scaled_cores)
+        result = add(result, scaled, eps=0.0, rmax=None)
     return result
 
 
 def elementwise_divide(a, b):
+    """Elementwise division.
+
+    Note
+    ----
+    The reciprocal of a TT tensor has no exact TT representation, so this
+    goes through the dense tensor and is therefore exponential in the order.
+    For high-dimensional inputs approximate ``1 / b`` with
+    :func:`tinytt.interpolate.dmrg_cross` instead.
+    """
     if isinstance(a, tinytt._tt_base.TT) and isinstance(b, tinytt._tt_base.TT):
         if a.is_ttm != b.is_ttm:
             raise InvalidArguments(
@@ -353,11 +490,51 @@ def elementwise_divide(a, b):
 
 
 def numel(tensor):
-    return sum([tn.numel(tensor.cores[i]) for i in range(len(tensor.N))])
+    """Number of stored parameters (sum over cores)."""
+    return sum(tn.numel(core) for core in tensor.cores)
 
 
 def rank1TT(elements):
     return tinytt._tt_base.TT([e[None, ..., None] for e in elements])
+
+
+def from_dense(vec, N, eps=1e-10, rmax=sys.maxsize, dtype=None, device=None):
+    r"""Construct a TT from a flat dense vector.
+
+    Parameters
+    ----------
+    vec : array_like
+        Flat vector of length ``prod(N)``.
+    N : list of int
+        Mode sizes for each TT core.
+    eps : float
+        SVD truncation tolerance.
+    rmax : int
+        Maximum TT rank.
+    dtype, device : optional
+        Passed to the backend tensor constructor.
+
+    Returns
+    -------
+    TT
+        TT decomposition of the reshaped vector.
+
+    Example
+    -------
+    >>> x = np.random.randn(64)   # flat DOF vector
+    >>> x_tt = tt.from_dense(x, [4, 4, 4])
+    """
+    N = list(N)
+    total = 1
+    for n in N:
+        total *= n
+    vec = np.asarray(vec, dtype=np.float64).reshape(-1)
+    if vec.size != total:
+        raise ShapeMismatch(
+            f"Flat vector has {vec.size} entries but prod(N) = {total}."
+        )
+    dense = vec.reshape(N)
+    return tinytt._tt_base.TT(dense, eps=eps, rmax=rmax, dtype=dtype, device=device)
 
 
 def diag(input):
@@ -381,30 +558,125 @@ def diag(input):
 
 
 def permute(input, dims, eps=1e-12):
+    """Permute the modes of a TT tensor.
+
+    Implemented as a chain of adjacent core swaps (insertion sort), which
+    stays in TT format; the previous implementation went through the dense
+    tensor and so was exponential in ``d``.
+    """
     if not isinstance(input, tinytt._tt_base.TT):
         raise InvalidArguments("Input must be a tinytt.TT instance.")
     if input.is_ttm:
         raise NotImplementedError("permute is only implemented for TT tensors.")
-    if len(dims) != len(input.N):
+    d = len(input.N)
+    if len(dims) != d:
         raise ShapeMismatch("dims must have the same length as tensor order.")
-    full = input.full().permute(dims)
-    return tinytt._tt_base.TT(full, eps=eps)
+    if sorted(dims) != list(range(d)):
+        raise InvalidArguments("dims must be a permutation of range(len(N)).")
+
+    from tinytt._fast_mult import swap_cores
+
+    cores = [c.clone() for c in input.cores]
+    # current[j] = which original mode currently sits at position j
+    current = list(range(d))
+    for position in range(d):
+        wanted = dims[position]
+        src = current.index(wanted)
+        while src > position:
+            cores[src - 1], cores[src] = swap_cores(
+                cores[src - 1], cores[src], eps
+            )
+            current[src - 1], current[src] = current[src], current[src - 1]
+            src -= 1
+    return tinytt._tt_base.TT(cores)
 
 
-def cat(tensors, dim=0, eps=1e-12, rmax=sys.maxsize):
+def _pad_zero(tens, pad_width):
+    """Zero-pad each mode of a TT; exact and per-core (no rank growth)."""
+    cores = []
+    for core, (before, after) in zip(tens.cores, pad_width):
+        if before == 0 and after == 0:
+            cores.append(core.clone())
+            continue
+        r_l, n, r_r = core.shape
+        pieces = []
+        if before:
+            pieces.append(
+                tn.zeros((r_l, before, r_r), dtype=core.dtype, device=core.device)
+            )
+        pieces.append(core)
+        if after:
+            pieces.append(
+                tn.zeros((r_l, after, r_r), dtype=core.dtype, device=core.device)
+            )
+        cores.append(tn.cat(pieces, dim=1))
+    return tinytt._tt_base.TT(cores)
+
+
+def pad(tens, pad_width, value=0.0, eps=1e-12, rmax=None):
+    """Pad every mode of a TT tensor, staying in TT format.
+
+    ``pad_width`` is ``[(before, after), ...]``, one pair per mode.  A
+    non-zero ``value`` is handled exactly as
+    ``pad_0(A) + value * (ones(new) - pad_0(ones(old)))`` -- both correction
+    terms are rank 1 -- rather than by materialising the dense tensor.
+    """
+    if tens.is_ttm:
+        raise NotImplementedError("pad is only implemented for TT tensors.")
+    pad_width = [tuple(p) for p in pad_width]
+    if len(pad_width) != len(tens.N):
+        raise ShapeMismatch("pad_width must have one (before, after) pair per mode.")
+    if any(b < 0 or a < 0 for b, a in pad_width):
+        raise InvalidArguments("pad widths must be non-negative.")
+
+    padded = _pad_zero(tens, pad_width)
+    if value != 0.0:
+        dtype = tens.cores[0].dtype
+        device = tens.cores[0].device
+        new_shape = [n + b + a for n, (b, a) in zip(tens.N, pad_width)]
+        outer = ones(new_shape, dtype=dtype, device=device)
+        inner = _pad_zero(
+            ones(tens.N, dtype=dtype, device=device), pad_width
+        )
+        padded = padded + value * (outer - inner)
+    return _round_or_return(padded, eps, rmax)
+
+
+def cat(tensors, dim=0, eps=1e-12, rmax=None):
+    """Concatenate TT tensors along one mode, staying in TT format.
+
+    ``cat`` is a sum of zero-padded summands, so it is exact and the bond
+    ranks add before rounding.
+    """
     if len(tensors) == 0:
         raise InvalidArguments("Empty tensor list.")
     if any(t.is_ttm for t in tensors):
         raise NotImplementedError("cat is only implemented for TT tensors.")
-    full = tn.cat([t.full() for t in tensors], dim=dim)
-    return tinytt._tt_base.TT(full, eps=eps, rmax=rmax)
+    d = len(tensors[0].N)
+    if not -d <= dim < d:
+        raise InvalidArguments(f"dim {dim} is out of range for order {d}.")
+    dim = dim % d
+    for t in tensors[1:]:
+        if len(t.N) != d:
+            raise ShapeMismatch("All tensors must have the same order.")
+        if [n for k, n in enumerate(t.N) if k != dim] != [
+            n for k, n in enumerate(tensors[0].N) if k != dim
+        ]:
+            raise ShapeMismatch(
+                "All modes except the concatenation mode must agree."
+            )
 
-
-def pad(tens, pad_width, value=0.0, eps=1e-12, rmax=sys.maxsize):
-    if tens.is_ttm:
-        raise NotImplementedError("pad is only implemented for TT tensors.")
-    full = tens.full().pad(pad_width, value=value)
-    return tinytt._tt_base.TT(full, eps=eps, rmax=rmax)
+    sizes = [t.N[dim] for t in tensors]
+    total = sum(sizes)
+    offset = 0
+    result = None
+    for t, size in zip(tensors, sizes):
+        widths = [(0, 0)] * d
+        widths[dim] = (offset, total - offset - size)
+        piece = _pad_zero(t, widths)
+        result = piece if result is None else result + piece
+        offset += size
+    return _round_or_return(result, eps, rmax)
 
 
 def shape_mn_to_tuple(M, N):

@@ -2,69 +2,130 @@
 
 ## Project Structure & Module Organization
 
-Core functionality lives in `tinytt/` (TT classes, solvers, helpers, and
-autograd utilities). Key supporting areas are organized as follows:
-- `tests/` tinyTT test suite (core functionality tests).
-- `examples/` runnable tinyTT scripts covering core features.
-- `tinygrad/` is a pinned submodule (optional if you use pip `tinygrad`).
+Core functionality lives in `tinytt/` (TT classes, solvers, helpers,
+backends, autograd, and manifold geometry). Key supporting areas:
+- `tests/` — 69 test files, 1539 tests; 100% statement and branch coverage, gated in CI.
+- `examples/` — 24 runnable scripts covering core features.
+- `benchmarks/` — `bench.py`, wall-clock timings with baseline comparison.
+- `docs/` — the mkdocs site.  `mkdocs build --strict` must stay clean, and
+  every Python snippet in `README.md` and `docs/` must run: `test_docs_snippets.py`
+  executes them cumulatively per file.  A block that genuinely cannot run here
+  opts out with `# docs-check: skip <reason>` — the reason is required.
 
 ### Module overview
 
-| Module | File | Description |
+| Module | File(s) | Description |
 |---|---|---|
 | `TT` (class) | `_tt_base.py` | Core TT tensor / TT-matrix class |
-| Core ops | `_decomposition.py`, `_extras.py` | SVD, rank truncation, eye/zeros/kron, reshape |
-| Solvers | `solvers.py`, `_iterative_solvers.py`, `_dmrg.py` | ALS, AMEn, DMRG, GMRES, BiCGSTAB, CG |
-| Time evolution | `tdvp.py` | TDVP sweep |
-| Autograd | `grad.py` | `watch`/`unwatch`/`grad` helpers |
-| **Riemannian** | `_riemannian.py` | QR gauge sweeps, horizontal projection, QR retraction |
-| **Line search** | `_linesearch.py` | Armijo backtracking |
-| **Functional** | `_functional.py` | Polynomial feature maps (monomial, Legendre, Hermite) |
+| Core ops | `_decomposition.py`, `_extras.py`, `_aux_ops.py` | SVD, QR, rounding, eye/zeros/kron, reshape, cat, pad, permute, meshgrid |
+| Fast products | `_fast_mult.py` | Fast Hadamard, matvec, matmat |
+| Solvers | `solvers/` (package), `_iterative_solvers.py`, `_dmrg.py` | AMEn and ALS (one sweep, `kickrank=0` gives ALS), DMRG; GMRES/BiCGSTAB/CG for the local systems |
+| **Eigensolver** | **`solvers/_eig.py`** | **`eig_solve` — one-/two-site variational sweeps for the extreme eigenpairs of a Hermitian TT-matrix, `k>1` by deflation.  `lanczos_eigh` for the large local problems.** |
+| **Time evolution** | **`dynamics/`** | **Real TDVP (with the back-propagation substep), Lubich-Oseledets KSL, rank-adaptive BUG.  `tdvp.py`, `bug.py`, `projector_splitting.py` are compatibility shims.** |
+| Canonicalisation | `manifold/canonical.py` | QR gauge moves, left/right/mixed canonical sweeps, gauge alignment.  `_riemannian.py` is a deprecation shim over it. |
+| **Manifold (matrix-free)** | `manifold/` | `TTManifoldFrame`, `TTTangent`, `TTTangentBatch`, `project_tt`, `projection_transport`, tangent-CG, Ritz extraction, block-Jacobi/adjacent-pair preconditioners |
+| Line search | `_linesearch.py` | Armijo backtracking |
+| Functional (basis) | `_functional.py` | Polynomial feature maps (monomial, Legendre, Hermite), `DifferentiableHermiteBasis` |
+| FunctionalTT (model) | `functional_tt.py` | `FunctionalTT` — forward, integrate, watch/unwatch, linearize |
+| Compositional TT | `compositional.py` | Residual CTT with lift/retraction (arXiv:2512.18059) |
+| Regression | `regression.py` | ALS regression, continuity fit |
 | Interpolation | `interpolate.py` | TT-cross, maxvol |
 | Uncertainty | `uq_adf.py` | UQ with ADF |
-| CTT | `ctt/` | Conditional transport maps |
+| Streaming | `streaming.py` | STTA (one-pass randomised TT), `StreamingCurvature` |
+| Truncation | `truncation.py` | Threshold, Dörfler, adaptive truncation rules |
+| **Problems** | **`problems/`** | **DarcySampler — parametric 2D Darcy flow (FEM+KL)** |
+| Autograd | `grad.py` | `watch`/`unwatch`/`grad` helpers |
+| **Backend** | `_backend.py` | The PyTorch backend.  Package code imports `tinytt._backend as tn`; user code uses the public alias `tinytt.backend`.  Nothing imports `torch` directly. |
+| **Experimental** | `experimental/` | Research code with an unstable API: tt-CLoRA (`clora.py`), DFI/DFO momentum and `bug_with_momentum` (`momentum.py`).  The core never imports it; promotion rules are in its `__init__` docstring. |
+| Errors | `errors.py` | Exception classes |
 
 ### Test files
 
-| Tests | File |
+| Tests | File(s) |
 |---|---|
 | Core TT & rounding | `test_decomposition.py` |
 | Error handling | `test_error_cases.py` |
 | QTT | `test_qtt.py` |
+| QTT vector | `test_qtt_vector.py` |
+| Compositional TT | `test_compositional.py` |
 | Interpolation | `test_interpolate.py` |
 | ALS reliability | `test_als_reliability.py` |
-| UQ-ADF | `test_uq_adf.py`, `test_uq_adf_fast.py`, `test_uq_adf_skfem.py` |
-| UQ-ADF (fast) | `test_uq_adf_fast_skfem.py` |
-| CTT | `test_ctt.py` |
-| TDVP | `test_tdvp_mpo_smoke.py` |
+| UQ-ADF | `test_uq_adf.py`, `test_uq_adf_fast.py`, `test_uq_adf_skfem.py`, `test_uq_adf_fast_skfem.py` |
+| **Integrators** | **`test_dynamics.py`** (exactness, order, norm conservation, time reversal), `test_tdvp_mpo_smoke.py`, `test_bug.py` |
 | GPU | `test_gpu_ops.py`, `test_gpu_smoke.py` |
-| **Riemannian** | `test_riemannian.py` |
-| **CG solver** | `test_cg.py` |
-| **GMRES** | `test_gmres.py` |
-| **BiCGSTAB** | `test_bicgstab.py` |
-| **AMEn** | `test_amen.py` |
-| **Line search** | `test_linesearch.py` |
-| **Functional** | `test_functional.py` |
-| **Functional TT** | `test_functional_tt.py` |
-| **Fast products** | `test_fast_mult.py` |
-| **Extras** | `test_extras_full.py` |
-| **Aux ops** | `test_aux_ops.py` |
-| **BUG** | `test_bug.py` |
-| **Grad helpers** | `test_grad_extras.py` |
-| **Decomp internals** | `test_decomposition_internals.py` |
-| **Vector QTT** | `test_qtt_vector.py` |
-| **DMRG Hadamard** | `test_dmrg_hadamard.py` |
+| Canonicalisation | `test_riemannian.py` |
+| **Manifold** | `test_manifold.py` |
+| **Manifold Functional** | `test_manifold_functional.py` |
+| **Manifold Krylov** | `test_manifold_krylov.py` |
+| **Manifold Preconditioner** | `test_manifold_preconditioner.py` |
+| CG solver | `test_cg.py` |
+| GMRES | `test_gmres.py` |
+| BiCGSTAB | `test_bicgstab.py` |
+| AMEn | `test_amen.py` |
+| **Eigensolver** | **`test_eig.py`** |
+| **Darcy sampler** | **`test_darcy.py`** |
+| Line search | `test_linesearch.py` |
+| Functional (basis) | `test_functional.py` |
+| Functional TT | `test_functional_tt.py` |
+| Fast products | `test_fast_mult.py` |
+| Extras | `test_extras_full.py` |
+| Aux ops | `test_aux_ops.py` |
+| BUG | `test_bug.py` |
+| Grad helpers | `test_grad_extras.py` |
+| Decomp internals | `test_decomposition_internals.py` |
+| DMRG Hadamard | `test_dmrg_hadamard.py` |
+| Regression | `test_regression.py` |
+| Streaming | `test_streaming.py`, `test_streaming_convergence.py` |
+| Truncation | `test_truncation.py` |
+| Randomized SVD | `test_randomized_svd.py` |
+| **Backend / core** | `test_backend.py`, `test_core_consolidation.py` |
+| **Solvers** | `test_solver_consolidation.py` |
+| **Manifold fixes** | `test_manifold_fixes.py` |
+| **Review regressions** | `test_review_regressions.py` |
+| Example regression | `test_examples_regression.py` (parses every example), `test_examples_run.py` (runs every example) |
+
+### Example scripts
+
+| Example | File |
+|---|---|
+| Basic usage | `basic_usage.py` |
+| TT basics | `tt_basics.py` |
+| TT helpers | `tt_helpers.py` |
+| TT linear algebra | `tt_linalg.py` |
+| Solvers | `tt_solvers.py` |
+| DMRG | `tt_dmrg.py` |
+| Fast products | `tt_fast_products.py` |
+| Autograd | `tt_autograd.py` |
+| Functional TT | `tt_functional.py` |
+| FTT ALS | `tt_ftt_als.py` |
+| Vector-valued | `tt_vector_valued.py` |
+| Riemannian GD | `tt_riemannian_gd.py` |
+| Compositional TT | `tt_compositional.py` |
+| QTT solve | `tt_qtt_solve.py` |
+| QTT functional | `tt_qtt_functional.py` |
+| TDVP Ising | `mpo_ising_tdvp.py` |
+| Eigensolver | `tt_eigensolver.py` |
+| Heat equation | `heat_equation.py` |
+| UQ-ADF Darcy | `tt_uq_adf_darcy.py` |
 
 ## Build, Test, and Development Commands
 
 - `python3 -m venv venv && source venv/bin/activate` creates/activates the venv.
-- `pip install -r requirements.txt` installs tinyTT runtime deps.
-- `pip install -r requirements-dev.txt` installs pytest and dev tooling.
-- `PYTHONPATH=. pytest -q tests` runs tinyTT test suite.
+- `pip install -r requirements.txt` installs numpy and PyTorch.
+- `pip install -r requirements-dev.txt` installs pytest, ruff, scipy, coverage
+  and scikit-fem (the last is needed for the coverage gate).
+- `PYTHONPATH=. pytest -q tests` runs the suite (1539 tests; about 6 min on a CPU
+  container under coverage, including `test_examples_run.py`, which executes
+  all 24 examples).
+- `ruff check .` must be clean before a commit (CI lints the whole tree).
+- The coverage gate is 100% of statements and branches:
+  `python -m coverage run -m pytest tests -q && python -m coverage report`.
+- `python benchmarks/bench.py --compare baseline.json` for performance work.
 
-To run only the new tests added in the extension:
+To run a focused subset:
 ```
-PYTHONPATH=. DEV=PYTHON pytest tests/test_riemannian.py tests/test_cg.py tests/test_linesearch.py tests/test_functional.py -q
+PYTHONPATH=. pytest tests/test_manifold.py tests/test_dynamics.py \
+  tests/test_solver_consolidation.py tests/test_core_consolidation.py -q
 ```
 
 ## Coding Style & Naming Conventions
@@ -72,14 +133,25 @@ PYTHONPATH=. DEV=PYTHON pytest tests/test_riemannian.py tests/test_cg.py tests/t
 Use 4-space indentation and follow standard Python style (PEP 8). Prefer
 `snake_case` for functions/variables, `PascalCase` for classes, and
 `UPPER_SNAKE_CASE` for constants. Match existing patterns in the file you are
-editing and keep public APIs documented with concise docstrings. tinyTT is
-CPU-first and real dtype focused; use `tinytt._backend` (`import as tn`) rather
-than reaching into tinygrad directly.
+editing and keep public APIs documented with concise docstrings.
+
+**Inside the package, always use `tinytt._backend` (`import as tn`)**; user-facing
+code, docs and examples use its public name `tinytt.backend`.  Never import
+`torch` directly.  The facade is where device, dtype and complex-promotion
+policy live; reaching around it is how the 0.4 tree ended up with a
+`_mode_ops` helper that forced float64 on CPU regardless of the input.
+
+**Match the docstring to the code.**  The 0.5 release had to rewrite three
+integrators that were all the same `round(Y + dt F(Y))` under the names TDVP,
+KSL and BUG, and several docstrings that described behaviour the code did not
+have.  If you cannot make the code do what the docstring says, change the
+docstring and say why in a comment.
 
 ## Testing Guidelines
 
 Tests are written with pytest and live in `tests/` as `test_*.py` modules.
-Focus on numerical correctness with explicit tolerances.
+Focus on numerical correctness with explicit tolerances. New features should
+add tests. Manifold tests validate against dense-reference NumPy computations.
 
 ## Commit & Pull Request Guidelines
 
